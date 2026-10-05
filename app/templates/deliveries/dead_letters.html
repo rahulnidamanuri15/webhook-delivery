@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Dead Letters{% endblock %}
+{% block header_title %}Dead-Letter Deliveries{% endblock %}
+
+{% block header_actions %}
+<a href="/dashboard/deliveries" class="text-xs font-semibold text-slate-600 hover:text-slate-900">
+  ← Back to All Deliveries
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Dead Letter Explanation Card -->
+  <div class="bg-rose-50 border border-rose-200 p-6 rounded-xl">
+    <div class="flex items-start">
+      <div class="flex-shrink-0 text-rose-500 mt-0.5">
+        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+      </div>
+      <div class="ml-4">
+        <h3 class="text-sm font-bold text-rose-900">What are Dead Letters?</h3>
+        <p class="mt-1 text-xs text-rose-700 leading-relaxed">
+          These deliveries have exhausted their retry budget or encountered a permanent client error (e.g. 400 Bad Request, 404 Not Found).
+          When you click <strong>Replay</strong>, a new delivery is created linked to the original event and assigned a fresh retry budget.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dead Letters Table Container -->
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center">
+      <h3 class="text-base font-bold text-slate-900">Failed Deliveries ({{ deliveries|length }})</h3>
+      {% if deliveries %}
+      <form action="/dashboard/dead-letters/replay-all" method="POST">
+        <button type="submit" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-md shadow-sm">
+          Replay All Dead Letters
+        </button>
+      </form>
+      {% endif %}
+    </div>
+
+    {% include "deliveries/_table.html" %}
+  </div>
+
+</div>
+{% endblock %}

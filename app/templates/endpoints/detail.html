@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Endpoint Details{% endblock %}
+{% block header_title %}Endpoint: {{ endpoint.url }}{% endblock %}
+
+{% block header_actions %}
+<a href="/dashboard/endpoints" class="text-xs font-semibold text-slate-600 hover:text-slate-900">
+  ← Back to Endpoints
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Endpoint Configuration & Secrets Card -->
+  <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+    <div class="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-slate-200 gap-4">
+      <div>
+        <h2 class="text-lg font-bold text-slate-900">{{ endpoint.url }}</h2>
+        <p class="text-xs text-slate-500 font-mono mt-0.5">Endpoint ID: {{ endpoint.id }}</p>
+      </div>
+      <div class="flex items-center space-x-2">
+        <form action="/dashboard/endpoints/{{ endpoint.id }}/ping" method="POST" class="inline">
+          <button type="submit" class="px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold rounded-md shadow-sm">
+            Send Test Ping
+          </button>
+        </form>
+        <form action="/dashboard/endpoints/{{ endpoint.id }}/toggle" method="POST" class="inline">
+          <button type="submit" class="px-3 py-1.5 text-xs font-semibold rounded-md shadow-sm {% if endpoint.enabled %}text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200{% else %}text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200{% endif %}">
+            {{ "Disable Endpoint" if endpoint.enabled else "Enable Endpoint" }}
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Details Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+      
+      <!-- Left: Signing Secret -->
+      <div class="space-y-3">
+        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider">Signing Secret</label>
+        <p class="text-xs text-slate-500">
+          This secret is encrypted in PostgreSQL and used to generate HMAC-SHA256 signatures for every outgoing request.
+        </p>
+        <div class="flex items-center space-x-2">
+          <div class="flex-1 bg-slate-900 px-3 py-2 rounded-lg font-mono text-xs text-indigo-300 select-all truncate border border-slate-800" id="signing-secret-text">
+            {{ decrypted_secret }}
+          </div>
+          <button onclick="copyToClipboard('{{ decrypted_secret }}', 'copy-sec-btn')" id="copy-sec-btn"
+                  class="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs rounded-lg border border-indigo-200 transition">
+            Copy Secret
+          </button>
+          <form action="/dashboard/endpoints/{{ endpoint.id }}/rotate-secret" method="POST" class="inline"
+                onsubmit="return confirm('Rotate signing secret? Old secret will immediately stop working for new deliveries.');">
+            <button type="submit" class="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold text-xs rounded-lg border border-amber-300 transition">
+              Rotate Secret
+            </button>
+          </form>
+        </div>
+
+        <div class="pt-2">
+          <span class="text-xs font-bold text-slate-700 uppercase tracking-wider">Subscribed Events:</span>
+          <div class="flex flex-wrap gap-1.5 mt-1.5">
+            {% for sub in endpoint.subscriptions %}
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
+                {{ sub.event_type }}
+              </span>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Verification snippet -->
+      <div>
+        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Receiver Verification (Python)</label>
+        <div class="code-container text-xs">
+<pre><code>import hmac, hashlib
+
+def verify_webhook(secret, event_id, timestamp, raw_body, signature):
+    # signature is formatted as v1=&lt;hex&gt;
+    msg = f"{event_id}.{timestamp}.{raw_body}".encode()
+    expected = "v1=" + hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)</code></pre>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Deliveries to this Endpoint -->
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200">
+      <h3 class="text-base font-bold text-slate-900">Recent Deliveries to this Endpoint</h3>
+    </div>
+    {% set deliveries = endpoint_deliveries %}
+    {% include "deliveries/_table.html" %}
+  </div>
+
+</div>
+{% endblock %}

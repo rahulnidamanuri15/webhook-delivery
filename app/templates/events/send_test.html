@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Publish Test Event{% endblock %}
+{% block header_title %}Publish Test Event{% endblock %}
+
+{% block header_actions %}
+<a href="/dashboard/events" class="text-xs font-semibold text-slate-600 hover:text-slate-900">
+  ← Back to Events
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+  <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+    <h3 class="text-base font-bold text-slate-900 mb-1">Simulate Webhook Event Ingestion</h3>
+    <p class="text-xs text-slate-500 mb-6">
+      Send a mock event directly into the ingestion pipeline. All matching, enabled endpoints will receive a delivery task.
+    </p>
+
+    <form action="/dashboard/events/send-test" method="POST" class="space-y-4">
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Event Type</label>
+        <input type="text" name="event_type" required value="payment.succeeded" placeholder="e.g. payment.succeeded, order.shipped"
+               class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Idempotency Key (Optional)</label>
+        <input type="text" name="idempotency_key" placeholder="e.g. test-evt-101"
+               class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        <p class="text-[11px] text-slate-400 mt-1">Reusing the same key with the same body will be recognized as an idempotent duplicate.</p>
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">JSON Payload Data</label>
+        <textarea name="payload_data" rows="8" required
+                  class="w-full font-mono text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">{
+  "payment_id": "pay_98234",
+  "order_id": "order_7841",
+  "amount_minor": 149900,
+  "currency": "INR",
+  "customer": {
+    "email": "customer@example.com",
+    "name": "Jane Doe"
+  }
+}</textarea>
+      </div>
+
+      <div class="flex justify-end pt-3">
+        <button type="submit" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-sm transition">
+          Publish Event & Trigger Deliveries
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

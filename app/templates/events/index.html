@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Events{% endblock %}
+{% block header_title %}Events Ingested{% endblock %}
+
+{% block header_actions %}
+<a href="/dashboard/events/send-test" class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-semibold rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
+  + Publish New Event
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Filter bar -->
+  <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+    <form action="/dashboard/events" method="GET" class="flex items-center space-x-2 w-full sm:w-auto">
+      <input type="text" name="type" value="{{ event_type_filter or '' }}" placeholder="Filter by type (e.g. payment.succeeded)"
+             class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs w-64 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+      <button type="submit" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg">
+        Filter
+      </button>
+      {% if event_type_filter %}
+      <a href="/dashboard/events" class="text-xs text-slate-500 hover:text-slate-800">Clear</a>
+      {% endif %}
+    </form>
+    <div class="text-xs text-slate-500">
+      Total Events: <strong class="text-slate-800">{{ events|length }}</strong>
+    </div>
+  </div>
+
+  <!-- Events Table -->
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Event ID</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Type</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Idempotency Key</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Deliveries</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Created At</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Action</th>
+          </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-slate-200">
+          {% for evt in events %}
+          <tr class="hover:bg-slate-50 transition">
+            <td class="px-4 py-3 whitespace-nowrap text-xs font-mono font-semibold text-indigo-600">
+              <a href="/dashboard/events/{{ evt.id }}" class="hover:underline">{{ evt.id }}</a>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-900 font-medium">
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-50 text-indigo-700">
+                {{ evt.event_type }}
+              </span>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-500 font-mono">
+              {{ evt.idempotency_key or "—" }}
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-600 font-medium">
+              {{ evt.deliveries|length }} delivery(ies)
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-500">
+              {{ evt.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap text-right text-xs font-medium">
+              <a href="/dashboard/events/{{ evt.id }}" class="text-indigo-600 hover:text-indigo-900">View Details →</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="6" class="px-6 py-8 text-center text-sm text-slate-500">
+              No events found.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

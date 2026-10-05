@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Projects{% endblock %}
+{% block header_title %}Projects Management{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Create Project Card -->
+  <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+    <h3 class="text-base font-bold text-slate-900 mb-1">Create New Project</h3>
+    <p class="text-xs text-slate-500 mb-4">Each project has isolated endpoints, API keys, events, and delivery records.</p>
+    
+    <form action="/dashboard/projects" method="POST" class="flex flex-col sm:flex-row items-center gap-3">
+      <input type="text" name="name" required placeholder="Project Name (e.g. Production Storefront)"
+             class="flex-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+      <button type="submit" class="w-full sm:w-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-sm transition">
+        Create Project
+      </button>
+    </form>
+  </div>
+
+  <!-- Projects List -->
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200">
+      <h3 class="text-base font-bold text-slate-900">Your Projects</h3>
+    </div>
+
+    <div class="divide-y divide-slate-200">
+      {% for prj in projects %}
+      <div class="p-6 hover:bg-slate-50 transition flex items-center justify-between">
+        <div>
+          <div class="flex items-center space-x-2">
+            <h4 class="text-sm font-bold text-slate-900">{{ prj.name }}</h4>
+            {% if current_project and current_project.id == prj.id %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-indigo-100 text-indigo-800">
+                Active Project
+              </span>
+            {% endif %}
+          </div>
+          <p class="text-xs text-slate-500 font-mono mt-0.5">ID: {{ prj.id }} | Created: {{ prj.created_at.strftime('%Y-%m-%d') }}</p>
+        </div>
+
+        <div>
+          <form action="/dashboard/projects/switch" method="POST" class="inline">
+            <input type="hidden" name="project_id" value="{{ prj.id }}">
+            <button type="submit" class="px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold rounded-md shadow-sm transition">
+              Switch to this Project
+            </button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

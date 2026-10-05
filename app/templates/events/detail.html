@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Event Details - {{ event.id }}{% endblock %}
+{% block header_title %}Event {{ event.id }}{% endblock %}
+
+{% block header_actions %}
+<a href="/dashboard/events" class="text-xs font-semibold text-slate-600 hover:text-slate-900">
+  ← Back to Events
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Event Header Card -->
+  <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+    <div class="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-slate-200 gap-4">
+      <div>
+        <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 mb-2">
+          {{ event.event_type }}
+        </span>
+        <h2 class="text-lg font-mono font-bold text-slate-900">{{ event.id }}</h2>
+      </div>
+      <div class="text-xs text-slate-500 text-right">
+        <div>Received: <strong>{{ event.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</strong></div>
+        <div>Idempotency Key: <span class="font-mono text-slate-700">{{ event.idempotency_key or "None" }}</span></div>
+      </div>
+    </div>
+
+    <!-- Payload JSON Inspector -->
+    <div class="pt-4">
+      <div class="flex justify-between items-center mb-2">
+        <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">Wire Payload Data (JSON)</label>
+        <button onclick="copyToClipboard(document.getElementById('raw-payload-json').innerText, 'copy-json-btn')" id="copy-json-btn"
+                class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+          Copy JSON
+        </button>
+      </div>
+      <div class="code-container text-xs max-h-96 overflow-y-auto" id="raw-payload-json">
+<pre>{{ formatted_payload }}</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deliveries for this event -->
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200">
+      <h3 class="text-base font-bold text-slate-900">Endpoints & Deliveries for this Event ({{ event.deliveries|length }})</h3>
+    </div>
+    {% set deliveries = event.deliveries %}
+    {% include "deliveries/_table.html" %}
+  </div>
+
+</div>
+{% endblock %}

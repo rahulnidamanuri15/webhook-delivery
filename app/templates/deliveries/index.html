@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}Deliveries{% endblock %}
+{% block header_title %}Deliveries History{% endblock %}
+
+{% block header_actions %}
+<div class="flex items-center space-x-2">
+  <a href="/dashboard/dead-letters" class="inline-flex items-center px-3 py-1.5 border border-rose-200 text-xs font-semibold rounded-md shadow-sm text-rose-700 bg-rose-50 hover:bg-rose-100">
+    View Dead Letters ({{ dead_count }})
+  </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Status Filters -->
+  <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-2">
+    <span class="text-xs font-semibold text-slate-500 uppercase mr-2">Filter by Status:</span>
+    <a href="/dashboard/deliveries" class="px-3 py-1 text-xs rounded-full font-medium {% if not status_filter %}bg-indigo-600 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
+      All ({{ deliveries|length }})
+    </a>
+    <a href="/dashboard/deliveries?status=SUCCEEDED" class="px-3 py-1 text-xs rounded-full font-medium {% if status_filter == 'SUCCEEDED' %}bg-emerald-600 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
+      Succeeded
+    </a>
+    <a href="/dashboard/deliveries?status=RETRY_SCHEDULED" class="px-3 py-1 text-xs rounded-full font-medium {% if status_filter == 'RETRY_SCHEDULED' %}bg-amber-600 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
+      Retrying
+    </a>
+    <a href="/dashboard/deliveries?status=DEAD" class="px-3 py-1 text-xs rounded-full font-medium {% if status_filter == 'DEAD' %}bg-rose-600 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
+      Dead
+    </a>
+  </div>
+
+  <!-- Deliveries Table Container -->
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    {% include "deliveries/_table.html" %}
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}Endpoints{% endblock %}
+{% block header_title %}Webhook Endpoints{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Register Endpoint Form Card -->
+  <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+    <h3 class="text-base font-bold text-slate-900 mb-2">Register New Webhook Endpoint</h3>
+    <p class="text-xs text-slate-500 mb-4">Add an HTTP destination to receive event notifications from this project.</p>
+    
+    <form action="/dashboard/endpoints" method="POST" class="space-y-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Destination URL</label>
+          <input type="url" name="url" required placeholder="https://api.example.com/webhooks or http://127.0.0.1:8001/webhook"
+                 class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          <p class="text-[11px] text-slate-400 mt-1">Must be HTTPS in production. Loopback allowed for demo receiver in dev mode.</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Description (Optional)</label>
+          <input type="text" name="description" placeholder="e.g. Production Billing Notification Receiver"
+                 class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Event Subscriptions</label>
+          <input type="text" name="event_types" value="*" placeholder="payment.succeeded, order.shipped, or * for all"
+                 class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          <p class="text-[11px] text-slate-400 mt-1">Comma-separated event names, or '*' to receive all events.</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Rate Limit (per second)</label>
+          <input type="number" name="rate_limit_per_second" value="10" min="1" max="100"
+                 class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2">
+        <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-sm transition">
+          Create Endpoint
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Endpoints List -->
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200">
+      <h2 class="text-base font-bold text-slate-900">Registered Endpoints ({{ endpoints|length }})</h2>
+    </div>
+
+    <div class="divide-y divide-slate-200">
+      {% for ep in endpoints %}
+      <div class="p-6 hover:bg-slate-50 transition flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="space-y-1">
+          <div class="flex items-center space-x-2">
+            <span class="font-mono text-sm font-semibold text-slate-900">{{ ep.url }}</span>
+            {% if ep.enabled %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800">Enabled</span>
+            {% else %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-600">Disabled</span>
+            {% endif %}
+          </div>
+          {% if ep.description %}
+          <p class="text-xs text-slate-500">{{ ep.description }}</p>
+          {% endif %}
+          
+          <!-- Subscriptions -->
+          <div class="flex flex-wrap items-center gap-1.5 pt-1">
+            <span class="text-xs text-slate-400 font-medium">Subscribed to:</span>
+            {% for sub in ep.subscriptions %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-indigo-50 text-indigo-700 border border-indigo-100">
+                {{ sub.event_type }}
+              </span>
+            {% endfor %}
+            <span class="text-xs text-slate-400 ml-2">Limit: {{ ep.rate_limit_per_second }}/s</span>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+          <!-- Test Ping button -->
+          <form action="/dashboard/endpoints/{{ ep.id }}/ping" method="POST" class="inline">
+            <button type="submit" class="px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold rounded-md shadow-sm">
+              Send Test Ping
+            </button>
+          </form>
+
+          <!-- Toggle Enabled -->
+          <form action="/dashboard/endpoints/{{ ep.id }}/toggle" method="POST" class="inline">
+            <button type="submit" class="px-3 py-1.5 text-xs font-semibold rounded-md shadow-sm {% if ep.enabled %}text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200{% else %}text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200{% endif %}">
+              {{ "Disable" if ep.enabled else "Enable" }}
+            </button>
+          </form>
+
+          <!-- Details Link -->
+          <a href="/dashboard/endpoints/{{ ep.id }}" class="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-md shadow-sm">
+            View Details & Secret
+          </a>
+        </div>
+      </div>
+      {% else %}
+      <div class="p-8 text-center text-sm text-slate-500">
+        No endpoints registered yet. Fill out the form above to add your first destination!
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}
