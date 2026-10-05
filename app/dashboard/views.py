@@ -21,7 +21,21 @@ from app.services.delivery_service import replay_delivery
 from app.services.ssrf import validate_webhook_url
 from app.config import settings
 
-templates = Jinja2Templates(directory="app/templates")
+class CompatibleJinja2Templates(Jinja2Templates):
+    """Ensures seamless compatibility across Starlette versions for TemplateResponse."""
+    def TemplateResponse(self, *args, **kwargs):
+        if len(args) >= 2 and isinstance(args[0], str) and isinstance(args[1], dict):
+            name, context = args[0], args[1]
+            req = context.get("request") or kwargs.pop("request", None)
+            return super().TemplateResponse(request=req, name=name, context=context, **kwargs)
+        elif len(args) == 1 and isinstance(args[0], str) and "context" in kwargs:
+            name = args[0]
+            context = kwargs.pop("context")
+            req = context.get("request") or kwargs.pop("request", None)
+            return super().TemplateResponse(request=req, name=name, context=context, **kwargs)
+        return super().TemplateResponse(*args, **kwargs)
+
+templates = CompatibleJinja2Templates(directory="app/templates")
 router = APIRouter()
 
 def get_user_and_project(request: Request, db: Session):
