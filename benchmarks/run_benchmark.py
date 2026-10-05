@@ -14,7 +14,7 @@ import httpx
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-API_BASE_URL = os.getenv("BENCHMARK_API_URL", "http://127.0.0.1:8000")
+API_BASE_URL = os.getenv("BENCHMARK_API_URL", "http://127.0.0.1:8080")
 API_KEY = os.getenv("BENCHMARK_API_KEY", "wh_live_demo1234567890abcdef123456")
 TOTAL_EVENTS = int(os.getenv("BENCHMARK_TOTAL_EVENTS", "200"))
 CONCURRENCY = int(os.getenv("BENCHMARK_CONCURRENCY", "20"))

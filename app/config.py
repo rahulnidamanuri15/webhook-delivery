@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Reliable Webhook Delivery Platform"
     ENV: str = "development"
     DEBUG: bool = True
+    PORT: int = 8080
     
     # Database
     DATABASE_URL: str = Field(

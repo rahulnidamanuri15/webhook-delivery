@@ -89,7 +89,7 @@ A production-grade, multi-tenant webhook delivery platform built with **FastAPI*
 ```
 
 Demo credentials created:
-- **Dashboard URL**: `http://127.0.0.1:8000/auth/login`
+- **Dashboard URL**: `http://127.0.0.1:8080/auth/login`
 - **Email**: `demo@example.com`
 - **Password**: `Password123!`
 - **Pre-configured API Key**: `wh_live_demo1234567890abcdef123456`
@@ -101,12 +101,12 @@ In a new terminal:
 ```
 Open [http://127.0.0.1:8001](http://127.0.0.1:8001) to view the simulator panel.
 
-### 3. Start the Main Platform (Port 8000)
+### 3. Start the Main Platform (Port 8080)
 In another terminal:
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000 --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8080 --reload
 ```
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080) in your browser.
 
 ---
 
@@ -114,7 +114,7 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
 
 ### Example cURL Request:
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/events \
+curl -X POST http://127.0.0.1:8080/api/v1/events \
   -H "Authorization: Bearer wh_live_demo1234567890abcdef123456" \
   -H "Idempotency-Key: payment-txn-10492" \
   -H "Content-Type: application/json" \
@@ -162,7 +162,7 @@ Test coverage includes:
 
 1. **Open the Controllable Receiver** at `http://127.0.0.1:8001`.
    - Set mode to **"Fail First N Requests (then 200)"** with count = `3`.
-2. **Open the Platform Dashboard** at `http://127.0.0.1:8000`.
+2. **Open the Platform Dashboard** at `http://127.0.0.1:8080`.
    - Sign in with `demo@example.com` / `Password123!`.
 3. **Publish an Event**:
    - Click **"Publish Test Event"** and submit `payment.succeeded`.

@@ -103,7 +103,7 @@ def seed():
 
         print("Seeding completed successfully!")
         print("\n--- DEMO CREDENTIALS ---")
-        print("Login URL:     http://127.0.0.1:8000/auth/login")
+        print("Login URL:     http://127.0.0.1:8080/auth/login")
         print("Email:         demo@example.com")
         print("Password:      Password123!")
         print("API Key:       " + raw_key)
