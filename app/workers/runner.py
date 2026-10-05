@@ -2,6 +2,7 @@ import time
 import logging
 import signal
 import sys
+import threading
 from app.db.session import SessionLocal
 from app.models import Delivery, utc_now
 from app.services.delivery_service import execute_delivery, recover_abandoned_leases
@@ -56,8 +57,12 @@ def dispatch_once(batch_size: int = 50) -> int:
 def run_dispatcher_loop(poll_interval: float = 1.0):
     """Continuous polling loop for dispatching webhook deliveries."""
     logger.info("Starting reliable webhook delivery dispatcher loop...")
-    signal.signal(signal.SIGINT, handle_exit)
-    signal.signal(signal.SIGTERM, handle_exit)
+    try:
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, handle_exit)
+            signal.signal(signal.SIGTERM, handle_exit)
+    except (ValueError, Exception):
+        pass
 
     while not stop_requested:
         processed = dispatch_once()
