@@ -48,6 +48,23 @@ services:
              python scripts/seed.py &&
              uvicorn app.main:app --host 0.0.0.0 --port 8080"
 
+  dispatcher:
+    build: .
+    container_name: webhook_dispatcher
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+psycopg://postgres:postgrespassword@postgres:5432/webhook_platform
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=wh_dev_insecure_secret_key_change_in_production_1234567890
+      - SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
+      - ALLOW_LOCAL_RECEIVERS=True
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: python -m app.workers.runner
+
   celery_worker:
     build: .
     container_name: webhook_worker
@@ -64,6 +81,16 @@ services:
       redis:
         condition: service_started
     command: celery -A app.workers.celery_app.celery_app worker --loglevel=info -c 4
+
+  demo_receiver:
+    build: .
+    container_name: webhook_demo_receiver
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+    command: uvicorn demo_receiver.app:app --host 0.0.0.0 --port 8001
 
 volumes:
   pgdata:
