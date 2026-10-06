@@ -63,6 +63,20 @@ def healthcheck():
         "version": "0.1.0"
     }
 
+@app.get("/webhook")
+def webhook_guide():
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        """<!DOCTYPE html><html><body style="font-family:sans-serif;padding:40px;max-width:600px;margin:auto;line-height:1.6;">
+        <h2 style="color:#1e293b;">Looking for the Webhook Receiver?</h2>
+        <p>This is port <strong>8080</strong> (the Webhook Delivery Platform / Sender).</p>
+        <p>The <strong>Demo Receiver</strong> is running on port <strong>8001</strong>:</p>
+        <p><a href="http://localhost:8001/" style="display:inline-block;padding:10px 16px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:500;">
+        Open Demo Receiver on Port 8001 &rarr;
+        </a></p>
+        </body></html>"""
+    )
+
 @app.get("/metrics", tags=["Metrics"])
 def metrics(request: "Request" = None, db = Depends(get_db)):
     """Prometheus metrics endpoint. Protected by METRICS_API_KEY (Bearer token)

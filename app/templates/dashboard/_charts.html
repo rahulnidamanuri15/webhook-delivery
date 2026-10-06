@@ -55,8 +55,8 @@
         </button>
       </div>
 
-      <div class="relative w-full h-56">
-        <canvas id="deliveryTrafficChart" class="w-full h-full"></canvas>
+      <div class="w-full relative" style="height: 220px; min-height: 220px; max-height: 220px;">
+        <canvas id="deliveryTrafficChart" style="display: block; width: 100%; height: 100%;"></canvas>
       </div>
     </div>
 
@@ -79,8 +79,8 @@
 
       <!-- Real Interactive Donut Chart -->
       <div class="py-4 flex items-center justify-center space-x-6">
-        <div class="relative w-36 h-36 flex items-center justify-center">
-          <canvas id="outcomeDonutChart" class="w-full h-full"></canvas>
+        <div class="relative flex items-center justify-center" style="width: 140px; height: 140px; min-width: 140px; min-height: 140px;">
+          <canvas id="outcomeDonutChart" style="display: block; width: 100%; height: 100%;"></canvas>
           <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
             <span class="text-xl font-black text-slate-900 tracking-tight">{{ stats.delivery_success_rate }}%</span>
             <span class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Success</span>
@@ -143,7 +143,7 @@
 
 <!-- Real Dynamic Graph Initialization Script -->
 <script>
-(function() {
+window.renderDashboardCharts = function() {
   const chartLabels = {{ chart.labels | tojson if chart and chart.labels else ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "Now"] | tojson }};
   const succeededData = {{ chart.succeeded | tojson if chart and chart.succeeded else [0, 0, 0, 0, 0, 0, 0] | tojson }};
   const retryingData = {{ chart.retrying | tojson if chart and chart.retrying else [0, 0, 0, 0, 0, 0, 0] | tojson }};
@@ -332,5 +332,22 @@
       window._trafficVolumeChartInstance.update();
     }
   };
-})();
+};
+
+if (typeof window.renderDashboardCharts === 'function') {
+  window.renderDashboardCharts();
+}
+
+if (!window._chartsHtmxListenerAttached) {
+  window._chartsHtmxListenerAttached = true;
+  document.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail && evt.detail.target && (evt.detail.target.id === 'dashboard-charts-container' || evt.detail.target.id === 'dashboard-charts-wrapper')) {
+      setTimeout(function() {
+        if (typeof window.renderDashboardCharts === 'function') {
+          window.renderDashboardCharts();
+        }
+      }, 20);
+    }
+  });
+}
 </script>

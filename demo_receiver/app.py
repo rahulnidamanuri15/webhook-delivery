@@ -303,6 +303,20 @@ def clear(request: Request, admin_token: str = Form("")):
     config["current_failures"] = 0
     return RedirectResponse(url="/", status_code=303)
 
+@app.get("/webhook", response_class=HTMLResponse)
+def webhook_info_get():
+    """Friendly information page when accessing /webhook in a web browser."""
+    return HTMLResponse(
+        """<!DOCTYPE html><html><body style="font-family:sans-serif;padding:40px;max-width:600px;margin:auto;line-height:1.6;">
+        <h2 style="color:#1e293b;">Demo Webhook Receiver</h2>
+        <p>This endpoint receives <code>POST</code> webhook requests sent by the delivery platform.</p>
+        <p><a href="/" style="display:inline-block;padding:10px 16px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:500;">
+        Open Receiver Control Panel & Event Log &rarr;
+        </a></p>
+        </body></html>"""
+    )
+
+
 @app.post("/webhook")
 async def receive_webhook(
     request: Request,
