@@ -39,5 +39,4 @@ def test_pg_dispatcher_finds_due():
         assert evt.deliveries[0].id in ids
     finally:
         db.close()
-        Base.metadata.drop_all(bind=eng)
         eng.dispose()

@@ -29,6 +29,13 @@ def pg_available():
     return url.startswith("postgresql")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_db():
+    from app.db.session import engine, Base
+    Base.metadata.create_all(bind=engine)
+    yield
+
+
 @pytest.fixture
 def test_engine():
     eng = get_test_engine()
@@ -36,7 +43,9 @@ def test_engine():
     try:
         yield eng
     finally:
-        Base.metadata.drop_all(bind=eng)
+        url = os.getenv("DATABASE_URL", "")
+        if not url.startswith("postgresql"):
+            Base.metadata.drop_all(bind=eng)
         eng.dispose()
 
 
