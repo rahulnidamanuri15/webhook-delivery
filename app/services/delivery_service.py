@@ -483,6 +483,19 @@ def replay_delivery(db: Session, delivery_id: str) -> Delivery | None:
     if old_delivery.status != "DEAD":
         return None
 
+    # Prevent unlimited replays: only one active replay per DEAD delivery.
+    # If a non-terminal replay already exists, block the duplicate.
+    existing_replay = (
+        db.query(Delivery)
+        .filter(
+            Delivery.replay_of_delivery_id == delivery_id,
+            Delivery.status.notin_(["DEAD", "SUCCEEDED"]),
+        )
+        .first()
+    )
+    if existing_replay:
+        return None  # An active replay is already in progress
+
     endpoint = old_delivery.endpoint
     current_url = endpoint.url if endpoint else old_delivery.target_url_snapshot
 
