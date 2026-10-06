@@ -26,6 +26,7 @@ services:
 
   web:
     build: .
+    image: webhook-delivery:latest
     container_name: webhook_web
     restart: unless-stopped
     ports:
@@ -36,6 +37,11 @@ services:
       - SECRET_KEY=wh_dev_insecure_secret_key_change_in_production_1234567890
       - SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
       - ALLOW_LOCAL_RECEIVERS=True
+      - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:-}
+      - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-90}
+      - HTTP_CONNECT_TIMEOUT_SECONDS=${HTTP_CONNECT_TIMEOUT_SECONDS:-3.0}
+      - DISPATCH_MAX_WORKERS=${DISPATCH_MAX_WORKERS:-10}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - DEBUG=True
       - PORT=8080
     depends_on:
@@ -49,7 +55,7 @@ services:
              uvicorn app.main:app --host 0.0.0.0 --port 8080"
 
   dispatcher:
-    build: .
+    image: webhook-delivery:latest
     container_name: webhook_dispatcher
     restart: unless-stopped
     environment:
@@ -58,6 +64,11 @@ services:
       - SECRET_KEY=wh_dev_insecure_secret_key_change_in_production_1234567890
       - SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
       - ALLOW_LOCAL_RECEIVERS=True
+      - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:-}
+      - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-90}
+      - HTTP_CONNECT_TIMEOUT_SECONDS=${HTTP_CONNECT_TIMEOUT_SECONDS:-3.0}
+      - DISPATCH_MAX_WORKERS=${DISPATCH_MAX_WORKERS:-10}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,7 +77,7 @@ services:
     command: python -m app.workers.runner
 
   celery_worker:
-    build: .
+    image: webhook-delivery:latest
     container_name: webhook_worker
     restart: unless-stopped
     environment:
@@ -75,6 +86,10 @@ services:
       - SECRET_KEY=wh_dev_insecure_secret_key_change_in_production_1234567890
       - SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
       - ALLOW_LOCAL_RECEIVERS=True
+      - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:-}
+      - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-90}
+      - HTTP_CONNECT_TIMEOUT_SECONDS=${HTTP_CONNECT_TIMEOUT_SECONDS:-3.0}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,14 +98,33 @@ services:
     command: celery -A app.workers.celery_app.celery_app worker --loglevel=info -c 4
 
   demo_receiver:
-    build: .
+    image: webhook-delivery:latest
     container_name: webhook_demo_receiver
     restart: unless-stopped
     ports:
       - "8001:8001"
     environment:
       - PORT=8001
+      # Protect demo-receiver behaviour controls; must match the token used
+      # to call POST /configure, /config and /clear (see demo_receiver/app.py).
+      - DEMO_RECEIVER_ADMIN_TOKEN=${DEMO_RECEIVER_ADMIN_TOKEN:-demo-local-token-change-me}
     command: uvicorn demo_receiver.app:app --host 0.0.0.0 --port 8001
+
+  # Single-host production entrypoint: TLS termination + header hardening.
+  # HTTP on :80 always works. For HTTPS, place certs in ./deploy/tls/ and
+  # uncomment the 443 block in deploy/nginx.conf, then expose 443 below.
+  reverse_proxy:
+    image: nginx:1.27-alpine
+    container_name: webhook_proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      # - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # - ./deploy/tls:/etc/nginx/tls:ro
+    depends_on:
+      - web
 
 volumes:
   pgdata:

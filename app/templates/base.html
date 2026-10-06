@@ -5,30 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Dashboard{% endblock %} - Webhook Delivery Platform</title>
   
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              50: '#eef2ff',
-              100: '#e0e7ff',
-              500: '#6366f1',
-              600: '#4f46e5',
-              700: '#4338ca',
-            }
-          }
-        }
-      }
-    }
-  </script>
+  <!-- Tailwind CSS (production build via `npm run build:css` -> /static/css/dist.css).
+       Do not use the browser CDN in production. Rebuild with:
+         npm install && npm run build:css -->
+  <link rel="stylesheet" href="/static/css/dist.css">
   
   <!-- HTMX for partial page updates -->
   <script src="https://unpkg.com/htmx.org@1.9.10"></script>
   
-  <!-- Local App CSS -->
+  <!-- Chart.js for real-time interactive traffic & outcome graphs -->
+  <script src="/static/js/chart.umd.min.js"></script>
+  
+  <!-- Local App CSS (legacy variables / overrides) -->
   <link rel="stylesheet" href="/static/css/app.css">
   
   {% block extra_head %}{% endblock %}
@@ -37,111 +25,15 @@
 
 {% if current_user %}
 <div class="min-h-full flex">
-  <!-- Sidebar -->
-  <div class="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0 bg-slate-900 border-r border-slate-800">
-    <div class="flex-1 flex flex-col min-h-0">
-      
-      <!-- Brand Header -->
-      <div class="flex items-center h-16 flex-shrink-0 px-6 bg-slate-950 border-b border-slate-800/80">
-        <svg class="h-7 w-7 text-indigo-400 mr-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-        </svg>
-        <span class="text-white font-bold text-lg tracking-tight">WebhookHub</span>
-      </div>
-
-      <!-- Project Switcher -->
-      <div class="px-4 py-3 bg-slate-900/60 border-b border-slate-800">
-        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Active Project</label>
-        <div class="flex items-center justify-between bg-slate-800/90 rounded-md px-3 py-2 text-sm text-white">
-          <span class="font-medium truncate">{{ current_project.name if current_project else "No Project" }}</span>
-          <a href="/dashboard/projects" class="text-xs text-indigo-400 hover:text-indigo-300 ml-2">Switch</a>
-        </div>
-      </div>
-
-      <!-- Navigation Links -->
-      <nav class="mt-4 flex-1 px-3 space-y-1.5">
-        <a href="/dashboard" class="flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-200 hover:bg-slate-800 hover:text-white transition">
-          <svg class="mr-3 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-          </svg>
-          Overview
-        </a>
-
-        <a href="/dashboard/endpoints" class="flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-200 hover:bg-slate-800 hover:text-white transition">
-          <svg class="mr-3 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-          </svg>
-          Endpoints
-        </a>
-
-        <a href="/dashboard/events" class="flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-200 hover:bg-slate-800 hover:text-white transition">
-          <svg class="mr-3 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-          Events
-        </a>
-
-        <a href="/dashboard/deliveries" class="flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-200 hover:bg-slate-800 hover:text-white transition">
-          <svg class="mr-3 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          Deliveries
-        </a>
-
-        <a href="/dashboard/dead-letters" class="flex items-center px-3 py-2 text-sm font-medium rounded-lg text-red-300 hover:bg-red-950/40 hover:text-red-200 transition">
-          <svg class="mr-3 h-5 w-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          Dead Letters
-        </a>
-
-        <div class="pt-4 mt-4 border-t border-slate-800">
-          <span class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Settings & Audit</span>
-          <a href="/dashboard/api-keys" class="mt-2 flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-200 hover:bg-slate-800 hover:text-white transition">
-            <svg class="mr-3 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-            </svg>
-            API Keys
-          </a>
-          <a href="/dashboard/audit-logs" class="flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-200 hover:bg-slate-800 hover:text-white transition">
-            <svg class="mr-3 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            Audit Logs
-          </a>
-          <a href="/dashboard/team" class="flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-200 hover:bg-slate-800 hover:text-white transition">
-            <svg class="mr-3 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-            </svg>
-            Team & Roles
-          </a>
-        </div>
-      </nav>
-
-      <!-- User footer -->
-      <div class="flex-shrink-0 flex items-center p-4 bg-slate-950 border-t border-slate-800">
-        <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-white truncate">{{ current_user.email }}</p>
-          <a href="/auth/logout" class="text-xs font-medium text-slate-400 hover:text-red-400 transition">Sign out</a>
-        </div>
-      </div>
-    </div>
-  </div>
+  <!-- Sidebar Component -->
+  {% include "components/sidebar.html" %}
 
   <!-- Main Content Wrapper -->
   <div class="md:pl-64 flex flex-col flex-1">
     
-    <!-- Top Bar -->
-    <header class="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-10">
-      <div class="px-6 py-3.5 flex justify-between items-center">
-        <div>
-          <h1 class="text-xl font-bold text-slate-900 leading-tight">{% block header_title %}Overview{% endblock %}</h1>
-        </div>
-        <div class="flex items-center space-x-3">
-          {% block header_actions %}{% endblock %}
-        </div>
-      </div>
-    </header>
+    <!-- Top Bar Component -->
+    {% include "components/navbar.html" %}
+
 
     <!-- Flash messages -->
     {% if message %}
@@ -165,6 +57,21 @@
   </div>
 {% endif %}
 
+<!-- Svix / Stripe Style Slide-Over Inspector Drawer Container -->
+<div id="inspector-drawer-container" class="fixed inset-0 z-50 overflow-hidden hidden" aria-labelledby="slide-over-title" role="dialog" aria-modal="true">
+  <!-- Backdrop -->
+  <div id="inspector-drawer-backdrop" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity duration-300 opacity-0" onclick="closeInspectorDrawer()"></div>
+
+  <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
+    <div id="inspector-drawer-panel" class="w-screen max-w-2xl bg-white shadow-2xl border-l border-slate-200 flex flex-col transform translate-x-full transition-transform duration-300 ease-in-out">
+      <!-- Drawer Content Loaded Dynamically via HTMX -->
+      <div id="inspector-drawer-content" class="flex-1 flex flex-col overflow-hidden">
+        <div class="p-8 text-center text-sm text-slate-400">Loading delivery details...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
   function copyToClipboard(text, elementId) {
     navigator.clipboard.writeText(text).then(function() {
@@ -176,6 +83,36 @@
       }
     });
   }
+
+  function openInspectorDrawer() {
+    const container = document.getElementById('inspector-drawer-container');
+    const backdrop = document.getElementById('inspector-drawer-backdrop');
+    const panel = document.getElementById('inspector-drawer-panel');
+    if (container && backdrop && panel) {
+      container.classList.remove('hidden');
+      setTimeout(() => {
+        backdrop.classList.remove('opacity-0');
+        panel.classList.remove('translate-x-full');
+      }, 10);
+    }
+  }
+
+  function closeInspectorDrawer() {
+    const container = document.getElementById('inspector-drawer-container');
+    const backdrop = document.getElementById('inspector-drawer-backdrop');
+    const panel = document.getElementById('inspector-drawer-panel');
+    if (container && backdrop && panel) {
+      backdrop.classList.add('opacity-0');
+      panel.classList.add('translate-x-full');
+      setTimeout(() => {
+        container.classList.add('hidden');
+      }, 300);
+    }
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeInspectorDrawer();
+  });
 </script>
 </body>
 </html>

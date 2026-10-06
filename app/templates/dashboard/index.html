@@ -1,191 +1,215 @@
 {% extends "base.html" %}
 
 {% block title %}Dashboard Overview{% endblock %}
-{% block header_title %}System Overview{% endblock %}
+{% block header_title %}System Observability & Deliveries{% endblock %}
 
 {% block header_actions %}
-<a href="/dashboard/events/send-test" class="inline-flex items-center px-3 py-1.5 border border-slate-300 shadow-sm text-xs font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50">
-  <svg class="h-4 w-4 mr-1 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-  </svg>
-  Publish Test Event
-</a>
-<a href="/dashboard/endpoints" class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-semibold rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
-  + Register Endpoint
-</a>
+<div class="flex items-center space-x-2.5">
+  <a href="/dashboard/events/send-test" class="inline-flex items-center px-3 py-1.5 border border-slate-300 shadow-xs text-xs font-semibold rounded-lg text-slate-700 bg-white hover:bg-slate-50 transition">
+    <svg class="h-3.5 w-3.5 mr-1.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+    </svg>
+    Publish Test Event
+  </a>
+  <a href="/dashboard/endpoints" class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-semibold rounded-lg shadow-xs text-white bg-indigo-600 hover:bg-indigo-700 transition">
+    + Register Destination
+  </a>
+</div>
 {% endblock %}
 
 {% block content %}
 <div class="space-y-6">
 
-  <!-- Metric Stat Cards -->
+  <!-- 1. KPI Stats Row (HyperUI Style) -->
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-    
-    <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-      <div>
-        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Events Accepted</p>
-        <p class="text-2xl font-extrabold text-slate-900 mt-1">{{ stats.total_events }}</p>
-      </div>
-      <div class="p-3 bg-indigo-50 text-indigo-600 rounded-lg">
-        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-      </div>
-    </div>
-
-    <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-      <div>
-        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Deliveries Succeeded</p>
-        <p class="text-2xl font-extrabold text-emerald-600 mt-1">{{ stats.succeeded_deliveries }}</p>
-      </div>
-      <div class="p-3 bg-emerald-50 text-emerald-600 rounded-lg">
-        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-        </svg>
-      </div>
-    </div>
-
-    <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-      <div>
-        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pending / Retrying</p>
-        <p class="text-2xl font-extrabold text-amber-600 mt-1">{{ stats.pending_deliveries }}</p>
-      </div>
-      <div class="p-3 bg-amber-50 text-amber-600 rounded-lg">
-        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      </div>
-    </div>
-
-    <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-      <div>
-        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Dead Letters</p>
-        <p class="text-2xl font-extrabold text-rose-600 mt-1">{{ stats.dead_deliveries }}</p>
-      </div>
-      <div class="p-3 bg-rose-50 text-rose-600 rounded-lg">
-        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-        </svg>
-      </div>
-    </div>
-
-  </div>
-
-  <!-- Success Rate Comparison Callout (Section 10 Requirement) -->
-  <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-5">
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-      <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Reliability & Success Rates</h3>
-      <span class="text-xs text-slate-400 font-mono">Durable PostgreSQL Source of Truth</span>
-    </div>
-
-    <!-- Visual Delivery Breakdown Distribution Bar -->
-    <div class="space-y-1.5">
-      <div class="flex justify-between text-xs font-semibold text-slate-600">
-        <span>Delivery Distribution</span>
-        <span>
-          <span class="text-emerald-600">● {{ stats.succeeded_deliveries }} Succeeded</span> &nbsp;|&nbsp;
-          <span class="text-amber-600">● {{ stats.pending_deliveries }} In-Flight/Retrying</span> &nbsp;|&nbsp;
-          <span class="text-rose-600">● {{ stats.dead_deliveries }} Dead</span>
+    <!-- Stat 1: Total Volume -->
+    <div class="bg-white p-5 rounded-xl border border-slate-200/90 shadow-xs relative">
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Deliveries</span>
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+          PostgreSQL Truth
         </span>
       </div>
-      <div class="w-full h-3.5 bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
-        {% set total_del = stats.succeeded_deliveries + stats.pending_deliveries + stats.dead_deliveries %}
-        {% if total_del > 0 %}
-          <div style="width: {{ (stats.succeeded_deliveries / total_del * 100)|round(1) }}%;" class="bg-emerald-500 h-full transition-all duration-500" title="{{ stats.succeeded_deliveries }} Succeeded"></div>
-          <div style="width: {{ (stats.pending_deliveries / total_del * 100)|round(1) }}%;" class="bg-amber-400 h-full transition-all duration-500" title="{{ stats.pending_deliveries }} Pending/Retrying"></div>
-          <div style="width: {{ (stats.dead_deliveries / total_del * 100)|round(1) }}%;" class="bg-rose-500 h-full transition-all duration-500" title="{{ stats.dead_deliveries }} Dead"></div>
+      <div class="mt-2 flex items-baseline space-x-2">
+        <span class="text-2xl font-bold text-slate-900">
+          {{ stats.succeeded_deliveries + stats.pending_deliveries + stats.dead_deliveries }}
+        </span>
+        <span class="text-xs text-slate-400 font-medium">dispatches</span>
+      </div>
+      <div class="mt-2 flex items-center text-xs text-slate-500 space-x-3">
+        <span class="flex items-center"><span class="h-2 w-2 rounded-full bg-emerald-500 mr-1.5"></span>{{ stats.succeeded_deliveries }} 2xx OK</span>
+        <span class="flex items-center"><span class="h-2 w-2 rounded-full bg-rose-500 mr-1.5"></span>{{ stats.dead_deliveries }} Dead</span>
+      </div>
+    </div>
+
+    <!-- Stat 2: Success Rate -->
+    <div class="bg-white p-5 rounded-xl border border-slate-200/90 shadow-xs relative">
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Eventual Success Rate</span>
+        <span class="text-xs font-semibold text-emerald-600">SLO: 99.5%</span>
+      </div>
+      <div class="mt-2 flex items-baseline space-x-2">
+        <span class="text-2xl font-bold text-emerald-600">{{ stats.delivery_success_rate }}%</span>
+        <span class="text-xs text-slate-400 font-medium">delivered</span>
+      </div>
+      <div class="w-full bg-slate-100 rounded-full h-1.5 mt-3">
+        <div class="bg-emerald-500 h-1.5 rounded-full" style="width: {{ stats.delivery_success_rate }}%"></div>
+      </div>
+    </div>
+
+    <!-- Stat 3: Due / In-Flight -->
+    <div class="bg-white p-5 rounded-xl border border-slate-200/90 shadow-xs relative">
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Deliveries Due / Retrying</span>
+        {% if stats.deliveries_due > 0 %}
+          <span class="h-2 w-2 rounded-full bg-amber-500 animate-ping"></span>
         {% else %}
-          <div class="w-full bg-slate-200 h-full"></div>
+          <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
         {% endif %}
       </div>
+      <div class="mt-2 flex items-baseline space-x-2">
+        <span class="text-2xl font-bold {% if stats.deliveries_due > 0 %}text-amber-600{% else %}text-slate-900{% endif %}">
+          {{ stats.deliveries_due }}
+        </span>
+        <span class="text-xs text-slate-400 font-medium">due now</span>
+      </div>
+      <div class="mt-2 text-xs text-slate-500 flex items-center justify-between">
+        <span>{{ stats.pending_deliveries }} scheduled/in-flight</span>
+        <span class="font-semibold text-emerald-600">Leases OK</span>
+      </div>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
-      <div class="p-4 bg-slate-50 rounded-lg border border-slate-100">
-        <div class="text-xs text-slate-500 font-medium">Eventual Delivery Success Rate</div>
-        <div class="text-3xl font-extrabold text-slate-900 mt-1">{{ stats.delivery_success_rate }}%</div>
-        <div class="text-xs text-slate-500 mt-1">Percentage of deliveries that successfully reach destination (after retries)</div>
+    <!-- Stat 4: Latency -->
+    <div class="bg-white p-5 rounded-xl border border-slate-200/90 shadow-xs relative">
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">End-to-End Latency</span>
+        <span class="text-xs font-medium text-indigo-600 font-mono">Avg</span>
       </div>
-
-      <div class="p-4 bg-slate-50 rounded-lg border border-slate-100">
-        <div class="text-xs text-slate-500 font-medium">Attempt Success Rate</div>
-        <div class="text-3xl font-extrabold text-slate-900 mt-1">{{ stats.attempt_success_rate }}%</div>
-        <div class="text-xs text-slate-500 mt-1">First-pass and retry attempts combined ({{ stats.total_attempts }} total HTTP calls)</div>
+      <div class="mt-2 flex items-baseline space-x-2">
+        <span class="text-2xl font-bold text-slate-900">{{ stats.avg_e2e_duration_ms }} ms</span>
+        <span class="text-xs text-emerald-600 font-semibold">(ACK: {{ stats.avg_latency_ms }}ms)</span>
       </div>
-
-      <div class="p-4 bg-slate-50 rounded-lg border border-slate-100">
-        <div class="text-xs text-slate-500 font-medium">Avg Request Latency</div>
-        <div class="text-3xl font-extrabold text-slate-900 mt-1">{{ stats.avg_latency_ms }} ms</div>
-        <div class="text-xs text-slate-500 mt-1">Average HTTP turnaround time per delivery attempt</div>
-      </div>
+      <p class="text-xs text-slate-400 mt-2">Time from API acceptance to receiver 200</p>
     </div>
   </div>
 
-  <!-- Live Deliveries Table with HTMX Refresh -->
-  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-    <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center">
-      <div>
-        <h2 class="text-base font-bold text-slate-900">Recent Webhook Deliveries</h2>
-        <p class="text-xs text-slate-500">Auto-refreshing via HTMX every 5 seconds</p>
+  <!-- 2. Observability Graphs Section -->
+  <div id="dashboard-charts-wrapper" class="w-full">
+    {% include "dashboard/_charts.html" %}
+  </div>
+
+  <!-- 3. Preline Toolbar with HTMX Controls -->
+  <div class="bg-white p-4 rounded-xl border border-slate-200/90 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
+    <div class="flex flex-wrap items-center gap-2 w-full md:w-auto">
+      <!-- Search Input -->
+      <div class="relative w-full sm:w-72">
+        <input type="text" name="q" placeholder="Search delivery ID, event type, or URL..."
+               hx-get="/dashboard/deliveries/table"
+               hx-trigger="keyup changed delay:300ms, search"
+               hx-target="#deliveries-table-container"
+               class="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+        <svg class="w-4 h-4 text-slate-400 absolute left-2.5 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
       </div>
-      <div class="flex items-center space-x-2">
-        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
-          <span class="w-1.5 h-1.5 mr-1 bg-emerald-500 rounded-full animate-ping"></span> Live polling
-        </span>
-        <button hx-get="/dashboard/deliveries/table" hx-target="#deliveries-container" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-          Refresh now
-        </button>
+
+      <!-- Filter Buttons -->
+      <div class="flex items-center space-x-1 text-xs">
+        <a href="/dashboard/deliveries" class="px-3 py-1 rounded-md bg-slate-900 text-white font-medium">All Deliveries</a>
+        <a href="/dashboard/deliveries?status=SUCCEEDED" class="px-3 py-1 rounded-md text-slate-600 hover:bg-slate-100 font-medium">2xx Succeeded</a>
+        <a href="/dashboard/deliveries?status=RETRY_SCHEDULED" class="px-3 py-1 rounded-md text-amber-700 bg-amber-50 hover:bg-amber-100 font-medium">Retrying</a>
+        <a href="/dashboard/dead-letters" class="px-3 py-1 rounded-md text-rose-700 bg-rose-50 hover:bg-rose-100 font-medium">Dead Letters ({{ stats.dead_deliveries }})</a>
       </div>
     </div>
 
-    <div id="deliveries-container" hx-get="/dashboard/deliveries/table" hx-trigger="every 5s" hx-swap="innerHTML">
+    <!-- HTMX Auto-refresh Toggle Switch -->
+    <div class="flex items-center space-x-3 text-xs w-full md:w-auto justify-end">
+      <label class="flex items-center space-x-2 cursor-pointer select-none">
+        <input type="checkbox" id="auto-refresh-toggle" checked class="rounded text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5">
+        <span class="text-slate-600 font-medium flex items-center">
+          <span class="h-2 w-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
+          HTMX Live Auto-poll (3s)
+        </span>
+      </label>
+      <span class="text-slate-300">|</span>
+      <button hx-get="/dashboard/deliveries/table" hx-target="#deliveries-table-container" class="text-slate-500 hover:text-slate-900 flex items-center space-x-1 font-medium">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+        <span>Refresh</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- 4. Deliveries Table Container (Auto-Polled by HTMX) -->
+  <div class="bg-white rounded-xl border border-slate-200/90 shadow-xs overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+      <div>
+        <h3 class="text-base font-bold text-slate-900">Recent Webhook Deliveries</h3>
+        <p class="text-xs text-slate-500">Click any row to inspect HTTP headers, HMAC signature, and response timeline in the slide-over drawer.</p>
+      </div>
+      <a href="/dashboard/deliveries" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">
+        View All Deliveries →
+      </a>
+    </div>
+
+    <div id="deliveries-table-container"
+         hx-get="/dashboard/deliveries/table"
+         hx-trigger="every 3s [document.getElementById('auto-refresh-toggle') && document.getElementById('auto-refresh-toggle').checked]"
+         hx-swap="innerHTML">
+      {% set deliveries = recent_deliveries %}
       {% include "deliveries/_table.html" %}
     </div>
   </div>
 
-  <!-- Recent Events Section -->
-  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-    <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center">
-      <h2 class="text-base font-bold text-slate-900">Recently Ingested Events</h2>
-      <a href="/dashboard/events" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">View all events →</a>
+  <!-- 5. Recent Ingested Events Section -->
+  <div class="bg-white rounded-xl border border-slate-200/90 shadow-xs overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+      <div>
+        <h3 class="text-base font-bold text-slate-900">Recent Ingested Events</h3>
+        <p class="text-xs text-slate-500">Events accepted via POST /api/v1/events with deterministic canonical hashing.</p>
+      </div>
+      <a href="/dashboard/events" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">
+        View All Events →
+      </a>
     </div>
-    
+
     <div class="overflow-x-auto">
-      <table class="min-w-full divide-y divide-slate-200">
-        <thead class="bg-slate-50">
+      <table class="min-w-full divide-y divide-slate-200 text-left">
+        <thead class="bg-slate-50/80 text-[11px] font-semibold uppercase text-slate-500 tracking-wider">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Event ID</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Type</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Idempotency Key</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Deliveries</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Timestamp</th>
+            <th class="px-4 py-3">Event ID</th>
+            <th class="px-4 py-3">Type</th>
+            <th class="px-4 py-3">Idempotency Key</th>
+            <th class="px-4 py-3">Fan-out Deliveries</th>
+            <th class="px-4 py-3">Ingested At</th>
+            <th class="px-4 py-3 text-right">Action</th>
           </tr>
         </thead>
-        <tbody class="bg-white divide-y divide-slate-200">
+        <tbody class="divide-y divide-slate-200/80 text-xs">
           {% for evt in recent_events %}
-          <tr class="hover:bg-slate-50 transition">
-            <td class="px-4 py-3 whitespace-nowrap text-xs font-mono font-semibold text-indigo-600">
+          <tr class="hover:bg-slate-50/80 transition">
+            <td class="px-4 py-3 font-mono font-semibold text-indigo-600">
               <a href="/dashboard/events/{{ evt.id }}" class="hover:underline">{{ evt.id }}</a>
             </td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-900 font-medium">
-              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700">
+            <td class="px-4 py-3 font-medium text-slate-900">
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
                 {{ evt.event_type }}
               </span>
             </td>
-            <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-500 font-mono">
+            <td class="px-4 py-3 font-mono text-slate-500">
               {{ evt.idempotency_key or "—" }}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-600 font-medium">
+            <td class="px-4 py-3 text-slate-600 font-medium">
               {{ evt.deliveries|length }} endpoint{{ "s" if evt.deliveries|length != 1 else "" }}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-500">
-              {{ evt.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+            <td class="px-4 py-3 text-slate-500 font-mono">
+              {{ evt.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+            </td>
+            <td class="px-4 py-3 text-right font-medium">
+              <a href="/dashboard/events/{{ evt.id }}" class="text-indigo-600 hover:text-indigo-900">Inspect Event →</a>
             </td>
           </tr>
           {% else %}
           <tr>
-            <td colspan="5" class="px-6 py-6 text-center text-sm text-slate-500">
-              No events ingested yet. Use the API or the "Publish Test Event" button to send an event.
+            <td colspan="6" class="px-6 py-8 text-center text-sm text-slate-500">
+              No events ingested yet. Use the API or click "Publish Test Event" above!
             </td>
           </tr>
           {% endfor %}

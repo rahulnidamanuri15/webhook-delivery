@@ -21,11 +21,13 @@
       </div>
       <div class="flex items-center space-x-2">
         <form action="/dashboard/endpoints/{{ endpoint.id }}/ping" method="POST" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold rounded-md shadow-sm">
             Send Test Ping
           </button>
         </form>
         <form action="/dashboard/endpoints/{{ endpoint.id }}/toggle" method="POST" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="px-3 py-1.5 text-xs font-semibold rounded-md shadow-sm {% if endpoint.enabled %}text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200{% else %}text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200{% endif %}">
             {{ "Disable Endpoint" if endpoint.enabled else "Enable Endpoint" }}
           </button>
@@ -35,8 +37,39 @@
 
     <!-- Details Grid -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
-      
-      <!-- Left: Signing Secret -->
+
+      <!-- Left: Edit endpoint (full CRUD) -->
+      <div class="space-y-3">
+        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider">Edit Endpoint</label>
+        <form action="/dashboard/endpoints/{{ endpoint.id }}/edit" method="POST" class="space-y-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Destination URL</label>
+            <input type="url" name="url" required value="{{ endpoint.url }}" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Description</label>
+            <input type="text" name="description" value="{{ endpoint.description or '' }}" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Subscriptions (comma-separated)</label>
+              <input type="text" name="event_types" value="{{ endpoint.subscriptions|map(attribute='event_type')|join(', ') }}" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Rate limit /s</label>
+              <input type="number" name="rate_limit_per_second" value="{{ endpoint.rate_limit_per_second }}" min="1" max="100" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+            </div>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button type="submit" class="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">Save changes</button>
+          </div>
+        </form>
+        <form action="/dashboard/endpoints/{{ endpoint.id }}/delete" method="POST" class="inline" onsubmit="return confirm('Delete this endpoint? Existing deliveries keep their URL snapshot.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold rounded-lg border border-rose-200">Delete endpoint</button>
+        </form>
+      </div>
       <div class="space-y-3">
         <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider">Signing Secret</label>
         <p class="text-xs text-slate-500">
@@ -52,6 +85,7 @@
           </button>
           <form action="/dashboard/endpoints/{{ endpoint.id }}/rotate-secret" method="POST" class="inline"
                 onsubmit="return confirm('Rotate signing secret? Old secret will immediately stop working for new deliveries.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold text-xs rounded-lg border border-amber-300 transition">
               Rotate Secret
             </button>

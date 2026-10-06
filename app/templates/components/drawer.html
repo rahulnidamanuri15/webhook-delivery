@@ -1,0 +1,202 @@
+<!-- Slide-over Inspector Drawer Content Fragment -->
+<div class="flex flex-col h-full bg-white">
+
+  <!-- Drawer Header -->
+  <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/80">
+    <div class="space-y-1">
+      <div class="flex items-center space-x-2">
+        {% if delivery.status == 'SUCCEEDED' %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 mr-1.5"></span>
+            200 OK
+          </span>
+        {% elif delivery.status == 'RETRY_SCHEDULED' %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-600/20">
+            <span class="h-1.5 w-1.5 rounded-full bg-amber-500 mr-1.5 animate-pulse"></span>
+            Retrying (Attempt {{ delivery.attempt_count }})
+          </span>
+        {% elif delivery.status == 'DEAD' %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-600/20">
+            <span class="h-1.5 w-1.5 rounded-full bg-rose-500 mr-1.5"></span>
+            Dead Letter
+          </span>
+        {% else %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
+            {{ delivery.status }}
+          </span>
+        {% endif %}
+        <span class="font-mono text-sm font-bold text-slate-900">{{ delivery.id }}</span>
+      </div>
+      <p class="text-xs font-mono text-slate-500 truncate max-w-md" title="{{ delivery.target_url_snapshot }}">
+        {{ delivery.target_url_snapshot }}
+      </p>
+    </div>
+    
+    <button type="button" onclick="closeInspectorDrawer()" class="h-8 w-8 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-200/60 flex items-center justify-center transition">
+      <span class="sr-only">Close drawer</span>
+      <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+    </button>
+  </div>
+
+  <!-- Preline UI Tabs Header (Request | Response | Timeline) -->
+  <div class="border-b border-slate-200 px-6 flex space-x-6 text-xs font-semibold bg-white">
+    <button type="button" id="drawer-tab-btn-request" onclick="switchDrawerTab('request')" class="py-3 border-b-2 border-indigo-600 text-indigo-600 transition">
+      Request Envelope
+    </button>
+    <button type="button" id="drawer-tab-btn-response" onclick="switchDrawerTab('response')" class="py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-900 transition">
+      Response
+    </button>
+    <button type="button" id="drawer-tab-btn-timeline" onclick="switchDrawerTab('timeline')" class="py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-900 transition flex items-center">
+      Attempt Timeline
+      <span class="ml-1.5 px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono text-[10px]">{{ delivery.attempts|length }}</span>
+    </button>
+  </div>
+
+  <!-- Drawer Body -->
+  <div class="flex-1 overflow-y-auto p-6 space-y-6">
+
+    <!-- TAB 1: REQUEST -->
+    <div id="drawer-tab-content-request" class="space-y-4">
+      <div>
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-xs font-bold text-slate-700 uppercase tracking-wider">Outbound Headers</span>
+          <span class="text-[11px] text-slate-400 font-semibold">HMAC-SHA256 Signed</span>
+        </div>
+        <div class="bg-slate-900 rounded-lg p-3 font-mono text-xs text-slate-200 overflow-x-auto">
+          <div><span class="text-indigo-400">Webhook-Event-Id:</span> {{ delivery.event_id }}</div>
+          <div><span class="text-indigo-400">Webhook-Delivery-Id:</span> {{ delivery.id }}</div>
+          <div><span class="text-indigo-400">Webhook-Timestamp:</span> {{ delivery.created_at.timestamp()|int }}</div>
+          <div><span class="text-indigo-400">Content-Type:</span> application/json</div>
+          <div><span class="text-indigo-400">User-Agent:</span> WebhookDeliveryService/1.0</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-xs font-bold text-slate-700 uppercase tracking-wider">Wire Payload Body</span>
+          <button type="button" onclick="copyToClipboard(document.getElementById('drawer-payload-code').innerText, 'drawer-copy-btn')" id="drawer-copy-btn"
+                  class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">
+            Copy JSON
+          </button>
+        </div>
+        <pre id="drawer-payload-code" class="bg-slate-900 rounded-lg p-4 font-mono text-xs text-emerald-400 overflow-x-auto max-h-72">{{ formatted_payload }}</pre>
+      </div>
+
+      <div class="pt-2 text-xs text-slate-500">
+        Event Type: <span class="font-semibold text-slate-900 font-mono">{{ delivery.event.event_type }}</span>
+        {% if delivery.event.idempotency_key %}
+          | Idempotency Key: <span class="font-mono text-slate-700">{{ delivery.event.idempotency_key }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- TAB 2: RESPONSE -->
+    <div id="drawer-tab-content-response" class="space-y-4 hidden">
+      {% set last_attempt = delivery.attempts[-1] if delivery.attempts else None %}
+      {% if last_attempt %}
+        <div class="grid grid-cols-3 gap-3 text-center">
+          <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+            <span class="text-[11px] text-slate-500 uppercase font-semibold">HTTP Status</span>
+            <div class="text-base font-bold {% if last_attempt.outcome == 'SUCCESS' %}text-emerald-600{% elif last_attempt.outcome == 'RETRYABLE_ERROR' %}text-amber-600{% else %}text-rose-600{% endif %} mt-0.5">
+              {{ last_attempt.http_status or last_attempt.error_code or "ERROR" }}
+            </div>
+          </div>
+          <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+            <span class="text-[11px] text-slate-500 uppercase font-semibold">Duration</span>
+            <div class="text-base font-bold text-slate-900 mt-0.5">{{ last_attempt.duration_ms }} ms</div>
+          </div>
+          <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+            <span class="text-[11px] text-slate-500 uppercase font-semibold">Outcome</span>
+            <div class="text-base font-bold text-slate-900 mt-0.5 text-xs uppercase">{{ last_attempt.outcome }}</div>
+          </div>
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-xs font-bold text-slate-700 uppercase tracking-wider">Response Excerpt (Bounded)</span>
+            <span class="text-[11px] text-slate-400">Max 1,024 bytes</span>
+          </div>
+          <div class="bg-slate-900 rounded-lg p-4 font-mono text-xs text-slate-200 overflow-x-auto max-h-72">
+            {{ last_attempt.response_excerpt or "No response body recorded from receiver." }}
+          </div>
+        </div>
+      {% else %}
+        <div class="p-8 text-center text-sm text-slate-500 bg-slate-50 rounded-lg border border-slate-200">
+          No attempts made yet. Delivery is queued for background execution.
+        </div>
+      {% endif %}
+    </div>
+
+    <!-- TAB 3: TIMELINE -->
+    <div id="drawer-tab-content-timeline" class="space-y-4 hidden">
+      <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Delivery Execution Timeline</h4>
+      {% if delivery.attempts %}
+      <div class="relative pl-6 space-y-6 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
+        {% for att in delivery.attempts %}
+        <div class="relative">
+          <span class="absolute -left-6 top-1.5 flex h-4 w-4 items-center justify-center rounded-full {% if att.outcome == 'SUCCESS' %}bg-emerald-500 ring-4 ring-emerald-100{% elif att.outcome == 'RETRYABLE_ERROR' %}bg-amber-500 ring-4 ring-amber-100{% else %}bg-rose-500 ring-4 ring-rose-100{% endif %}"></span>
+          <div class="bg-slate-50 p-3.5 rounded-lg border border-slate-200 space-y-1">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-slate-900 text-xs">Attempt #{{ att.attempt_number }}</span>
+              <span class="text-[11px] text-slate-400 font-mono">{{ att.started_at.strftime('%H:%M:%S UTC') }}</span>
+            </div>
+            <p class="text-xs text-slate-600">
+              Outcome: <strong class="{% if att.outcome == 'SUCCESS' %}text-emerald-700{% elif att.outcome == 'RETRYABLE_ERROR' %}text-amber-700{% else %}text-rose-700{% endif %}">{{ att.outcome }}</strong>
+              (HTTP {{ att.http_status or 'N/A' }} in {{ att.duration_ms }} ms)
+            </p>
+            {% if att.response_excerpt %}
+            <div class="bg-slate-900/90 text-slate-200 font-mono text-[11px] p-2 rounded max-h-20 overflow-y-auto mt-1">
+              {{ att.response_excerpt }}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+        <div class="text-center py-6 text-sm text-slate-500">
+          No attempts recorded.
+        </div>
+      {% endif %}
+    </div>
+
+  </div>
+
+  <!-- Drawer Footer -->
+  <div class="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+    <a href="/dashboard/deliveries/{{ delivery.id }}" class="text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center space-x-1">
+      <span>Open in Full Page</span>
+      <span>↗</span>
+    </a>
+    <div class="flex items-center space-x-2">
+      {% if delivery.status == 'DEAD' %}
+      <form action="/dashboard/deliveries/{{ delivery.id }}/replay" method="POST" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shadow-sm">
+          Replay Delivery Now
+        </button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function switchDrawerTab(tab) {
+    const tabs = ['request', 'response', 'timeline'];
+    tabs.forEach(t => {
+      const btn = document.getElementById(`drawer-tab-btn-${t}`);
+      const content = document.getElementById(`drawer-tab-content-${t}`);
+      if (btn && content) {
+        if (t === tab) {
+          btn.className = 'py-3 border-b-2 border-indigo-600 text-indigo-600 font-bold transition';
+          content.classList.remove('hidden');
+        } else {
+          btn.className = 'py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-900 transition';
+          content.classList.add('hidden');
+        }
+      }
+    });
+  }
+</script>

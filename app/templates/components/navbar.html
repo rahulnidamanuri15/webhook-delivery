@@ -1,0 +1,11 @@
+<!-- Top Bar / Navbar Component -->
+<header class="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-10">
+  <div class="px-6 py-3.5 flex justify-between items-center">
+    <div>
+      <h1 class="text-xl font-bold text-slate-900 leading-tight">{% block header_title %}Overview{% endblock %}</h1>
+    </div>
+    <div class="flex items-center space-x-3">
+      {% block header_actions %}{% endblock %}
+    </div>
+  </div>
+</header>

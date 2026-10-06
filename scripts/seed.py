@@ -70,9 +70,10 @@ def seed():
         # 5. Endpoint (pointing to controllable demo receiver)
         signing_secret = "whsec_demosecret1234567890abcdef"
         encrypted_secret = encrypt_secret(signing_secret)
+        receiver_url = "http://demo_receiver:8001/webhook" if "postgres" in os.getenv("DATABASE_URL", "") else "http://127.0.0.1:8001/webhook"
         endpoint = Endpoint(
             project_id=project.id,
-            url="http://127.0.0.1:8001/webhook",
+            url=receiver_url,
             description="Controllable Local Demo Receiver",
             encrypted_signing_secret=encrypted_secret,
             enabled=True,

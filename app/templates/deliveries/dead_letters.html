@@ -33,9 +33,10 @@
   <!-- Dead Letters Table Container -->
   <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
     <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center">
-      <h3 class="text-base font-bold text-slate-900">Failed Deliveries ({{ deliveries|length }})</h3>
+      <h3 class="text-base font-bold text-slate-900">Failed Deliveries ({{ total_count if total_count is not none else deliveries|length }})</h3>
       {% if deliveries %}
       <form action="/dashboard/dead-letters/replay-all" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-md shadow-sm">
           Replay All Dead Letters
         </button>
@@ -44,6 +45,7 @@
     </div>
 
     {% include "deliveries/_table.html" %}
+    {% include "components/pagination.html" %}
   </div>
 
 </div>

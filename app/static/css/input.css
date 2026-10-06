@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  line-height: 1;
+}
+.badge-pending { background-color: #fef3c7; color: #92400e; }
+.badge-in_flight { background-color: #e0e7ff; color: #3730a3; }
+.badge-succeeded { background-color: #d1fae5; color: #065f46; }
+.badge-retry_scheduled { background-color: #fed7aa; color: #9a3412; }
+.badge-dead { background-color: #fee2e2; color: #991b1b; }
+.code-container {
+  background: #0f172a;
+  color: #f8fafc;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  overflow-x: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}

@@ -16,6 +16,32 @@ from app.services.delivery_service import (
 from app.services.security import generate_signing_secret, encrypt_secret
 from app.config import settings
 
+
+def _mock_stream_response(status_code: int = 200, text: str = "", headers: dict | None = None):
+    """Builds a mocked httpx.Client whose .stream() yields a bounded response."""
+    from unittest.mock import MagicMock, patch
+    mock_resp = MagicMock()
+    mock_resp.status_code = status_code
+    mock_resp.headers = headers or {}
+    body = (text or "").encode("utf-8")
+    # Yield in 4096-byte chunks like the real streaming reader
+    mock_resp.iter_bytes.return_value = [body[i:i+4096] for i in range(0, max(1, len(body)), 4096)] if body else [b""]
+    mock_resp.close.return_value = None
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__enter__.return_value = mock_resp
+    mock_stream_ctx.__exit__.return_value = False
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.stream.return_value = mock_stream_ctx
+    # Legacy .post fallback (not used by current code, kept for compat)
+    mock_post_resp = MagicMock()
+    mock_post_resp.status_code = status_code
+    mock_post_resp.text = text
+    mock_post_resp.headers = headers or {}
+    mock_client.post.return_value = mock_post_resp
+    return patch("httpx.Client", return_value=mock_client)
+
 @pytest.fixture
 def delivery_db():
     engine = create_engine("sqlite:///:memory:")
@@ -53,12 +79,7 @@ def test_successful_delivery(delivery_db):
     delivery = event.deliveries[0]
     assert delivery.status == "PENDING"
 
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.text = '{"received": true}'
-    mock_resp.headers = {}
-
-    with patch("httpx.Client.post", return_value=mock_resp):
+    with _mock_stream_response(200, '{"received": true}'):
         success = execute_delivery(delivery_db, delivery.id)
         assert success is True
 
@@ -75,12 +96,7 @@ def test_retryable_error_schedules_backoff(delivery_db):
     event, _, _ = ingest_event(delivery_db, project.id, "order.created", {"order_id": "ord_102"})
     delivery = event.deliveries[0]
 
-    mock_resp = MagicMock()
-    mock_resp.status_code = 500
-    mock_resp.text = 'Internal Server Error'
-    mock_resp.headers = {}
-
-    with patch("httpx.Client.post", return_value=mock_resp):
+    with _mock_stream_response(500, 'Internal Server Error'):
         success = execute_delivery(delivery_db, delivery.id)
         assert success is True
 
@@ -96,12 +112,7 @@ def test_permanent_error_marks_delivery_dead(delivery_db):
     delivery = event.deliveries[0]
 
     # 400 Bad Request is permanent client error
-    mock_resp = MagicMock()
-    mock_resp.status_code = 400
-    mock_resp.text = 'Bad Request: invalid format'
-    mock_resp.headers = {}
-
-    with patch("httpx.Client.post", return_value=mock_resp):
+    with _mock_stream_response(400, 'Bad Request: invalid format'):
         execute_delivery(delivery_db, delivery.id)
 
     delivery_db.refresh(delivery)
@@ -118,12 +129,7 @@ def test_exhausted_retry_budget_marks_delivery_dead(delivery_db):
     delivery.attempt_count = settings.MAX_DELIVERY_ATTEMPTS - 1
     delivery_db.commit()
 
-    mock_resp = MagicMock()
-    mock_resp.status_code = 503
-    mock_resp.text = 'Service Unavailable'
-    mock_resp.headers = {}
-
-    with patch("httpx.Client.post", return_value=mock_resp):
+    with _mock_stream_response(503, 'Service Unavailable'):
         execute_delivery(delivery_db, delivery.id)
 
     delivery_db.refresh(delivery)

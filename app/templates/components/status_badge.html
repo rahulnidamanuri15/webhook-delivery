@@ -1,0 +1,33 @@
+<!-- Status Badge Macro Component -->
+{% macro status_badge(status) %}
+  {% if status == 'SUCCEEDED' %}
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
+      <span class="w-1.5 h-1.5 mr-1.5 bg-emerald-500 rounded-full"></span>
+      Succeeded
+    </span>
+  {% elif status == 'PENDING' %}
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-800">
+      <span class="w-1.5 h-1.5 mr-1.5 bg-slate-400 rounded-full"></span>
+      Pending
+    </span>
+  {% elif status == 'IN_FLIGHT' %}
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800 animate-pulse">
+      <span class="w-1.5 h-1.5 mr-1.5 bg-indigo-600 rounded-full"></span>
+      In Flight
+    </span>
+  {% elif status == 'RETRY_SCHEDULED' %}
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
+      <span class="w-1.5 h-1.5 mr-1.5 bg-amber-500 rounded-full"></span>
+      Retry Scheduled
+    </span>
+  {% elif status == 'DEAD' %}
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-800">
+      <span class="w-1.5 h-1.5 mr-1.5 bg-rose-500 rounded-full"></span>
+      Dead
+    </span>
+  {% else %}
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-800">
+      {{ status }}
+    </span>
+  {% endif %}
+{% endmacro %}

@@ -81,30 +81,38 @@ class RedisTokenBucket:
         self._script = self.redis.register_script(self.LUA_SCRIPT)
 
     def acquire(self, key: str, rate_per_second: float, capacity: Optional[float] = None) -> Tuple[bool, float]:
+        """Atomic Redis token-bucket. On Redis failure raises so callers can
+        fall back to the in-memory bucket (documented fail-local behavior)."""
         if capacity is None:
             capacity = float(rate_per_second)
         now = time.time()
-        try:
-            result = self._script(
-                keys=[f"ratelimit:{key}"],
-                args=[rate_per_second, capacity, now]
-            )
-            allowed = bool(result[0] == 1)
-            wait_time = float(result[1]) if not allowed else 0.0
-            return allowed, wait_time
-        except Exception:
-            # Fallback to local memory if Redis fails
-            return True, 0.0
+        result = self._script(
+            keys=[f"ratelimit:{key}"],
+            args=[rate_per_second, capacity, now]
+        )
+        allowed = bool(result[0] == 1)
+        wait_time = float(result[1]) if not allowed else 0.0
+        return allowed, wait_time
 
-# Initialize Rate Limiter with graceful fallback
+# Initialize Rate Limiter with graceful fallback.
+# Documented behavior when Redis is unavailable (see docs/SECURITY.md):
+# rate limiting falls back to a per-process in-memory token bucket. This keeps
+# a single instance safe but does NOT coordinate across replicas. For
+# multi-replica production, Redis is required; monitor `redis_bucket is None`.
 memory_bucket = MemoryTokenBucket()
 redis_bucket: Optional[RedisTokenBucket] = None
+redis_unavailable_logged = False
 
 try:
     r = redis.from_url(settings.REDIS_URL, socket_connect_timeout=0.2)
     r.ping()
     redis_bucket = RedisTokenBucket(r)
-except Exception:
+except Exception as _e:
+    import logging as _logging
+    _logging.getLogger("webhook.rate_limiter").warning(
+        "Redis unavailable at startup, using in-memory rate limiter (per-process only): %s",
+        _e,
+    )
     redis_bucket = None
 
 def check_endpoint_rate_limit(endpoint_id: str, rate_per_second: int) -> Tuple[bool, float]:
@@ -131,3 +139,20 @@ def check_ingestion_rate_limit(project_id: str, max_per_second: float = 30.0) ->
         except Exception:
             pass
     return memory_bucket.acquire(f"ingest:{project_id}", max_per_second)
+
+def check_login_rate_limit(client_ip: str, email: str = "") -> Tuple[bool, float]:
+    """
+    Checks login rate limit per client IP (and email).
+    Allows 5 attempts per 60 seconds (burst 5).
+    Returns (allowed, wait_seconds).
+    """
+    key = f"login:{client_ip}:{email.strip().lower()}" if email else f"login:{client_ip}"
+    rate_per_sec = 5.0 / 60.0  # 5 per minute
+    capacity = 5.0
+    if redis_bucket:
+        try:
+            return redis_bucket.acquire(key, rate_per_sec, capacity)
+        except Exception:
+            pass
+    return memory_bucket.acquire(key, rate_per_sec, capacity)
+

@@ -13,8 +13,33 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
 
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: webhook_platform_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
-      DATABASE_URL: sqlite:///./test_ci.db
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/webhook_platform_test
+      REDIS_URL: redis://localhost:6379/0
       SECRET_KEY: ci_secret_key_testing_only_1234567890_super_safe
       SIGNING_SECRET_ENCRYPTION_KEY: yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
       ALLOW_LOCAL_RECEIVERS: "true"
@@ -33,12 +58,30 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install . pytest
+          pip install ".[test]" pytest || pip install . pytest
+          pip install psycopg[binary] redis ruff black
 
-      - name: Run database migrations
+      - name: Lint (ruff + black check)
+        run: |
+          ruff check app demo_receiver tests scripts benchmarks
+          black --check app demo_receiver tests scripts benchmarks || true
+
+      - name: Run database migrations (PostgreSQL)
         run: |
           alembic upgrade head
 
-      - name: Run test suite
+      - name: Run test suite (PostgreSQL + Redis)
         run: |
           pytest -v --tb=short
+
+      - name: Set up Node for Tailwind build
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Build production CSS
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build:css
+          test -f app/static/css/dist.css

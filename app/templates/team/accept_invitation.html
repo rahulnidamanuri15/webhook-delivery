@@ -27,6 +27,7 @@
 
       {% if current_user %}
       <form action="/auth/invitations/{{ invitation.token }}/accept" method="POST" class="space-y-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <p class="text-sm text-slate-300">
           Signed in as <strong>{{ current_user.email }}</strong>.
         </p>
@@ -37,6 +38,7 @@
       </form>
       {% else %}
       <form action="/auth/invitations/{{ invitation.token }}/accept" method="POST" class="space-y-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div>
           <label class="block text-sm font-medium text-slate-200">Email</label>
           <input type="email" name="email" value="{{ invitation.email }}" readonly

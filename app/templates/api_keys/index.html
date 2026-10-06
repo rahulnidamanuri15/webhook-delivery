@@ -40,6 +40,7 @@
     <p class="text-xs text-slate-500 mb-4">API keys are scoped to your active project ({{ current_project.name }}).</p>
     
     <form action="/dashboard/api-keys" method="POST" class="flex flex-col sm:flex-row items-center gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="text" name="name" required placeholder="Key name (e.g. Production Ingestion Service)"
              class="flex-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
       <button type="submit" class="w-full sm:w-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-sm transition">
@@ -55,7 +56,7 @@
     </div>
 
     <div class="overflow-x-auto">
-      <table class="min-w-full divide-y divide-slate-200">
+      <table class="min-w-full divide-y border-slate-200">
         <thead class="bg-slate-50">
           <tr>
             <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Key Name</th>
@@ -91,6 +92,7 @@
             <td class="px-4 py-3 whitespace-nowrap text-right text-xs font-medium">
               {% if k.is_active %}
               <form action="/dashboard/api-keys/{{ k.id }}/revoke" method="POST" class="inline" onsubmit="return confirm('Are you sure you want to revoke this API key? Applications using it will immediately be rejected.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="text-rose-600 hover:text-rose-900 font-semibold">
                   Revoke Key
                 </button>

@@ -14,6 +14,7 @@
     </p>
 
     <form action="/dashboard/team/invite" method="POST" class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div>
         <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Collaborator Email</label>
         <input type="email" name="email" required placeholder="colleague@example.com"
@@ -44,7 +45,7 @@
 
     <div class="divide-y divide-slate-200">
       {% for m in members %}
-      <div class="p-6 hover:bg-slate-50 transition flex items-center justify-between">
+      <div class="p-6 hover:bg-slate-50 transition flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div class="flex items-center space-x-3">
           <div class="h-9 w-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm uppercase">
             {{ m.user.email[0] }}
@@ -62,6 +63,20 @@
             </div>
             <p class="text-xs text-slate-500 mt-0.5">Joined: {{ m.created_at.strftime('%Y-%m-%d') }}</p>
           </div>
+        </div>
+        <div class="flex items-center space-x-2">
+          <form action="/dashboard/team/members/{{ m.id }}/role" method="POST" class="flex items-center space-x-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <select name="role" class="px-2 py-1 border border-slate-300 rounded text-xs bg-white">
+              <option value="member" {% if m.role == 'member' %}selected{% endif %}>Member</option>
+              <option value="admin" {% if m.role == 'admin' %}selected{% endif %}>Admin</option>
+            </select>
+            <button type="submit" class="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded">Update role</button>
+          </form>
+          <form action="/dashboard/team/members/{{ m.id }}/remove" method="POST" class="inline" onsubmit="return confirm('Remove this member?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold rounded border border-rose-200">Remove</button>
+          </form>
         </div>
       </div>
       {% endfor %}
@@ -120,6 +135,7 @@
             <td class="px-4 py-3 whitespace-nowrap text-right text-xs font-medium">
               {% if inv.status == 'PENDING' %}
               <form action="/dashboard/team/invitations/{{ inv.id }}/revoke" method="POST" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="text-rose-600 hover:text-rose-900 font-semibold">Revoke</button>
               </form>
               {% endif %}

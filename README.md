@@ -97,9 +97,11 @@ Demo credentials created:
 ### 2. Start the Controllable Demo Receiver (Port 8001)
 In a new terminal:
 ```powershell
+$env:DEMO_RECEIVER_ADMIN_TOKEN="demo-local-token-change-me"
 .\.venv\Scripts\python.exe -m uvicorn demo_receiver.app:app --port 8001 --reload
 ```
 Open [http://127.0.0.1:8001](http://127.0.0.1:8001) to view the simulator panel.
+Admin controls (`/configure`, `/config`, `/clear`) require loopback or `X-Admin-Token`.
 
 ### 3. Start the Main Platform (Port 8080)
 In another terminal:
@@ -107,6 +109,14 @@ In another terminal:
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8080 --reload
 ```
 Open [http://127.0.0.1:8080](http://127.0.0.1:8080) in your browser.
+
+Production CSS is prebuilt (`npm run build:css` → `app/static/css/dist.css`);
+do not use the Tailwind browser CDN. Docker builds it automatically.
+For single-host prod, use `compose.yaml` `reverse_proxy` (nginx, `deploy/nginx.conf`)
+and set `ALLOW_LOCAL_RECEIVERS=False` + `ALLOWED_RECEIVER_DOMAINS`.
+
+See `docs/DEMO.md` for the scripted 8-minute demo, `docs/SECURITY.md` for the
+retention/allowlist/Redis-fallback policy, and `docs/BENCHMARK_REPORT.md` for measurements.
 
 ---
 

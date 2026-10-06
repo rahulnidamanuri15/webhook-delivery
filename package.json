@@ -1,0 +1,13 @@
+{
+  "name": "webhook-delivery-platform",
+  "version": "1.0.0",
+  "description": "Reliable Webhook Delivery Platform static frontend asset build configuration",
+  "scripts": {
+    "build:css": "tailwindcss -i ./app/static/css/input.css -o ./app/static/css/dist.css --minify",
+    "watch:css": "tailwindcss -i ./app/static/css/input.css -o ./app/static/css/dist.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.0.0",
+    "tailwindcss": "^4.0.0"
+  }
+}

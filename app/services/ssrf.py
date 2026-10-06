@@ -21,6 +21,32 @@ def is_ip_prohibited(ip_str: str) -> bool:
     except ValueError:
         return True
 
+def get_domain_allowlist() -> list[str]:
+    """Parses ALLOWED_RECEIVER_DOMAINS (comma-separated) into lowercase domains."""
+    raw = (settings.ALLOWED_RECEIVER_DOMAINS or "").strip()
+    if not raw:
+        return []
+    return [d.strip().lower().lstrip(".") for d in raw.split(",") if d.strip()]
+
+
+def is_domain_allowed(hostname: str) -> tuple[bool, str | None]:
+    """Enforces the public-demo domain allowlist when configured.
+
+    Exact match or subdomain match (e.g. allowlist 'example.com' permits
+    'api.example.com'). Returns (allowed, error).
+    """
+    allowlist = get_domain_allowlist()
+    if not allowlist:
+        return True, None
+    host = (hostname or "").lower()
+    for allowed in allowlist:
+        if host == allowed or host.endswith("." + allowed):
+            return True, None
+    return False, (
+        f"Domain '{hostname}' is not in the configured receiver allowlist "
+        f"({', '.join(allowlist)})."
+    )
+
 def validate_webhook_url(url: str) -> Tuple[bool, Optional[str]]:
     """
     Validates a destination URL against SSRF attacks (scheme, credentials, and DNS resolution).
@@ -46,8 +72,15 @@ def validate_webhook_url(url: str) -> Tuple[bool, Optional[str]]:
     if not hostname:
         return False, "URL must contain a valid hostname."
 
-    # Allow localhost / 127.0.0.1 for local demo receiver in development
-    if settings.ALLOW_LOCAL_RECEIVERS and hostname.lower() in ("localhost", "127.0.0.1", "::1"):
+    # Public-demo domain allowlist (checked before localhost exception so that
+    # a configured allowlist also restricts even local names unless listed).
+    allowed, allow_err = is_domain_allowed(hostname)
+    if not allowed:
+        return False, allow_err
+
+    # Allow localhost / 127.0.0.1 and Docker container hosts for local demo receiver in development
+    local_hosts = ("localhost", "127.0.0.1", "::1", "demo_receiver", "webhook_demo_receiver", "host.docker.internal")
+    if settings.ALLOW_LOCAL_RECEIVERS and hostname.lower() in local_hosts:
         return True, None
 
     # Resolve hostname to IP addresses and verify against restricted ranges
@@ -85,8 +118,9 @@ def resolve_and_pin_destination(url: str) -> Tuple[bool, Optional[str], str, Dic
     parsed = urlparse(url)
     hostname = parsed.hostname
 
-    # If already an IP or in dev demo mode allowing localhost
-    if settings.ALLOW_LOCAL_RECEIVERS and hostname.lower() in ("localhost", "127.0.0.1", "::1"):
+    # If already an IP or in dev demo mode allowing localhost / Docker hosts
+    local_hosts = ("localhost", "127.0.0.1", "::1", "demo_receiver", "webhook_demo_receiver", "host.docker.internal")
+    if settings.ALLOW_LOCAL_RECEIVERS and hostname.lower() in local_hosts:
         return True, None, url, {}
 
     try:

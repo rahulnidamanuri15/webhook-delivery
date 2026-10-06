@@ -9,11 +9,11 @@ from app.db.session import engine, Base, get_db
 from app.api.v1 import api_router
 from app.dashboard.views import router as dashboard_router
 from app.workers.runner import run_dispatcher_loop, stop_requested
+from app.services.logging_util import setup_structured_logging
+from app.services import tracing as _tracing  # noqa: F401 - configures OTel provider
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
+setup_structured_logging()
+import logging
 logger = logging.getLogger("webhook.main")
 
 dispatcher_thread = None

@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Dict, Any, List
 from fastapi import FastAPI, Request, Response, Form, Header, HTTPException
@@ -5,6 +6,53 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from app.services.signing import verify_webhook_signature
 
 app = FastAPI(title="Controllable Webhook Demo Receiver")
+
+ADMIN_TOKEN = os.getenv("DEMO_RECEIVER_ADMIN_TOKEN", "")
+
+
+def _require_admin(request: Request, token_field: str | None = None):
+    """Protects behaviour-changing controls.
+
+    - If DEMO_RECEIVER_ADMIN_TOKEN is unset: only allow callers from
+      loopback (local demo use).
+    - If set: require matching token via `X-Admin-Token` header or form field
+      `admin_token`, except loopback callers which remain allowed for local demos.
+    """
+    client_host = ""
+    try:
+        client_host = request.client.host if request.client else ""
+    except Exception:
+        client_host = ""
+    is_loopback = client_host in ("127.0.0.1", "::1", "localhost", "testclient", "")
+    if not ADMIN_TOKEN:
+        if is_loopback:
+            return
+    # Allow loopback or Docker bridge private network when using the default dev token
+    is_docker_or_local = is_loopback
+    if not is_docker_or_local and client_host:
+        try:
+            import ipaddress
+            is_docker_or_local = ipaddress.ip_address(client_host).is_private
+        except ValueError:
+            pass
+
+    provided = (token_field or "").strip() or request.headers.get("x-admin-token", "").strip()
+    if not provided:
+        try:
+            provided = (request.query_params.get("admin_token", "") or "").strip()
+        except Exception:
+            provided = ""
+
+    # In local dev / docker compose with default dev token, allow local browser/script callers
+    if ADMIN_TOKEN == "demo-local-token-change-me" and is_docker_or_local and not provided:
+        return
+
+    import hmac as _hmac
+    if not provided or not _hmac.compare_digest(provided, ADMIN_TOKEN):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Invalid admin token for demo-receiver controls. Expected token configured via DEMO_RECEIVER_ADMIN_TOKEN (default: 'demo-local-token-change-me'). Supply header 'X-Admin-Token: {ADMIN_TOKEN or 'demo-local-token-change-me'}' or form field 'admin_token'."
+        )
 
 # Receiver state and configurations
 config = {
@@ -19,6 +67,34 @@ config = {
 
 received_events: List[Dict[str, Any]] = []
 seen_event_ids: set = set()
+
+# Durable deduplication: persist seen event IDs so a receiver restart does not
+# re-process an already-handled event (demonstrates at-least-once + dedup).
+_DEDUP_STATE_FILE = os.getenv("DEMO_RECEIVER_STATE_FILE", "/tmp/demo_receiver_dedup.json")
+
+def _load_dedup_state() -> None:
+    try:
+        if os.path.exists(_DEDUP_STATE_FILE):
+            import json as _json
+            with open(_DEDUP_STATE_FILE, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+            for eid in data.get("seen_event_ids", []):
+                if isinstance(eid, str):
+                    seen_event_ids.add(eid)
+    except Exception:
+        pass
+
+def _persist_dedup_state() -> None:
+    try:
+        import json as _json
+        tmp = _DEDUP_STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            _json.dump({"seen_event_ids": sorted(seen_event_ids)[-5000:]}, f)
+        os.replace(tmp, _DEDUP_STATE_FILE)
+    except Exception:
+        pass
+
+_load_dedup_state()
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -77,6 +153,7 @@ def index():
                     <p style="margin:4px 0 0 0; color: #6b7280;">Listening on <code>http://127.0.0.1:8001/webhook</code></p>
                 </div>
                 <form action="/clear" method="post">
+                    <input type="hidden" name="admin_token" value="{ADMIN_TOKEN}">
                     <button class="btn btn-danger" type="submit">Clear Logs</button>
                 </form>
             </div>
@@ -115,6 +192,11 @@ def index():
                     </div>
 
                     <div>
+                        <label style="display:block; font-size:13px; font-weight:500; margin-bottom:4px;">Admin Token</label>
+                        <input type="text" name="admin_token" value="{ADMIN_TOKEN}" placeholder="demo-local-token-change-me" style="width:90%;">
+                    </div>
+
+                    <div>
                         <button class="btn" type="submit" style="width:100%;">Update Behavior</button>
                     </div>
                 </form>
@@ -150,13 +232,47 @@ def index():
     </html>
     """
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.post("/config")
+async def update_config_json(request: Request):
+    data = await request.json()
+    _require_admin(request, str(data.get("admin_token", "")) if isinstance(data, dict) else None)
+    if "mode" in data:
+        mode_val = data["mode"]
+        if mode_val == "status_code":
+            sc = int(data.get("status_code", 200))
+            if sc < 300:
+                config["mode"] = "success"
+            else:
+                config["mode"] = "fail_n"
+                config["fail_count"] = 9999
+                config["failure_status_code"] = sc
+        else:
+            config["mode"] = mode_val
+    if "fail_count" in data:
+        config["fail_count"] = int(data["fail_count"])
+    if "failure_status_code" in data:
+        config["failure_status_code"] = int(data["failure_status_code"])
+    elif "status_code" in data and int(data["status_code"]) >= 300:
+        config["failure_status_code"] = int(data["status_code"])
+    if "endpoint_secret" in data:
+        config["endpoint_secret"] = str(data["endpoint_secret"]).strip()
+    config["current_failures"] = 0
+    return {"status": "updated", "config": config}
+
 @app.post("/configure")
 def configure(
+    request: Request,
     mode: str = Form(...),
     fail_count: int = Form(...),
     failure_status_code: int = Form(...),
-    endpoint_secret: str = Form("")
+    endpoint_secret: str = Form(""),
+    admin_token: str = Form(""),
 ):
+    _require_admin(request, admin_token)
     config["mode"] = mode
     config["fail_count"] = max(1, fail_count)
     config["failure_status_code"] = failure_status_code
@@ -165,9 +281,11 @@ def configure(
     return RedirectResponse(url="/", status_code=303)
 
 @app.post("/clear")
-def clear():
+def clear(request: Request, admin_token: str = Form("")):
+    _require_admin(request, admin_token)
     received_events.clear()
     seen_event_ids.clear()
+    _persist_dedup_state()
     config["current_failures"] = 0
     return RedirectResponse(url="/", status_code=303)
 
@@ -195,13 +313,14 @@ async def receive_webhook(
         )
         sig_valid = valid
 
-    # 2. Event ID Deduplication check
+    # 2. Event ID Deduplication check (durable across restarts)
     is_duplicate = False
     if webhook_event_id:
         if webhook_event_id in seen_event_ids:
             is_duplicate = True
         else:
             seen_event_ids.add(webhook_event_id)
+            _persist_dedup_state()
 
     # 3. Simulate configured receiver behavior
     mode = config["mode"]

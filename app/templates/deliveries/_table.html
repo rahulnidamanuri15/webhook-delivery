@@ -1,75 +1,113 @@
+<!-- Modern Preline & Stripe Inspired Deliveries Table Fragment -->
 <div class="overflow-x-auto">
-  <table class="min-w-full divide-y divide-slate-200">
-    <thead class="bg-slate-50">
+  <table class="min-w-full divide-y divide-slate-200 text-left">
+    <thead class="bg-slate-50/80 text-[11px] font-semibold uppercase text-slate-500 tracking-wider">
       <tr>
-        <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Delivery ID</th>
-        <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Event</th>
-        <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Target Endpoint</th>
-        <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
-        <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Attempts</th>
-        <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Next Attempt / Done</th>
-        <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Action</th>
+        <th class="px-4 py-3">Status</th>
+        <th class="px-4 py-3">Event Type</th>
+        <th class="px-4 py-3">Target Endpoint</th>
+        <th class="px-4 py-3">Delivery ID</th>
+        <th class="px-4 py-3">Attempts</th>
+        <th class="px-4 py-3">Next Attempt / Done</th>
+        <th class="px-4 py-3 text-right">Action</th>
       </tr>
     </thead>
-    <tbody class="bg-white divide-y divide-slate-200">
+    <tbody class="bg-white divide-y divide-slate-200 text-xs" id="deliveries-table-body">
       {% for dlv in deliveries %}
-      <tr class="hover:bg-slate-50/80 transition">
-        <td class="px-4 py-3 whitespace-nowrap text-xs font-mono text-indigo-600 font-semibold">
-          <a href="/dashboard/deliveries/{{ dlv.id }}" class="hover:underline">{{ dlv.id }}</a>
-          {% if dlv.replay_of_delivery_id %}
-          <span class="ml-1 text-slate-400 text-[10px]" title="Replay of {{ dlv.replay_of_delivery_id }}">↳ replay</span>
+      <tr class="hover:bg-indigo-50/30 transition cursor-pointer group"
+          hx-get="/dashboard/deliveries/{{ dlv.id }}/drawer"
+          hx-target="#inspector-drawer-content"
+          hx-swap="innerHTML"
+          onclick="openInspectorDrawer()">
+        
+        <!-- Status Pill -->
+        <td class="px-4 py-3.5 whitespace-nowrap">
+          {% if dlv.status == 'SUCCEEDED' %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+              <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 mr-1.5"></span>
+              200 OK
+            </span>
+          {% elif dlv.status == 'RETRY_SCHEDULED' %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-600/20">
+              <span class="h-1.5 w-1.5 rounded-full bg-amber-500 mr-1.5 animate-pulse"></span>
+              Retrying
+            </span>
+          {% elif dlv.status == 'DEAD' %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-600/20">
+              <span class="h-1.5 w-1.5 rounded-full bg-rose-500 mr-1.5"></span>
+              Dead Letter
+            </span>
+          {% elif dlv.status == 'IN_FLIGHT' %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-600/20">
+              <span class="h-1.5 w-1.5 rounded-full bg-indigo-500 mr-1.5 animate-ping"></span>
+              In Flight
+            </span>
+          {% else %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
+              <span class="h-1.5 w-1.5 rounded-full bg-slate-400 mr-1.5"></span>
+              {{ dlv.status }}
+            </span>
           {% endif %}
         </td>
-        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-900 font-medium">
-          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800">
+
+        <!-- Event Type -->
+        <td class="px-4 py-3.5 whitespace-nowrap font-medium text-slate-900">
+          <span class="font-mono text-indigo-700 bg-indigo-50/70 px-1.5 py-0.5 rounded border border-indigo-100">
             {{ dlv.event.event_type }}
           </span>
         </td>
-        <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-600 font-mono truncate max-w-xs" title="{{ dlv.target_url_snapshot }}">
+
+        <!-- Target Endpoint -->
+        <td class="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600 font-mono truncate max-w-xs" title="{{ dlv.target_url_snapshot }}">
           {{ dlv.target_url_snapshot }}
         </td>
-        <td class="px-4 py-3 whitespace-nowrap">
-          {% if dlv.status == 'SUCCEEDED' %}
-            <span class="badge badge-succeeded">SUCCEEDED</span>
-          {% elif dlv.status == 'PENDING' %}
-            <span class="badge badge-pending">PENDING</span>
-          {% elif dlv.status == 'IN_FLIGHT' %}
-            <span class="badge badge-in_flight">IN FLIGHT</span>
-          {% elif dlv.status == 'RETRY_SCHEDULED' %}
-            <span class="badge badge-retry_scheduled">RETRY SCHEDULED</span>
-          {% elif dlv.status == 'DEAD' %}
-            <span class="badge badge-dead">DEAD LETTER</span>
-          {% else %}
-            <span class="badge">{{ dlv.status }}</span>
+
+        <!-- Delivery ID -->
+        <td class="px-4 py-3.5 whitespace-nowrap font-mono text-slate-500 group-hover:text-indigo-600 font-semibold">
+          {{ dlv.id }}
+          {% if dlv.replay_of_delivery_id %}
+            <span class="ml-1 text-slate-400 text-[10px]" title="Replay of {{ dlv.replay_of_delivery_id }}">↳ replay</span>
           {% endif %}
         </td>
-        <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-600 font-medium">
+
+        <!-- Attempt Count -->
+        <td class="px-4 py-3.5 whitespace-nowrap text-slate-600">
           {{ dlv.attempt_count }} attempt{{ "s" if dlv.attempt_count != 1 else "" }}
         </td>
-        <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-500 font-mono">
+
+        <!-- Next Attempt / Timestamp -->
+        <td class="px-4 py-3.5 whitespace-nowrap text-xs text-slate-500 font-mono">
           {% if dlv.status == 'SUCCEEDED' %}
-            {{ dlv.completed_at.strftime('%H:%M:%S') if dlv.completed_at else 'Done' }}
+            <span class="text-emerald-700 font-medium">{{ dlv.completed_at.strftime('%H:%M:%S UTC') if dlv.completed_at else 'Done' }}</span>
           {% elif dlv.status == 'RETRY_SCHEDULED' %}
-            retry @ {{ dlv.next_attempt_at.strftime('%H:%M:%S') }}
+            <span class="text-amber-700 font-medium">retry @ {{ dlv.next_attempt_at.strftime('%H:%M:%S UTC') }}</span>
           {% elif dlv.status == 'DEAD' %}
-            failed permanently
+            <span class="text-rose-600">failed</span>
           {% else %}
-            {{ dlv.created_at.strftime('%H:%M:%S') }}
+            {{ dlv.created_at.strftime('%H:%M:%S UTC') }}
           {% endif %}
         </td>
-        <td class="px-4 py-3 whitespace-nowrap text-right text-xs font-medium">
-          <a href="/dashboard/deliveries/{{ dlv.id }}" class="text-indigo-600 hover:text-indigo-900 mr-2">Inspect</a>
+
+        <!-- Actions -->
+        <td class="px-4 py-3.5 whitespace-nowrap text-right space-x-1.5">
+          <button type="button" class="px-2.5 py-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded border border-indigo-200">
+            Inspect →
+          </button>
           {% if dlv.status == 'DEAD' %}
-          <form action="/dashboard/deliveries/{{ dlv.id }}/replay" method="POST" class="inline">
-            <button type="submit" class="text-amber-600 hover:text-amber-900 font-semibold">Replay</button>
+          <form action="/dashboard/deliveries/{{ dlv.id }}/replay" method="POST" class="inline" onclick="event.stopPropagation()">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="px-2.5 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded border border-rose-200">
+              Replay
+            </button>
           </form>
           {% endif %}
         </td>
+
       </tr>
       {% else %}
       <tr>
-        <td colspan="7" class="px-6 py-8 text-center text-sm text-slate-500">
-          No deliveries found. Send an event using the API or trigger a ping from an endpoint!
+        <td colspan="7" class="px-6 py-10 text-center text-sm text-slate-500 bg-slate-50/50">
+          No deliveries found. Publish an event using the API or trigger a ping from an endpoint!
         </td>
       </tr>
       {% endfor %}

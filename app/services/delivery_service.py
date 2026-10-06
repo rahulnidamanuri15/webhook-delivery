@@ -13,17 +13,97 @@ from app.config import settings
 from app.services.security import decrypt_secret
 from app.services.signing import generate_webhook_headers
 from app.services.ssrf import validate_webhook_url
+from app.services.tracing import start_trace_span, inject_trace_headers
 
 logger = logging.getLogger("webhook.delivery")
 
-def calculate_backoff_seconds(attempt_number: int, retry_after_header: Optional[str] = None) -> int:
-    """Calculates backoff delay in seconds with jitter or honors Retry-After header."""
-    if retry_after_header:
+# Hard cap on bytes read from a receiver response body. Prevents a malicious
+# receiver from exhausting worker memory; the stored excerpt is still bounded
+# separately by RESPONSE_EXCERPT_MAX_BYTES.
+MAX_RESPONSE_READ_BYTES = 64 * 1024
+
+
+def _build_timeout() -> "httpx.Timeout":
+    """Separate connect vs total timeouts (total stays < lease duration)."""
+    total = float(settings.HTTP_TIMEOUT_SECONDS)
+    connect = float(getattr(settings, "HTTP_CONNECT_TIMEOUT_SECONDS", 3.0))
+    connect = min(connect, max(1.0, total - 1.0))
+    return httpx.Timeout(connect=connect, read=total, write=min(5.0, total), pool=connect)
+
+
+def _read_bounded_excerpt(response: "httpx.Response") -> str:
+    """Streams at most MAX_RESPONSE_READ_BYTES, then truncates to excerpt size."""
+    chunks: list[bytes] = []
+    total = 0
+    truncated_wire = False
+    try:
+        for chunk in response.iter_bytes(chunk_size=4096):
+            if not chunk:
+                break
+            remaining = MAX_RESPONSE_READ_BYTES - total
+            if remaining <= 0:
+                truncated_wire = True
+                break
+            if len(chunk) > remaining:
+                chunks.append(chunk[:remaining])
+                total += remaining
+                truncated_wire = True
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total >= MAX_RESPONSE_READ_BYTES:
+                truncated_wire = True
+                break
+        # Drain/close without reading unbounded remainder
         try:
-            delay = int(retry_after_header.strip())
+            response.close()
+        except Exception:
+            pass
+    except Exception as e:
+        return f"[bounded-read error: {e}]"[: settings.RESPONSE_EXCERPT_MAX_BYTES]
+    try:
+        text = b"".join(chunks).decode("utf-8", errors="replace")
+    except Exception:
+        text = ""
+    if len(text) > settings.RESPONSE_EXCERPT_MAX_BYTES:
+        keep = max(0, settings.RESPONSE_EXCERPT_MAX_BYTES - len(" ... [truncated]"))
+        text = text[:keep] + " ... [truncated]"
+    elif truncated_wire and len(text) <= settings.RESPONSE_EXCERPT_MAX_BYTES:
+        # Wire was cut but excerpt fits: still signal truncation happened upstream
+        if len(text) + len(" ... [wire-truncated]") <= settings.RESPONSE_EXCERPT_MAX_BYTES:
+            text = text + " ... [wire-truncated]"
+    return text
+
+def calculate_backoff_seconds(attempt_number: int, retry_after_header: Optional[str] = None) -> int:
+    """Calculates backoff delay in seconds with jitter or honors Retry-After header.
+
+    Honors both delay-seconds (e.g. ``120``) and HTTP-date (IMF-fixdate,
+    e.g. ``Wed, 21 Oct 2015 07:28:00 GMT``) forms, clamped to [1, 3600]s.
+    Falls back to the configured retry intervals with +/-15% jitter.
+    """
+    if retry_after_header:
+        raw = retry_after_header.strip()
+        # 1) delay-seconds form
+        try:
+            delay = int(raw)
             if 1 <= delay <= 3600:
                 return delay
         except (ValueError, TypeError):
+            pass
+        # 2) HTTP-date form (RFC 7231 §7.1.3)
+        try:
+            from email.utils import parsedate_to_datetime
+            retry_dt = parsedate_to_datetime(raw)
+            if retry_dt is not None:
+                from datetime import timezone as _tz
+                now_dt = datetime.now(_tz.utc)
+                if retry_dt.tzinfo is None:
+                    retry_dt = retry_dt.replace(tzinfo=_tz.utc)
+                delay_s = int((retry_dt - now_dt).total_seconds())
+                if delay_s < 1:
+                    delay_s = 1
+                return max(1, min(3600, delay_s))
+        except Exception:
             pass
 
     intervals = (
@@ -128,8 +208,14 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
         payload=event.wire_payload
     )
     headers.update(pinned_headers)
+    # Propagate W3C trace-context so receivers can correlate (no-op if OTel off).
+    try:
+        inject_trace_headers(headers)
+    except Exception:
+        pass
 
-    # 5. Outbound HTTP request executed safely outside DB transaction
+    # 5. Outbound HTTP request executed safely outside DB transaction.
+    # Timeouts: connect (short) vs total (HTTP_TIMEOUT_SECONDS) both < lease (30s).
     started_at = utc_now()
     start_time = time.perf_counter()
     http_status = None
@@ -139,18 +225,18 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
     outcome = "RETRYABLE_ERROR"
 
     try:
-        with httpx.Client(timeout=settings.HTTP_TIMEOUT_SECONDS, follow_redirects=False) as client:
-            resp = client.post(
-                target_connection_url,
-                content=event.wire_payload.encode("utf-8"),
-                headers=headers
-            )
-            http_status = resp.status_code
-            retry_after = resp.headers.get("retry-after")
-            
-            # Read bounded response excerpt
-            raw_text = resp.text[:settings.RESPONSE_EXCERPT_MAX_BYTES]
-            response_excerpt = raw_text
+        with start_trace_span("delivery.http_post", {"delivery.id": delivery_id}):
+            with httpx.Client(timeout=_build_timeout(), follow_redirects=False) as client:
+                with client.stream(
+                    "POST",
+                    target_connection_url,
+                    content=event.wire_payload.encode("utf-8"),
+                    headers=headers,
+                ) as resp:
+                    http_status = resp.status_code
+                    retry_after = resp.headers.get("retry-after")
+                    # Bounded streaming read (never loads unbounded bodies)
+                    response_excerpt = _read_bounded_excerpt(resp)
 
             if 200 <= http_status <= 299:
                 outcome = "SUCCESS"
@@ -170,6 +256,10 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
         error_code = "READ_TIMEOUT"
         outcome = "RETRYABLE_ERROR"
         response_excerpt = "Read timed out"
+    except (httpx.WriteTimeout, httpx.PoolTimeout, httpx.TimeoutException) as e:
+        error_code = "TIMEOUT"
+        outcome = "RETRYABLE_ERROR"
+        response_excerpt = f"Timeout: {str(e)[:250]}"
     except httpx.ConnectError as e:
         error_code = "CONNECT_ERROR"
         outcome = "RETRYABLE_ERROR"
@@ -292,6 +382,11 @@ def recover_abandoned_leases(db: Session) -> int:
     """
     Finds deliveries that have been IN_FLIGHT past their lease expiration
     (e.g., worker crashed or hung) and returns them to RETRY_SCHEDULED or DEAD.
+
+    Writes a bounded DeliveryAttempt row for the orphaned lease so the timeline
+    has no history hole: attempt_number reuses the already-incremented
+    attempt_count from claim time, outcome is RETRYABLE_ERROR (or PERMANENT
+    when the budget is exhausted), error_code LEASE_EXPIRED.
     """
     now = utc_now()
     abandoned = (
@@ -306,6 +401,23 @@ def recover_abandoned_leases(db: Session) -> int:
 
     recovered_count = 0
     for dlv in abandoned:
+        # Close the history gap left by the crashed worker before it could record.
+        try:
+            terminal = dlv.attempt_count >= settings.MAX_DELIVERY_ATTEMPTS
+            attempt = DeliveryAttempt(
+                delivery_id=dlv.id,
+                attempt_number=max(1, dlv.attempt_count),
+                started_at=dlv.lease_expires_at - timedelta(seconds=settings.LEASE_DURATION_SECONDS) if dlv.lease_expires_at else now,
+                finished_at=now,
+                http_status=None,
+                duration_ms=0,
+                error_code="LEASE_EXPIRED",
+                response_excerpt="Worker lease expired before result was recorded (crash or hang); rescheduled.",
+                outcome="PERMANENT_ERROR" if terminal else "RETRYABLE_ERROR",
+            )
+            db.add(attempt)
+        except Exception:
+            pass
         dlv.lease_token = None
         dlv.lease_expires_at = None
         if dlv.attempt_count < settings.MAX_DELIVERY_ATTEMPTS:
@@ -325,9 +437,17 @@ def replay_delivery(db: Session, delivery_id: str) -> Optional[Delivery]:
     """
     Creates a new delivery for the same event and endpoint, linking it to the previous delivery.
     Preserves original attempt history while allocating a fresh attempt budget.
+
+    Policy: only DEAD (dead-letter) deliveries may be replayed. Returns None
+    otherwise so callers surface 400/404 instead of cloning live work.
+    Target URL uses the endpoint's current URL when available (operator may have
+    fixed a typo), falling back to the original snapshot when the endpoint was
+    deleted. Security checks (SSRF, enabled) are still enforced at send time.
     """
     old_delivery = db.query(Delivery).filter(Delivery.id == delivery_id).first()
     if not old_delivery:
+        return None
+    if old_delivery.status != "DEAD":
         return None
 
     endpoint = old_delivery.endpoint

@@ -94,7 +94,8 @@ This script demonstrates the end-to-end reliability mechanics:
             time.sleep(1.0)
             d_resp = client.get(f"{API_BASE_URL}/api/v1/events/{event_id}/deliveries", headers=headers)
             if d_resp.status_code == 200:
-                deliveries = d_resp.json().get("deliveries", [])
+                resp_data = d_resp.json()
+                deliveries = resp_data if isinstance(resp_data, list) else resp_data.get("deliveries", [])
                 if deliveries:
                     d = deliveries[0]
                     status = d.get("status")
@@ -126,7 +127,8 @@ This script demonstrates the end-to-end reliability mechanics:
 
         time.sleep(2.0)
         d_bad_resp = client.get(f"{API_BASE_URL}/api/v1/events/{bad_event_id}/deliveries", headers=bad_headers)
-        bad_deliveries = d_bad_resp.json().get("deliveries", [])
+        bad_data = d_bad_resp.json()
+        bad_deliveries = bad_data if isinstance(bad_data, list) else bad_data.get("deliveries", [])
         if bad_deliveries:
             bad_dlv = bad_deliveries[0]
             print(f"  -> Delivery status transitioned immediately to: {bad_dlv.get('status')} (Permanent error not retried)")

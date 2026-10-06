@@ -44,11 +44,27 @@
 
   <!-- Deliveries for this event -->
   <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-    <div class="px-6 py-4 border-b border-slate-200">
-      <h3 class="text-base font-bold text-slate-900">Endpoints & Deliveries for this Event ({{ event.deliveries|length }})</h3>
+    <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center">
+      <h3 class="text-base font-bold text-slate-900">Endpoints & Deliveries for this Event ({{ total_count if total_count is defined else event.deliveries|length }})</h3>
+      {% if total_pages is defined and total_pages > 1 %}
+      <span class="text-xs text-slate-500">Page {{ page }} of {{ total_pages }}</span>
+      {% endif %}
     </div>
-    {% set deliveries = event.deliveries %}
+    {% set deliveries = deliveries if deliveries is defined else event.deliveries %}
     {% include "deliveries/_table.html" %}
+    {% if total_pages is defined and total_pages > 1 %}
+    <div class="px-6 py-3 border-t border-slate-200 flex items-center justify-between text-sm">
+      <div class="text-xs text-slate-500">{{ total_count }} deliveries</div>
+      <div class="flex gap-2">
+        {% if page > 1 %}
+        <a href="/dashboard/events/{{ event.id }}?page={{ page - 1 }}" class="px-3 py-1 border rounded-md text-xs font-medium text-slate-700 hover:bg-slate-50">← Prev</a>
+        {% endif %}
+        {% if page < total_pages %}
+        <a href="/dashboard/events/{{ event.id }}?page={{ page + 1 }}" class="px-3 py-1 border rounded-md text-xs font-medium text-slate-700 hover:bg-slate-50">Next →</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
   </div>
 
 </div>

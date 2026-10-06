@@ -59,7 +59,7 @@ flowchart TD
 4. **Atomic Transaction Boundary**:
    - In a **single database transaction**:
      1. Insert `Event` row (storing original `wire_payload` bytes for tamper-proof stability).
-     2. Query active `endpoints` subscribed to matching `event_type` or wildcard `*`.
+     2. Query active `endpoints` subscribed to matching `event_type`, `*`, or `prefix.*` (e.g. `order.*`).
      3. Insert a `Delivery` row (`status = PENDING`, `attempt_count = 0`, snapshot of destination URL) for each subscriber.
      4. Commit.
 5. **Immediate Client Response**:
@@ -167,6 +167,8 @@ Because developers register arbitrary target URLs, the platform implements multi
 3. **DNS Rebinding Prevention**:
    - Hostname resolution is pinned prior to connection establishment.
    - Redirects are disabled (`follow_redirects=False`) to prevent open-redirect SSRF bypasses.
+4. **Domain allowlist** (`ALLOWED_RECEIVER_DOMAINS`): optional exact-or-subdomain
+   allowlist enforced at registration and at send time. Empty = disabled (dev).
 
 ---
 
@@ -177,3 +179,30 @@ Transient failures retry according to exponential backoff with full randomized j
 $$\text{Delay}_n = \min\left(\text{MaxDelay}, \text{BaseDelay} \times 2^{n-1}\right) \times \text{Uniform}(0.5, 1.0)$$
 
 If the receiver returns `HTTP 429 Too Many Requests` with a valid `Retry-After` header, the platform respects the receiver's requested interval within configured boundaries ($[1\text{s}, 3600\text{s}]$).
+
+Product policy: `DEFAULT_RETRY_INTERVALS = [10, 30, 120, 600, 1800, 7200]`s (spec §7:
+10s, 30s, 2m, 10m, 30m, 2h) with ±15% jitter and
+`MAX_DELIVERY_ATTEMPTS = 5`. Demo policy (`USE_DEMO_RETRY_POLICY=True`) uses
+`[2, 5, 10, 20, 40]`s for the recorded demo. `Retry-After` honors both
+delay-seconds and HTTP-date forms, clamped to `[1s, 3600s]`.
+
+---
+
+## 8. Dispatch Concurrency, Timeouts, Observability, Retention
+
+- **Concurrent dispatch**: `dispatch_batch()` fans out due deliveries on a bounded
+  thread pool (`DISPATCH_MAX_WORKERS`, default 10, each with its own DB session),
+  so one slow endpoint cannot head-of-line-block others. Celery workers use `-c 4`.
+- **Timeouts**: connect timeout `HTTP_CONNECT_TIMEOUT_SECONDS` (3s) vs total
+  `HTTP_TIMEOUT_SECONDS` (10s), both < lease `LEASE_DURATION_SECONDS` (30s).
+- **Bounded reads**: streaming cap `MAX_RESPONSE_READ_BYTES` (64 KiB wire) +
+  stored excerpt cap `RESPONSE_EXCERPT_MAX_BYTES` (1024 chars).
+- **Tracing**: `start_trace_span()` wraps ingestion (`ingest.event`), dispatch
+  (`dispatch.*`), delivery (`delivery.execute`, `delivery.http_post`), recovery and
+  retention. `inject_trace_headers()` propagates W3C `traceparent`/`tracestate` on
+  outbound webhooks. Set `OTEL_EXPORTER_OTLP_ENDPOINT` for OTLP export; otherwise no-op.
+- **Logging**: JSON-structured to stdout (`app/services/logging_util.py`).
+- **Retention**: hourly purge of terminal data older than `DATA_RETENTION_DAYS`
+  (see `app/services/retention.py`, Celery `tasks.purge_expired_data`).
+- **RBAC**: `owner`/`admin` may mutate endpoints, keys, replays and team;
+  `member` is read-only. Owners manage admin roles; last owner cannot be removed.

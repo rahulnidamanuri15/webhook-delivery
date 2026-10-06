@@ -12,6 +12,8 @@ from app.schemas.event import (
     DeliveryResponse
 )
 from app.services.event_service import ingest_event, IdempotencyConflictError
+from app.services.tracing import start_trace_span
+from app.config import settings
 
 router = APIRouter(prefix="/api/v1", tags=["Events & Deliveries"])
 
@@ -33,6 +35,14 @@ def publish_event(
     """
     _, project = auth
 
+    # Enforce maximum event payload size
+    raw_payload_bytes = json.dumps(payload.data, ensure_ascii=False).encode("utf-8")
+    if len(raw_payload_bytes) > settings.MAX_PAYLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Payload exceeds maximum allowed size of {settings.MAX_PAYLOAD_SIZE_BYTES} bytes."
+        )
+
     # Rate limiting per project
     from app.services.rate_limiter import check_ingestion_rate_limit
     allowed, wait_time = check_ingestion_rate_limit(project.id, max_per_second=30.0)
@@ -43,14 +53,16 @@ def publish_event(
             headers={"Retry-After": str(max(1, int(wait_time)))}
         )
 
+
     try:
-        event, is_duplicate, delivery_count = ingest_event(
-            db=db,
-            project_id=project.id,
-            event_type=payload.type,
-            payload_data=payload.data,
-            idempotency_key=idempotency_key
-        )
+        with start_trace_span("ingest.event", {"project.id": project.id, "event.type": payload.type}):
+            event, is_duplicate, delivery_count = ingest_event(
+                db=db,
+                project_id=project.id,
+                event_type=payload.type,
+                payload_data=payload.data,
+                idempotency_key=idempotency_key
+            )
     except IdempotencyConflictError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

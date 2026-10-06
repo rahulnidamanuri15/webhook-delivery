@@ -18,6 +18,13 @@ Engineering a reliable distributed system requires honest boundaries. This docum
 ### 1.3 Database Concurrency: SQLite vs PostgreSQL
 - **Development (SQLite)**: SQLite serializes all write transactions using file locks. Under high concurrent write benchmarks (>50 concurrent streams), SQLite will report busy lock contention.
 - **Production (PostgreSQL)**: PostgreSQL provides row-level locking (`FOR UPDATE SKIP LOCKED`) and MVCC, enabling thousands of concurrent deliveries without table-level serialization bottlenecks.
+- **Tests**: `tests/test_*.py` run on SQLite locally for speed; CI (`DATABASE_URL=postgresql+...`) runs the same suite plus `tests/integration/test_pg_leases.py` against real PG to cover locking. See `tests/SCENARIO_COVERAGE.md`.
+
+### 1.4 Production safety rails
+- `ENV=production` refuses insecure `SECRET_KEY` defaults and `ALLOW_LOCAL_RECEIVERS=True` unless `I_UNDERSTAND_ALLOW_LOCAL_RISK=1`.
+- `ALLOWED_RECEIVER_DOMAINS` allowlist is enforced at registration **and** at send time with IP-pinned DNS (no rebinding gap).
+- Session cookies are `HttpOnly/SameSite=Lax/Secure(prod)`; project selector is now `HttpOnly`; sessions rotate on login/project-switch/invitation-accept and are denylisted on logout.
+- Replay is restricted to `DEAD` dead-letters only; recovery writes a `LEASE_EXPIRED` attempt so timelines have no gap.
 
 ---
 

@@ -1,6 +1,7 @@
 import time
 from datetime import timedelta
 import pytest
+from unittest.mock import patch
 from app.services.rate_limiter import MemoryTokenBucket, check_endpoint_rate_limit, check_ingestion_rate_limit
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -65,14 +66,17 @@ def test_endpoint_rate_limit_defers_without_consuming_attempt():
     dlv1 = event1.deliveries[0]
     dlv2 = event2.deliveries[0]
 
-    # Exhaust rate limit bucket directly
+    # Exhaust rate limit bucket directly (force in-memory path for determinism
+    # regardless of whether Redis is running locally or in CI)
     from app.services.rate_limiter import memory_bucket
-    memory_bucket.acquire(f"endpoint:{endpoint.id}", rate_per_second=1.0, capacity=1.0)
-    # Bucket is now empty for this endpoint
+    with patch("app.services.rate_limiter.redis_bucket", None):
+        memory_bucket.acquire(f"endpoint:{endpoint.id}", rate_per_second=1.0, capacity=1.0)
+        # Bucket is now empty for this endpoint
 
-    # Attempt to execute dlv1
-    executed = execute_delivery(session, dlv1.id)
-    assert executed is False
+        # Attempt to execute dlv1 (also force in-memory path inside the worker)
+        with patch("app.services.rate_limiter.redis_bucket", None):
+            executed = execute_delivery(session, dlv1.id)
+        assert executed is False
 
     session.refresh(dlv1)
     # Crucial requirement: Delivery deferred without consuming attempt budget
