@@ -4,7 +4,7 @@ import json
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Delivery, Endpoint, EndpointSubscription, Event, utc_now
+from app.models import Delivery, Endpoint, EndpointSubscription, Event, generate_id, utc_now
 
 
 class IdempotencyConflictError(Exception):
@@ -15,14 +15,23 @@ class ProjectEndpointLimitExceeded(Exception):
     """Raised when project endpoint capacity is exceeded."""
     pass
 
-def canonicalize_payload(data: dict) -> tuple[str, str]:
+def canonicalize_payload(arg1: str | dict, arg2: dict | None = None) -> tuple[str, str]:
     """
-    Returns (canonical_json_str, sha256_hash).
+    Returns (canonical_data_json_str, sha256_hash).
+    If called with (event_type, data), hashes f"{event_type}:{canonical_data}".
+    If called with (data), hashes canonical_data.
     Uses stable separators and sorted keys so hash and byte representations are deterministic.
     """
-    canonical_json = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    req_hash = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
-    return canonical_json, req_hash
+    if arg2 is None and isinstance(arg1, dict):
+        event_type = ""
+        data = arg1
+    else:
+        event_type = str(arg1)
+        data = arg2 or {}
+    canonical_data = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    hash_input = f"{event_type}:{canonical_data}" if event_type else canonical_data
+    req_hash = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
+    return canonical_data, req_hash
 
 def _subscription_matches(pattern: str, event_type: str) -> bool:
     """Supports exact names, global ``*``, and prefix ``namespace.*``.
@@ -85,7 +94,7 @@ def ingest_event(
     Returns:
         (event: Event, is_duplicate: bool, delivery_count: int)
     """
-    wire_payload, request_hash = canonicalize_payload(payload_data)
+    canonical_data, request_hash = canonicalize_payload(event_type, payload_data)
 
     # 1. Check idempotency
     if idempotency_key:
@@ -104,27 +113,37 @@ def ingest_event(
                 return existing_event, True, delivery_count
             else:
                 raise IdempotencyConflictError(
-                    f"Idempotency key '{idempotency_key}' was previously used with different payload content."
+                    f"Idempotency key '{idempotency_key}' was previously used with different payload content or event type."
                 )
 
     # 2. Find matching endpoints
     matching_endpoints = get_matching_endpoints(db, project_id, event_type)
 
     # 3. Create Event and Deliveries in a single atomic transaction
+    event_id = generate_id("evt")
+    now = utc_now()
+    envelope = {
+        "id": event_id,
+        "type": event_type,
+        "created_at": now.isoformat(),
+        "data": payload_data,
+    }
+    wire_payload = json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
     try:
         event = Event(
+            id=event_id,
             project_id=project_id,
             event_type=event_type,
-            payload_json=wire_payload,
+            payload_json=canonical_data,
             wire_payload=wire_payload,
             idempotency_key=idempotency_key,
             request_hash=request_hash,
-            created_at=utc_now()
+            created_at=now
         )
         db.add(event)
-        db.flush()  # Assign event.id
+        db.flush()
 
-        now = utc_now()
         created_deliveries = []
         for ep in matching_endpoints:
             delivery = Delivery(
@@ -160,6 +179,6 @@ def ingest_event(
                     return existing_event, True, len(existing_event.deliveries)
                 else:
                     raise IdempotencyConflictError(
-                        f"Idempotency key '{idempotency_key}' was previously used with different payload content."
+                        f"Idempotency key '{idempotency_key}' was previously used with different payload content or event type."
                     )
         raise

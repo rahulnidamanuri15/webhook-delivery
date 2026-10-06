@@ -15,10 +15,30 @@ from app.services.tracing import inject_trace_headers, start_trace_span
 
 logger = logging.getLogger("webhook.delivery")
 
+import httpcore
+import httpcore._backends.sync as sync_backend
+
 # Hard cap on bytes read from a receiver response body. Prevents a malicious
 # receiver from exhausting worker memory; the stored excerpt is still bounded
 # separately by RESPONSE_EXCERPT_MAX_BYTES.
 MAX_RESPONSE_READ_BYTES = 64 * 1024
+
+
+class PinnedSyncBackend(sync_backend.SyncBackend):
+    def __init__(self, pinned_host_map: dict[str, str]):
+        super().__init__()
+        self.pinned_host_map = pinned_host_map
+
+    def connect_tcp(self, host: str, port: int, timeout: float | None = None, local_address: str | None = None, socket_options = None):
+        connect_host = self.pinned_host_map.get(host, host)
+        return super().connect_tcp(connect_host, port, timeout, local_address, socket_options)
+
+
+class PinnedIPTransport(httpx.HTTPTransport):
+    """Custom HTTPX transport connecting directly to pre-verified pinned IP while preserving TLS SNI."""
+    def __init__(self, pinned_host_map: dict[str, str], **kwargs):
+        super().__init__(**kwargs)
+        self._pool._network_backend = PinnedSyncBackend(pinned_host_map)
 
 
 def _build_timeout() -> "httpx.Timeout":
@@ -29,13 +49,18 @@ def _build_timeout() -> "httpx.Timeout":
     return httpx.Timeout(connect=connect, read=total, write=min(5.0, total), pool=connect)
 
 
-def _read_bounded_excerpt(response: "httpx.Response") -> str:
-    """Streams at most MAX_RESPONSE_READ_BYTES, then truncates to excerpt size."""
+def _read_bounded_excerpt(response: "httpx.Response", deadline: float | None = None) -> str:
+    """Streams at most MAX_RESPONSE_READ_BYTES, then truncates to excerpt size.
+    Enforces overall wall-clock deadline across chunk reads so slow trickling responses
+    cannot exceed the worker lease duration.
+    """
     chunks: list[bytes] = []
     total = 0
     truncated_wire = False
     try:
         for chunk in response.iter_bytes(chunk_size=4096):
+            if deadline is not None and time.monotonic() > deadline:
+                raise httpx.TimeoutException(f"Total HTTP request deadline exceeded ({settings.HTTP_TIMEOUT_SECONDS}s)")
             if not chunk:
                 break
             remaining = MAX_RESPONSE_READ_BYTES - total
@@ -57,6 +82,8 @@ def _read_bounded_excerpt(response: "httpx.Response") -> str:
             response.close()
         except Exception:
             pass
+    except httpx.TimeoutException:
+        raise
     except Exception as e:
         return f"[bounded-read error: {e}]"[: settings.RESPONSE_EXCERPT_MAX_BYTES]
     try:
@@ -183,9 +210,9 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
 
     # 2. SSRF & DNS Rebinding Protection
     from app.services.ssrf import resolve_and_pin_destination
-    is_safe, ssrf_err, target_connection_url, pinned_headers = resolve_and_pin_destination(delivery.target_url_snapshot)
-    if not is_safe or not endpoint or not endpoint.enabled:
-        reason = ssrf_err if not is_safe else "Endpoint disabled or deleted"
+    pin_res = resolve_and_pin_destination(delivery.target_url_snapshot)
+    if not pin_res.is_safe or not endpoint or not endpoint.enabled:
+        reason = pin_res.error if not pin_res.is_safe else "Endpoint disabled or deleted"
         _save_terminal_failure(db, delivery_id, claimed_lease_token, reason)
         return False
 
@@ -204,7 +231,7 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
         delivery_id=delivery.id,
         payload=event.wire_payload
     )
-    headers.update(pinned_headers)
+    headers.update(pin_res.headers)
     # Propagate W3C trace-context so receivers can correlate (no-op if OTel off).
     try:
         inject_trace_headers(headers)
@@ -213,8 +240,15 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
 
     # 5. Outbound HTTP request executed safely outside DB transaction.
     # Timeouts: connect (short) vs total (HTTP_TIMEOUT_SECONDS) both < lease (30s).
+    from urllib.parse import urlparse
+    parsed_target = urlparse(pin_res.url)
+    client_kwargs: dict = {"timeout": _build_timeout(), "follow_redirects": False}
+    if getattr(pin_res, "pinned_ip", None) and parsed_target.hostname:
+        client_kwargs["transport"] = PinnedIPTransport({parsed_target.hostname: pin_res.pinned_ip})
+
     started_at = utc_now()
     start_time = time.perf_counter()
+    deadline = time.monotonic() + float(settings.HTTP_TIMEOUT_SECONDS)
     http_status = None
     error_code = None
     response_excerpt = None
@@ -223,17 +257,19 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
 
     try:
         with start_trace_span("delivery.http_post", {"delivery.id": delivery_id}):
-            with httpx.Client(timeout=_build_timeout(), follow_redirects=False) as client:
+            with httpx.Client(**client_kwargs) as client:
                 with client.stream(
                     "POST",
-                    target_connection_url,
+                    pin_res.url,
                     content=event.wire_payload.encode("utf-8"),
                     headers=headers,
                 ) as resp:
+                    if time.monotonic() > deadline:
+                        raise httpx.TimeoutException(f"Total HTTP request deadline exceeded ({settings.HTTP_TIMEOUT_SECONDS}s)")
                     http_status = resp.status_code
                     retry_after = resp.headers.get("retry-after")
                     # Bounded streaming read (never loads unbounded bodies)
-                    response_excerpt = _read_bounded_excerpt(resp)
+                    response_excerpt = _read_bounded_excerpt(resp, deadline=deadline)
 
             if 200 <= http_status <= 299:
                 outcome = "SUCCESS"

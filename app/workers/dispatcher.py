@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db.session import SessionLocal
 from app.models import Delivery, utc_now
 from app.services.delivery_service import execute_delivery
@@ -98,6 +99,19 @@ def dispatch_batch(batch_size: int = 50, max_workers: int | None = None) -> int:
             pass
     if not due_ids:
         return 0
+
+    if settings.USE_CELERY:
+        from app.workers.tasks import deliver_webhook_task
+        enqueued_count = 0
+        with start_trace_span("dispatch.celery_enqueue", {"batch.size": len(due_ids)}):
+            for dlv_id in due_ids:
+                try:
+                    deliver_webhook_task.delay(dlv_id)
+                    enqueued_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to enqueue Celery task for delivery {dlv_id}: {e}", exc_info=True)
+        return enqueued_count
+
     workers = max(1, min(max_workers or DISPATCH_MAX_WORKERS, len(due_ids)))
     if workers == 1 or len(due_ids) == 1:
         count = 0

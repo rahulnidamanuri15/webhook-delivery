@@ -39,6 +39,8 @@ from app.services.ssrf import validate_webhook_url
 
 
 def is_cookie_secure() -> bool:
+    if settings.COOKIE_SECURE is not None:
+        return settings.COOKIE_SECURE
     return settings.ENV == "production" or not settings.DEBUG
 
 def assert_csrf(request: Request, csrf_token: str | None = None):
@@ -86,23 +88,42 @@ def get_user_and_project(request: Request, db: Session):
     user = get_optional_user(request, db)
     if not user:
         return None, None, None
-    
-    # Active organization
-    membership = db.query(OrganizationMember).filter(OrganizationMember.user_id == user.id).first()
+
+    # Check if a specific organization was chosen via cookie
+    active_org_id = request.cookies.get("wh_active_org_id")
+    membership = None
+    if active_org_id:
+        membership = db.query(OrganizationMember).filter(
+            OrganizationMember.user_id == user.id,
+            OrganizationMember.organization_id == active_org_id
+        ).first()
+
+    # If no active org chosen, check active project's organization
+    active_project_id = request.cookies.get("wh_active_project_id")
+    if not membership and active_project_id:
+        proj = db.query(Project).filter(Project.id == active_project_id).first()
+        if proj:
+            membership = db.query(OrganizationMember).filter(
+                OrganizationMember.user_id == user.id,
+                OrganizationMember.organization_id == proj.organization_id
+            ).first()
+
+    # Fallback to user's first membership
+    if not membership:
+        membership = db.query(OrganizationMember).filter(OrganizationMember.user_id == user.id).first()
+
     if not membership:
         return user, None, None
-    
+
     org = membership.organization
-    
-    # Active project from cookie or default
-    active_project_id = request.cookies.get("wh_active_project_id")
+
     project = None
     if active_project_id:
         project = db.query(Project).filter(Project.id == active_project_id, Project.organization_id == org.id).first()
-    
+
     if not project:
         project = db.query(Project).filter(Project.organization_id == org.id).first()
-        
+
     return user, org, project
 
 
@@ -256,7 +277,7 @@ def register_post(
     return response
 
 
-@router.get("/auth/logout")
+@router.api_route("/auth/logout", methods=["GET", "POST"])
 def logout(request: Request):
     from app.services.security import invalidate_session_token
     token = request.cookies.get("wh_session")
@@ -265,6 +286,7 @@ def logout(request: Request):
     response = RedirectResponse(url="/auth/login", status_code=303)
     response.delete_cookie("wh_session")
     response.delete_cookie("wh_active_project_id")
+    response.delete_cookie("wh_active_org_id")
     response.delete_cookie("wh_csrf_id")
     return response
 

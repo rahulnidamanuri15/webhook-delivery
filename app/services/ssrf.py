@@ -6,19 +6,10 @@ from app.config import settings
 
 
 def is_ip_prohibited(ip_str: str) -> bool:
-    """Checks whether an IP address belongs to loopback, private, link-local, multicast, or reserved ranges."""
+    """Checks whether an IP address belongs to loopback, private, link-local, multicast, or non-global ranges."""
     try:
         ip = ipaddress.ip_address(ip_str)
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
-            return True
-        return False
+        return not ip.is_global
     except ValueError:
         return True
 
@@ -102,58 +93,66 @@ def validate_webhook_url(url: str) -> tuple[bool, str | None]:
 
     return True, None
 
-def resolve_and_pin_destination(url: str) -> tuple[bool, str | None, str, dict[str, str]]:
+class PinnedResolutionResult(tuple):
+    """Result tuple supporting 4-tuple unpacking (is_safe, error, url, headers)
+    for backward-compatibility, while also exposing pinned_ip."""
+
+    def __new__(cls, is_safe: bool, error: str | None, url: str, headers: dict[str, str], pinned_ip: str | None = None):
+        return super().__new__(cls, (is_safe, error, url, headers))
+
+    def __init__(self, is_safe: bool, error: str | None, url: str, headers: dict[str, str], pinned_ip: str | None = None):
+        self.is_safe = is_safe
+        self.error = error
+        self.url = url
+        self.headers = headers
+        self.pinned_ip = pinned_ip
+
+
+def resolve_and_pin_destination(url: str) -> PinnedResolutionResult:
     """
     DNS Rebinding Protection:
-    Resolves the hostname, validates every resolved IP address against restricted ranges,
-    and returns a direct IP-pinned connection target to prevent DNS rebinding between check and connection.
+    Resolves the hostname, validates every resolved IP address against restricted non-global ranges,
+    and returns a PinnedResolutionResult with verified pinned IP while preserving original URL scheme/host
+    so TLS SNI and server certificate validation succeed for real HTTPS endpoints.
 
     Returns:
-        (is_safe: bool, error: Optional[str], connection_url: str, pinned_headers: dict)
+        PinnedResolutionResult(is_safe, error, connection_url, pinned_headers, pinned_ip)
     """
     url = url.strip()
     is_valid, err = validate_webhook_url(url)
     if not is_valid:
-        return False, err, url, {}
+        return PinnedResolutionResult(False, err, url, {})
 
     parsed = urlparse(url)
     hostname = parsed.hostname
 
     # If already an IP or in dev demo mode allowing localhost / Docker hosts
     local_hosts = ("localhost", "127.0.0.1", "::1", "demo_receiver", "webhook_demo_receiver", "host.docker.internal")
-    if settings.ALLOW_LOCAL_RECEIVERS and hostname.lower() in local_hosts:
-        return True, None, url, {}
+    if settings.ALLOW_LOCAL_RECEIVERS and hostname and hostname.lower() in local_hosts:
+        return PinnedResolutionResult(True, None, url, {"Host": parsed.netloc}, None)
 
     try:
         # Resolve addresses right before outbound request
         addr_info = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
         if not addr_info:
-            return False, "Could not resolve destination IP.", url, {}
+            return PinnedResolutionResult(False, "Could not resolve destination IP.", url, {})
 
         # Validate all addresses
         for family, _, _, _, sockaddr in addr_info:
             ip_str = sockaddr[0]
             if is_ip_prohibited(ip_str):
-                return False, f"DNS rebinding attack prevented: resolved IP {ip_str} is restricted.", url, {}
+                return PinnedResolutionResult(
+                    False,
+                    f"DNS rebinding attack prevented: resolved IP {ip_str} is restricted.",
+                    url,
+                    {}
+                )
 
         # Pin to the first verified IP
         first_ip = addr_info[0][4][0]
-        port_part = f":{parsed.port}" if parsed.port else ""
-        pinned_netloc = f"[{first_ip}]{port_part}" if ":" in first_ip else f"{first_ip}{port_part}"
-        
-        # Replace hostname with pinned IP in target connection URL
-        pinned_url = urlunparse((
-            parsed.scheme,
-            pinned_netloc,
-            parsed.path or "/",
-            parsed.params,
-            parsed.query,
-            parsed.fragment
-        ))
-
-        # Preserve original Host header
+        # Preserve original URL so HTTPS TLS SNI / certificate validation check against hostname
         headers = {"Host": parsed.netloc}
-        return True, None, pinned_url, headers
+        return PinnedResolutionResult(True, None, url, headers, pinned_ip=first_ip)
 
     except Exception as e:
-        return False, f"DNS resolution failed: {e}", url, {}
+        return PinnedResolutionResult(False, f"DNS resolution failed: {e}", url, {})

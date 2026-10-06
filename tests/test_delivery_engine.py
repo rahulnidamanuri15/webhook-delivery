@@ -170,3 +170,57 @@ def test_manual_replay_creates_linked_delivery(delivery_db):
     assert new_delivery.replay_of_delivery_id == delivery.id
     assert new_delivery.status == "PENDING"
     assert new_delivery.attempt_count == 0
+
+
+def test_wall_clock_timeout_marks_delivery_retryable(delivery_db):
+    import httpx
+    project = delivery_db.query(Project).first()
+    event, _, _ = ingest_event(delivery_db, project.id, "order.created", {"order_id": "ord_107"})
+    delivery = event.deliveries[0]
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {}
+    mock_resp.iter_bytes.side_effect = httpx.TimeoutException("Total HTTP request deadline exceeded (10.0s)")
+    mock_resp.close.return_value = None
+
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__enter__.return_value = mock_resp
+    mock_stream_ctx.__exit__.return_value = False
+
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.stream.return_value = mock_stream_ctx
+
+    with patch("httpx.Client", return_value=mock_client):
+        execute_delivery(delivery_db, delivery.id)
+
+    delivery_db.refresh(delivery)
+    assert delivery.status == "RETRY_SCHEDULED"
+    assert delivery.attempt_count == 1
+    assert len(delivery.attempts) == 1
+    attempt = delivery.attempts[0]
+    assert attempt.outcome == "RETRYABLE_ERROR"
+    assert attempt.error_code == "TIMEOUT"
+    assert "deadline exceeded" in (attempt.response_excerpt or "")
+
+
+def test_dispatcher_enqueues_to_celery_when_enabled(delivery_db):
+    from app.workers.dispatcher import dispatch_batch
+    project = delivery_db.query(Project).first()
+    event, _, _ = ingest_event(delivery_db, project.id, "order.created", {"order_id": "ord_celery"})
+    delivery = event.deliveries[0]
+    assert delivery.status == "PENDING"
+
+    settings.USE_CELERY = True
+    try:
+        with patch("app.workers.tasks.deliver_webhook_task.delay") as mock_delay:
+            with patch("app.workers.dispatcher.SessionLocal", return_value=delivery_db):
+                count = dispatch_batch()
+                assert count >= 1
+                mock_delay.assert_any_call(delivery.id)
+    finally:
+        settings.USE_CELERY = False
+
+

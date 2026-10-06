@@ -17,6 +17,20 @@ celery_app.conf.update(
     enable_utc=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    beat_schedule={
+        "dispatch-due-deliveries-every-2s": {
+            "task": "tasks.dispatch_due_deliveries",
+            "schedule": 2.0,
+        },
+        "recover-abandoned-leases-every-30s": {
+            "task": "tasks.recover_abandoned_leases",
+            "schedule": 30.0,
+        },
+        "purge-expired-data-hourly": {
+            "task": "tasks.purge_expired_data",
+            "schedule": 3600.0,
+        },
+    },
 )
 
 # Auto-import tasks to register them with the Celery app

@@ -146,3 +146,52 @@ def test_idempotency_conflict_raises_error(db_session):
             payload_data=payload2,
             idempotency_key="conflict-key-003"
         )
+
+
+def test_idempotency_conflict_on_event_type_mismatch(db_session):
+    project = db_session.query(Project).first()
+    payload = {"payment_id": "pay_same", "amount": 100}
+
+    ingest_event(
+        db=db_session,
+        project_id=project.id,
+        event_type="payment.succeeded",
+        payload_data=payload,
+        idempotency_key="conflict-type-key"
+    )
+
+    # Reusing same key with SAME data but DIFFERENT event_type must raise IdempotencyConflictError
+    with pytest.raises(IdempotencyConflictError):
+        ingest_event(
+            db=db_session,
+            project_id=project.id,
+            event_type="order.refunded",
+            payload_data=payload,
+            idempotency_key="conflict-type-key"
+        )
+
+
+def test_wire_payload_contains_envelope(db_session):
+    import json
+    project = db_session.query(Project).first()
+    payload = {"order_id": "ord_99", "status": "paid"}
+
+    event, is_dup, count = ingest_event(
+        db=db_session,
+        project_id=project.id,
+        event_type="payment.succeeded",
+        payload_data=payload,
+        idempotency_key="envelope-test-key"
+    )
+
+    # Verify wire_payload envelope
+    envelope = json.loads(event.wire_payload)
+    assert envelope["id"] == event.id
+    assert envelope["type"] == "payment.succeeded"
+    assert "created_at" in envelope
+    assert envelope["data"] == payload
+
+    # Verify payload_json stores the raw data
+    data_json = json.loads(event.payload_json)
+    assert data_json == payload
+

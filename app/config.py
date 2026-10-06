@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     
     # Delivery Engine & Workers
     REDIS_URL: str = "redis://localhost:6379/0"
+    USE_CELERY: bool = Field(default=False, description="Enqueue outbound webhook deliveries through Celery and Redis")
+    ENABLE_INPROCESS_DISPATCHER: bool = Field(default=False, description="Run background delivery dispatcher thread inside web process")
     ALLOW_LOCAL_RECEIVERS: bool = True  # Enable for dev & controllable demo receiver
     # Public-demo safety: comma-separated allowlist of receiver domains.
     # Empty = no allowlist enforcement (dev). Set in production/demo, e.g.
@@ -36,6 +38,8 @@ class Settings(BaseSettings):
         default="",
         description="Comma-separated allowlist of webhook receiver domains (empty disables)"
     )
+    # Cookie security
+    COOKIE_SECURE: bool | None = Field(default=None, description="Force secure cookie flag (None = auto based on ENV and DEBUG)")
     # Outbound HTTP timeouts (total must stay < lease duration with margin)
     HTTP_CONNECT_TIMEOUT_SECONDS: float = 3.0
     # Data retention (0/None disables automatic purging)
@@ -57,6 +61,7 @@ class Settings(BaseSettings):
     MAX_PAYLOAD_SIZE_BYTES: int = 1_048_576  # 1 MB
     RESPONSE_EXCERPT_MAX_BYTES: int = 1024  # Max stored response excerpt
     MAX_ENDPOINTS_PER_PROJECT: int = 20
+    INGESTION_RATE_LIMIT_PER_SECOND: float = 30.0
 
     class Config:
         env_file = ".env"

@@ -25,10 +25,10 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     logger.info("Database initialized successfully.")
 
-    # 2. In local dev mode, spawn background delivery thread if Celery is not explicitly managing tasks
+    # 2. In local dev mode, spawn background delivery thread only if explicitly enabled
     global dispatcher_thread
-    if settings.DEBUG:
-        logger.info("Starting in-process delivery dispatcher thread for development...")
+    if settings.ENABLE_INPROCESS_DISPATCHER:
+        logger.info("Starting in-process delivery dispatcher thread...")
         dispatcher_thread = threading.Thread(
             target=run_dispatcher_loop,
             kwargs={"poll_interval": 1.0},
@@ -60,7 +60,6 @@ def healthcheck():
     return {
         "status": "ok",
         "env": settings.ENV,
-        "debug": settings.DEBUG,
         "version": "0.1.0"
     }
 

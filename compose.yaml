@@ -34,6 +34,8 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:postgrespassword@postgres:5432/webhook_platform
       - REDIS_URL=redis://redis:6379/0
+      - USE_CELERY=True
+      - ENABLE_INPROCESS_DISPATCHER=False
       - SECRET_KEY=wh_dev_insecure_secret_key_change_in_production_1234567890
       - SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
       - ALLOW_LOCAL_RECEIVERS=True
@@ -42,7 +44,7 @@ services:
       - HTTP_CONNECT_TIMEOUT_SECONDS=${HTTP_CONNECT_TIMEOUT_SECONDS:-3.0}
       - DISPATCH_MAX_WORKERS=${DISPATCH_MAX_WORKERS:-10}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - DEBUG=True
+      - DEBUG=False
       - PORT=8080
     depends_on:
       postgres:
@@ -61,6 +63,8 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:postgrespassword@postgres:5432/webhook_platform
       - REDIS_URL=redis://redis:6379/0
+      - USE_CELERY=True
+      - ENABLE_INPROCESS_DISPATCHER=False
       - SECRET_KEY=wh_dev_insecure_secret_key_change_in_production_1234567890
       - SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
       - ALLOW_LOCAL_RECEIVERS=True
@@ -83,6 +87,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:postgrespassword@postgres:5432/webhook_platform
       - REDIS_URL=redis://redis:6379/0
+      - USE_CELERY=True
       - SECRET_KEY=wh_dev_insecure_secret_key_change_in_production_1234567890
       - SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
       - ALLOW_LOCAL_RECEIVERS=True

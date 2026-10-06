@@ -1,4 +1,6 @@
+import html
 import os
+import sqlite3
 import time
 from typing import Any
 
@@ -15,10 +17,9 @@ ADMIN_TOKEN = os.getenv("DEMO_RECEIVER_ADMIN_TOKEN", "")
 def _require_admin(request: Request, token_field: str | None = None):
     """Protects behaviour-changing controls.
 
-    - If DEMO_RECEIVER_ADMIN_TOKEN is unset: only allow callers from
-      loopback (local demo use).
-    - If set: require matching token via `X-Admin-Token` header or form field
-      `admin_token`, except loopback callers which remain allowed for local demos.
+    - Only allow loopback callers without token if DEMO_RECEIVER_ADMIN_TOKEN is empty.
+    - If DEMO_RECEIVER_ADMIN_TOKEN is set: require matching token via X-Admin-Token
+      header, form field admin_token, or query param admin_token.
     """
     client_host = ""
     try:
@@ -26,17 +27,14 @@ def _require_admin(request: Request, token_field: str | None = None):
     except Exception:
         client_host = ""
     is_loopback = client_host in ("127.0.0.1", "::1", "localhost", "testclient", "")
+
     if not ADMIN_TOKEN:
         if is_loopback:
             return
-    # Allow loopback or Docker bridge private network when using the default dev token
-    is_docker_or_local = is_loopback
-    if not is_docker_or_local and client_host:
-        try:
-            import ipaddress
-            is_docker_or_local = ipaddress.ip_address(client_host).is_private
-        except ValueError:
-            pass
+        raise HTTPException(
+            status_code=403,
+            detail="Admin token is not configured on demo receiver."
+        )
 
     provided = (token_field or "").strip() or request.headers.get("x-admin-token", "").strip()
     if not provided:
@@ -45,15 +43,12 @@ def _require_admin(request: Request, token_field: str | None = None):
         except Exception:
             provided = ""
 
-    # In local dev / docker compose with default dev token, allow local browser/script callers
-    if ADMIN_TOKEN == "demo-local-token-change-me" and is_docker_or_local and not provided:
-        return
-
+    # Allow local loopback callers if provided token matches or in local testing
     import hmac as _hmac
     if not provided or not _hmac.compare_digest(provided, ADMIN_TOKEN):
         raise HTTPException(
             status_code=403,
-            detail=f"Invalid admin token for demo-receiver controls. Expected token configured via DEMO_RECEIVER_ADMIN_TOKEN (default: 'demo-local-token-change-me'). Supply header 'X-Admin-Token: {ADMIN_TOKEN or 'demo-local-token-change-me'}' or form field 'admin_token'."
+            detail="Invalid or missing admin token for demo-receiver controls."
         )
 
 # Receiver state and configurations
@@ -70,33 +65,46 @@ config = {
 received_events: list[dict[str, Any]] = []
 seen_event_ids: set = set()
 
-# Durable deduplication: persist seen event IDs so a receiver restart does not
-# re-process an already-handled event (demonstrates at-least-once + dedup).
-_DEDUP_STATE_FILE = os.getenv("DEMO_RECEIVER_STATE_FILE", "/tmp/demo_receiver_dedup.json")
+# Atomic SQLite-backed deduplication
+_DEDUP_DB_FILE = os.getenv("DEMO_RECEIVER_DB_FILE", "/tmp/demo_receiver.db")
 
-def _load_dedup_state() -> None:
+def _init_dedup_db() -> None:
     try:
-        if os.path.exists(_DEDUP_STATE_FILE):
-            import json as _json
-            with open(_DEDUP_STATE_FILE, encoding="utf-8") as f:
-                data = _json.load(f)
-            for eid in data.get("seen_event_ids", []):
-                if isinstance(eid, str):
-                    seen_event_ids.add(eid)
+        with sqlite3.connect(_DEDUP_DB_FILE) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS processed_events (
+                    event_id TEXT PRIMARY KEY,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+            rows = conn.execute("SELECT event_id FROM processed_events").fetchall()
+            for r in rows:
+                seen_event_ids.add(r[0])
     except Exception:
         pass
 
-def _persist_dedup_state() -> None:
+def _record_processed_event(event_id: str) -> bool:
+    """Atomically records event_id in SQLite transaction."""
+    seen_event_ids.add(event_id)
     try:
-        import json as _json
-        tmp = _DEDUP_STATE_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            _json.dump({"seen_event_ids": sorted(seen_event_ids)[-5000:]}, f)
-        os.replace(tmp, _DEDUP_STATE_FILE)
+        with sqlite3.connect(_DEDUP_DB_FILE) as conn:
+            conn.execute("INSERT OR IGNORE INTO processed_events (event_id) VALUES (?)", (event_id,))
+            conn.commit()
+            return True
+    except Exception:
+        return False
+
+def _clear_dedup_db() -> None:
+    seen_event_ids.clear()
+    try:
+        with sqlite3.connect(_DEDUP_DB_FILE) as conn:
+            conn.execute("DELETE FROM processed_events")
+            conn.commit()
     except Exception:
         pass
 
-_load_dedup_state()
+_init_dedup_db()
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -116,6 +124,7 @@ def index():
             else '<span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:9999px;font-size:12px;">First seen</span>'
         )
         status_color = "#16a34a" if item["returned_status"] < 300 else "#dc2626"
+        escaped_payload = html.escape(str(item.get("payload", "")))
         rows += f"""
         <tr style="border-bottom: 1px solid #e5e7eb;">
             <td style="padding:10px;font-family:monospace;font-size:12px;">{item["received_at"]}</td>
@@ -124,7 +133,7 @@ def index():
             <td style="padding:10px;font-weight:bold;color:{status_color};">{item["returned_status"]}</td>
             <td style="padding:10px;">{sig_badge}</td>
             <td style="padding:10px;">{dedup_badge}</td>
-            <td style="padding:10px;"><pre style="margin:0;font-size:11px;max-width:350px;overflow:hidden;text-overflow:ellipsis;">{item["payload"]}</pre></td>
+            <td style="padding:10px;"><pre style="margin:0;font-size:11px;max-width:350px;overflow:hidden;text-overflow:ellipsis;">{escaped_payload}</pre></td>
         </tr>
         """
 
@@ -154,8 +163,8 @@ def index():
                     <h1 style="margin:0; font-size: 24px;">Controllable Webhook Receiver</h1>
                     <p style="margin:4px 0 0 0; color: #6b7280;">Listening on <code>http://127.0.0.1:8001/webhook</code></p>
                 </div>
-                <form action="/clear" method="post">
-                    <input type="hidden" name="admin_token" value="{ADMIN_TOKEN}">
+                <form action="/clear" method="post" style="display:flex; gap:8px;">
+                    <input type="password" name="admin_token" placeholder="Admin token (if configured)" style="padding:6px 10px; border-radius:6px; border:1px solid #d1d5db;">
                     <button class="btn btn-danger" type="submit">Clear Logs</button>
                 </form>
             </div>
@@ -195,7 +204,7 @@ def index():
 
                     <div>
                         <label style="display:block; font-size:13px; font-weight:500; margin-bottom:4px;">Admin Token</label>
-                        <input type="text" name="admin_token" value="{ADMIN_TOKEN}" placeholder="demo-local-token-change-me" style="width:90%;">
+                        <input type="password" name="admin_token" value="" placeholder="Admin token (if configured)" style="width:90%;">
                     </div>
 
                     <div>
@@ -286,8 +295,7 @@ def configure(
 def clear(request: Request, admin_token: str = Form("")):
     _require_admin(request, admin_token)
     received_events.clear()
-    seen_event_ids.clear()
-    _persist_dedup_state()
+    _clear_dedup_db()
     config["current_failures"] = 0
     return RedirectResponse(url="/", status_code=303)
 
@@ -302,9 +310,24 @@ async def receive_webhook(
     raw_body_bytes = await request.body()
     raw_body_str = raw_body_bytes.decode("utf-8")
 
-    # 1. Signature Verification
+    # 1. Signature Verification (enforced when endpoint_secret is configured)
     sig_valid = None
-    if config["endpoint_secret"] and webhook_signature and webhook_event_id and webhook_timestamp:
+    if config["endpoint_secret"]:
+        if not (webhook_signature and webhook_event_id and webhook_timestamp):
+            received_events.append({
+                "received_at": time.strftime("%H:%M:%S"),
+                "event_id": webhook_event_id or "unknown",
+                "delivery_id": webhook_delivery_id or "unknown",
+                "returned_status": 401,
+                "sig_valid": False,
+                "is_duplicate": False,
+                "payload": raw_body_str
+            })
+            return Response(
+                content='{"error": "Missing signature headers"}',
+                status_code=401,
+                media_type="application/json"
+            )
         valid, msg = verify_webhook_signature(
             secret=config["endpoint_secret"],
             event_id=webhook_event_id,
@@ -314,15 +337,38 @@ async def receive_webhook(
             tolerance_seconds=300
         )
         sig_valid = valid
+        if not valid:
+            received_events.append({
+                "received_at": time.strftime("%H:%M:%S"),
+                "event_id": webhook_event_id or "unknown",
+                "delivery_id": webhook_delivery_id or "unknown",
+                "returned_status": 401,
+                "sig_valid": False,
+                "is_duplicate": False,
+                "payload": raw_body_str
+            })
+            return Response(
+                content=f'{{"error": "Invalid signature: {msg}"}}',
+                status_code=401,
+                media_type="application/json"
+            )
 
-    # 2. Event ID Deduplication check (durable across restarts)
-    is_duplicate = False
-    if webhook_event_id:
-        if webhook_event_id in seen_event_ids:
-            is_duplicate = True
-        else:
-            seen_event_ids.add(webhook_event_id)
-            _persist_dedup_state()
+    # 2. Event ID Deduplication check: return success idempotently if already processed
+    if webhook_event_id and webhook_event_id in seen_event_ids:
+        received_events.append({
+            "received_at": time.strftime("%H:%M:%S"),
+            "event_id": webhook_event_id,
+            "delivery_id": webhook_delivery_id or "unknown",
+            "returned_status": 200,
+            "sig_valid": sig_valid,
+            "is_duplicate": True,
+            "payload": raw_body_str
+        })
+        return Response(
+            content='{"status": "already_processed", "is_duplicate": true}',
+            status_code=200,
+            media_type="application/json"
+        )
 
     # 3. Simulate configured receiver behavior
     mode = config["mode"]
@@ -352,6 +398,10 @@ async def receive_webhook(
         returned_status = 200
         response_body = {"status": "slow_success", "delay": config["slow_delay_sec"]}
 
+    # 4. Atomically persist event ID in deduplication DB only after successful processing
+    if 200 <= returned_status < 300 and webhook_event_id:
+        _record_processed_event(webhook_event_id)
+
     # Log to in-memory events list
     received_events.append({
         "received_at": time.strftime("%H:%M:%S"),
@@ -359,12 +409,13 @@ async def receive_webhook(
         "delivery_id": webhook_delivery_id or "unknown",
         "returned_status": returned_status,
         "sig_valid": sig_valid,
-        "is_duplicate": is_duplicate,
+        "is_duplicate": False,
         "payload": raw_body_str
     })
 
+    import json as _json
     return Response(
-        content=str(response_body),
+        content=_json.dumps(response_body),
         status_code=returned_status,
         media_type="application/json",
         headers=headers

@@ -41,7 +41,10 @@ def publish_event(
 
     # Rate limiting per project
     from app.services.rate_limiter import check_ingestion_rate_limit
-    allowed, wait_time = check_ingestion_rate_limit(project.id, max_per_second=30.0)
+    allowed, wait_time = check_ingestion_rate_limit(
+        project.id,
+        max_per_second=float(settings.INGESTION_RATE_LIMIT_PER_SECOND)
+    )
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
