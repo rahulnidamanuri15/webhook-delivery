@@ -1,29 +1,28 @@
 import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
 from app.db.session import SessionLocal
+from app.main import app
 from app.models import (
-    User,
+    ApiKey,
+    Delivery,
+    Endpoint,
+    EndpointSubscription,
     Organization,
     OrganizationMember,
     Project,
-    ApiKey,
-    Endpoint,
-    EndpointSubscription,
-    Event,
-    Delivery,
-)
-from app.services.security import (
-    hash_password,
-    create_session_token,
-    generate_api_key,
-    generate_signing_secret,
-    encrypt_secret,
+    User,
 )
 from app.services.event_service import ingest_event
-from app.services.delivery_service import execute_delivery
+from app.services.security import (
+    create_session_token,
+    encrypt_secret,
+    generate_api_key,
+    generate_signing_secret,
+    hash_password,
+)
 
 client = TestClient(app)
 

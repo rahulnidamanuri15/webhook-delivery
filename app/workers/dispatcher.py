@@ -6,8 +6,9 @@ PostgreSQL owns delivery state, Redis transports work.
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List
+
 from sqlalchemy.orm import Session
+
 from app.db.session import SessionLocal
 from app.models import Delivery, utc_now
 from app.services.delivery_service import execute_delivery
@@ -21,7 +22,7 @@ logger = logging.getLogger("webhook.dispatcher")
 DISPATCH_MAX_WORKERS = int(os.getenv("DISPATCH_MAX_WORKERS", "10"))
 
 
-def get_due_delivery_ids(db: Session, batch_size: int = 50) -> List[str]:
+def get_due_delivery_ids(db: Session, batch_size: int = 50) -> list[str]:
     """Queries deliveries in PENDING or RETRY_SCHEDULED status whose next_attempt_at <= now.
 
     Uses SELECT ... FOR UPDATE SKIP LOCKED on PostgreSQL so concurrent

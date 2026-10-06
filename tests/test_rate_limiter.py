@@ -1,15 +1,16 @@
-import time
-from datetime import timedelta
-import pytest
+from datetime import UTC, timedelta
 from unittest.mock import patch
-from app.services.rate_limiter import MemoryTokenBucket, check_endpoint_rate_limit, check_ingestion_rate_limit
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from app.db.session import Base
-from app.models import Organization, Project, Endpoint, EndpointSubscription, Event, Delivery, utc_now
-from app.services.event_service import ingest_event
+from app.models import Endpoint, EndpointSubscription, Organization, Project, utc_now
 from app.services.delivery_service import execute_delivery
-from app.services.security import generate_signing_secret, encrypt_secret
+from app.services.event_service import ingest_event
+from app.services.rate_limiter import MemoryTokenBucket
+from app.services.security import encrypt_secret, generate_signing_secret
+
 
 def test_memory_token_bucket_limits():
     bucket = MemoryTokenBucket()
@@ -83,6 +84,5 @@ def test_endpoint_rate_limit_defers_without_consuming_attempt():
     assert dlv1.status == "RETRY_SCHEDULED"
     assert dlv1.attempt_count == 0  # Attempt count not incremented!
     assert len(dlv1.attempts) == 0
-    from datetime import timezone
-    next_ts = dlv1.next_attempt_at.replace(tzinfo=timezone.utc) if dlv1.next_attempt_at.tzinfo is None else dlv1.next_attempt_at
+    next_ts = dlv1.next_attempt_at.replace(tzinfo=UTC) if dlv1.next_attempt_at.tzinfo is None else dlv1.next_attempt_at
     assert next_ts >= utc_now() - timedelta(seconds=2)

@@ -1,11 +1,12 @@
-import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from app.db.session import Base
-from app.models import Organization, Project, Endpoint, EndpointSubscription, User
+from app.models import Organization, User
 from app.models.audit_log import AuditLog
 from app.services.audit import log_audit_event
-from app.services.security import generate_signing_secret, encrypt_secret, decrypt_secret
+from app.services.security import decrypt_secret, encrypt_secret, generate_signing_secret
+
 
 def test_audit_log_creation():
     engine = create_engine("sqlite:///:memory:")

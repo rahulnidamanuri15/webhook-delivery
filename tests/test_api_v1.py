@@ -1,9 +1,10 @@
 import pytest
 from fastapi.testclient import TestClient
+
+from app.db.session import SessionLocal
 from app.main import app
-from app.db.session import SessionLocal, Base, engine
-from app.models import Organization, Project, ApiKey, Endpoint, EndpointSubscription
-from app.services.security import generate_api_key, generate_signing_secret, encrypt_secret
+from app.models import ApiKey, Endpoint, EndpointSubscription, Organization, Project
+from app.services.security import encrypt_secret, generate_api_key, generate_signing_secret
 
 client = TestClient(app)
 

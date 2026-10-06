@@ -1,12 +1,14 @@
 """E2E: publish -> dispatch -> demo receiver (mocked HTTP)."""
 from unittest.mock import MagicMock, patch
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from app.db.session import Base
-from app.models import Organization, Project, Endpoint, EndpointSubscription
-from app.services.security import generate_signing_secret, encrypt_secret
-from app.services.event_service import ingest_event
+from app.models import Endpoint, EndpointSubscription, Organization, Project
 from app.services.delivery_service import execute_delivery
+from app.services.event_service import ingest_event
+from app.services.security import encrypt_secret, generate_signing_secret
 
 
 def _mock200():

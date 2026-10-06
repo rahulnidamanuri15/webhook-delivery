@@ -1,6 +1,7 @@
 from datetime import datetime
-from typing import Optional, List
+
 from pydantic import BaseModel, EmailStr, Field
+
 
 class UserRegister(BaseModel):
     email: EmailStr
@@ -39,7 +40,7 @@ class ApiKeyResponse(BaseModel):
     name: str
     key_prefix: str
     created_at: datetime
-    revoked_at: Optional[datetime] = None
+    revoked_at: datetime | None = None
     is_active: bool
 
     class Config:

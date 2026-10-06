@@ -1,13 +1,15 @@
 """PG locking test: runs against real PostgreSQL in CI, skips locally on SQLite."""
 import os
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from app.db.session import Base
-from app.models import Organization, Project, Endpoint, EndpointSubscription
-from app.services.security import generate_signing_secret, encrypt_secret
-from app.workers.dispatcher import get_due_delivery_ids
+from app.models import Endpoint, EndpointSubscription, Organization, Project
 from app.services.event_service import ingest_event
+from app.services.security import encrypt_secret, generate_signing_secret
+from app.workers.dispatcher import get_due_delivery_ids
 
 needs_pg = pytest.mark.skipif(
     not os.getenv("DATABASE_URL", "").startswith("postgresql"),

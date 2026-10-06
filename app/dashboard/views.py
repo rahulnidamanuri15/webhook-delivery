@@ -1,31 +1,47 @@
 import json
-from typing import Optional
-from fastapi import APIRouter, Depends, Request, Form, Response, HTTPException, status, Query
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
+from sqlalchemy.orm import Session
 
-from app.db.session import get_db
 from app.api.deps import get_optional_user
-from app.models import (
-    User, Organization, OrganizationMember, Project, ApiKey,
-    Endpoint, EndpointSubscription, Event, Delivery, DeliveryAttempt, utc_now
-)
-from app.services.security import (
-    hash_password, verify_password, create_session_token,
-    generate_signing_secret, encrypt_secret, decrypt_secret, generate_api_key,
-    get_csrf_token_for_request, validate_request_csrf
-)
-from app.services.event_service import ingest_event
-from app.services.delivery_service import replay_delivery
-from app.services.ssrf import validate_webhook_url
 from app.config import settings
+from app.db.session import get_db
+from app.models import (
+    ApiKey,
+    Delivery,
+    DeliveryAttempt,
+    Endpoint,
+    EndpointSubscription,
+    Event,
+    Organization,
+    OrganizationMember,
+    Project,
+    User,
+    utc_now,
+)
+from app.services.delivery_service import replay_delivery
+from app.services.event_service import ingest_event
+from app.services.security import (
+    create_session_token,
+    decrypt_secret,
+    encrypt_secret,
+    generate_api_key,
+    generate_signing_secret,
+    get_csrf_token_for_request,
+    hash_password,
+    validate_request_csrf,
+    verify_password,
+)
+from app.services.ssrf import validate_webhook_url
+
 
 def is_cookie_secure() -> bool:
     return settings.ENV == "production" or not settings.DEBUG
 
-def assert_csrf(request: Request, csrf_token: Optional[str] = None):
+def assert_csrf(request: Request, csrf_token: str | None = None):
     """Enforces CSRF protection on state-changing dashboard requests."""
     # Allow testing override if explicitly running without csrf in dev testing fixture
     if getattr(request.state, "skip_csrf", False):
@@ -133,7 +149,7 @@ def login_post(
     request: Request,
     email: str = Form(...),
     password: str = Form(...),
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -194,7 +210,7 @@ def register_post(
     email: str = Form(...),
     password: str = Form(...),
     project_name: str = Form("Default Project"),
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -390,8 +406,8 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
 @router.get("/dashboard/deliveries/table", response_class=HTMLResponse)
 def deliveries_table_fragment(
     request: Request,
-    status: Optional[str] = None,
-    q: Optional[str] = None,
+    status: str | None = None,
+    q: str | None = None,
     page: int = 1,
     per_page: int = 15,
     db: Session = Depends(get_db)
@@ -605,7 +621,7 @@ def list_projects(request: Request, db: Session = Depends(get_db)):
 def create_project(
     request: Request,
     name: str = Form(...),
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -635,7 +651,7 @@ def create_project(
 def switch_project(
     request: Request,
     project_id: str = Form(...),
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -681,10 +697,10 @@ def list_endpoints(request: Request, db: Session = Depends(get_db)):
 def create_endpoint_post(
     request: Request,
     url: str = Form(...),
-    description: Optional[str] = Form(None),
+    description: str | None = Form(None),
     event_types: str = Form("*"),
     rate_limit_per_second: int = Form(10),
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -793,7 +809,7 @@ def endpoint_detail(endpoint_id: str, request: Request, db: Session = Depends(ge
 def toggle_endpoint(
     endpoint_id: str,
     request: Request,
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -826,7 +842,7 @@ def toggle_endpoint(
 def disable_endpoint(
     endpoint_id: str,
     request: Request,
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -859,7 +875,7 @@ def disable_endpoint(
 def rotate_endpoint_secret(
     endpoint_id: str,
     request: Request,
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -897,10 +913,10 @@ def edit_endpoint_post(
     endpoint_id: str,
     request: Request,
     url: str = Form(...),
-    description: Optional[str] = Form(None),
+    description: str | None = Form(None),
     event_types: str = Form("*"),
     rate_limit_per_second: int = Form(10),
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     """Full endpoint CRUD: update URL, description, rate limit and subscriptions."""
@@ -944,7 +960,7 @@ def edit_endpoint_post(
 def delete_endpoint_post(
     endpoint_id: str,
     request: Request,
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     """Full endpoint CRUD: delete endpoint and its subscriptions.
@@ -979,7 +995,7 @@ def delete_endpoint_post(
 def ping_endpoint(
     endpoint_id: str,
     request: Request,
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -1009,7 +1025,7 @@ def ping_endpoint(
 # ================= EVENTS =================
 
 @router.get("/dashboard/events", response_class=HTMLResponse)
-def list_events(request: Request, type: Optional[str] = None, page: int = 1, db: Session = Depends(get_db)):
+def list_events(request: Request, type: str | None = None, page: int = 1, db: Session = Depends(get_db)):
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
@@ -1052,9 +1068,9 @@ def send_test_event_page(request: Request, db: Session = Depends(get_db)):
 def send_test_event_post(
     request: Request,
     event_type: str = Form(...),
-    idempotency_key: Optional[str] = Form(None),
+    idempotency_key: str | None = Form(None),
     payload_data: str = Form(...),
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -1146,7 +1162,7 @@ def event_detail_view(event_id: str, request: Request, page: int = 1, db: Sessio
 # ================= DELIVERIES & DEAD LETTERS =================
 
 @router.get("/dashboard/deliveries", response_class=HTMLResponse)
-def list_deliveries(request: Request, status: Optional[str] = None, page: int = 1, db: Session = Depends(get_db)):
+def list_deliveries(request: Request, status: str | None = None, page: int = 1, db: Session = Depends(get_db)):
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
@@ -1201,7 +1217,7 @@ def delivery_detail_view(delivery_id: str, request: Request, db: Session = Depen
 def replay_delivery_post(
     delivery_id: str,
     request: Request,
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -1260,7 +1276,7 @@ def list_dead_letters(request: Request, page: int = 1, db: Session = Depends(get
 @router.post("/dashboard/dead-letters/replay-all")
 def replay_all_dead_letters(
     request: Request,
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -1296,7 +1312,7 @@ def replay_all_dead_letters(
 # ================= API KEYS =================
 
 @router.get("/dashboard/api-keys", response_class=HTMLResponse)
-def list_api_keys(request: Request, new_key: Optional[str] = None, db: Session = Depends(get_db)):
+def list_api_keys(request: Request, new_key: str | None = None, db: Session = Depends(get_db)):
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
@@ -1314,7 +1330,7 @@ def list_api_keys(request: Request, new_key: Optional[str] = None, db: Session =
 def create_api_key_post(
     request: Request,
     name: str = Form(...),
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -1352,7 +1368,7 @@ def create_api_key_post(
 def revoke_api_key_post(
     key_id: str,
     request: Request,
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -1439,7 +1455,7 @@ def invite_team_member(
     request: Request,
     email: str = Form(...),
     role: str = Form("member"),
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -1486,7 +1502,7 @@ def invite_team_member(
 def revoke_invitation(
     inv_id: str,
     request: Request,
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
@@ -1525,7 +1541,7 @@ def update_member_role(
     member_id: str,
     request: Request,
     role: str = Form(...),
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     """Change a member's role. Owners can assign any role; admins can only manage members."""
@@ -1568,7 +1584,7 @@ def update_member_role(
 def remove_member(
     member_id: str,
     request: Request,
-    csrf_token: Optional[str] = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     """Remove a member. Owners cannot be removed while they are the last owner."""
@@ -1625,8 +1641,8 @@ def accept_invitation_page(token: str, request: Request, db: Session = Depends(g
 def accept_invitation_post(
     token: str,
     request: Request,
-    password: Optional[str] = Form(None),
-    csrf_token: Optional[str] = Form(None),
+    password: str | None = Form(None),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)

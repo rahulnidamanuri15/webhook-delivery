@@ -1,9 +1,12 @@
 import secrets
-from datetime import datetime, timedelta, timezone
-from sqlalchemy import Column, String, DateTime, ForeignKey, Index
+from datetime import UTC, timedelta
+
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import relationship
+
 from app.db.session import Base
 from app.models import generate_id, utc_now
+
 
 def generate_invitation_token() -> str:
     return secrets.token_urlsafe(32)
@@ -28,9 +31,9 @@ class OrganizationInvitation(Base):
     def is_valid(self) -> bool:
         if self.status != "PENDING":
             return False
-        exp = self.expires_at.replace(tzinfo=timezone.utc) if self.expires_at.tzinfo is None else self.expires_at
+        exp = self.expires_at.replace(tzinfo=UTC) if self.expires_at.tzinfo is None else self.expires_at
         now = utc_now()
-        now = now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now
+        now = now.replace(tzinfo=UTC) if now.tzinfo is None else now
         return exp > now
 
     __table_args__ = (

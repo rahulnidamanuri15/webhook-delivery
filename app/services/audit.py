@@ -1,18 +1,21 @@
 import json
-from typing import Optional, Dict, Any
+from typing import Any
+
 from sqlalchemy.orm import Session
-from app.models.audit_log import AuditLog
+
 from app.models import utc_now
+from app.models.audit_log import AuditLog
+
 
 def log_audit_event(
     db: Session,
     organization_id: str,
     action: str,
     resource_type: str,
-    resource_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    ip_address: Optional[str] = None,
-    details: Optional[Dict[str, Any]] = None
+    resource_id: str | None = None,
+    user_id: str | None = None,
+    ip_address: str | None = None,
+    details: dict[str, Any] | None = None
 ) -> AuditLog:
     """Creates an audit log entry for security and compliance tracking."""
     details_str = json.dumps(details) if details else None

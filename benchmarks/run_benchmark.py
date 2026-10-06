@@ -3,12 +3,14 @@ Automated Webhook Delivery Platform Benchmark & Load Testing Suite
 Measures event-ingestion throughput, latency percentiles (p50, p95, p99),
 and end-to-end delivery performance according to Section 17 specifications.
 """
-import sys
-import os
-import time
-import math
 import asyncio
-from typing import List, Dict, Any
+import math
+import os
+import sys
+import time
+from datetime import UTC
+from typing import Any
+
 import httpx
 
 # Add project root to sys.path
@@ -19,7 +21,7 @@ API_KEY = os.getenv("BENCHMARK_API_KEY", "wh_live_demo1234567890abcdef123456")
 TOTAL_EVENTS = int(os.getenv("BENCHMARK_TOTAL_EVENTS", "200"))
 CONCURRENCY = int(os.getenv("BENCHMARK_CONCURRENCY", "20"))
 
-def calculate_percentile(sorted_list: List[float], percentile: float) -> float:
+def calculate_percentile(sorted_list: list[float], percentile: float) -> float:
     if not sorted_list:
         return 0.0
     k = (len(sorted_list) - 1) * (percentile / 100.0)
@@ -35,7 +37,7 @@ async def send_single_event(
     client: httpx.AsyncClient,
     index: int,
     semaphore: asyncio.Semaphore,
-    results: List[Dict[str, Any]]
+    results: list[dict[str, Any]]
 ):
     async with semaphore:
         headers = {
@@ -90,7 +92,7 @@ async def run_load_test(total_events: int = TOTAL_EVENTS, concurrency: int = CON
     print(f"Target URL:       {API_BASE_URL}/api/v1/events")
     print(f"Total Requests:   {total_events}")
     print(f"Concurrency:      {concurrency}")
-    print(f"Payload Size:     ~180 bytes (JSON)")
+    print("Payload Size:     ~180 bytes (JSON)")
     try:
         from app.config import settings as _s
         print(f"Database:         {_s.DATABASE_URL.split('://')[0]} | Workers: {os.getenv('DISPATCH_MAX_WORKERS','10')} threads | Retry: {'demo' if _s.USE_DEMO_RETRY_POLICY else 'default'}")
@@ -168,7 +170,6 @@ async def run_load_test(total_events: int = TOTAL_EVENTS, concurrency: int = CON
                 Delivery.status.in_(["PENDING", "RETRY_SCHEDULED"])).scalar()
             if oldest:
                 try:
-                    from datetime import timezone as _tz
                     _now = utc_now()
                     if oldest.tzinfo is None:
                         _now = _now.replace(tzinfo=None)
@@ -182,7 +183,6 @@ async def run_load_test(total_events: int = TOTAL_EVENTS, concurrency: int = CON
                     .filter(Delivery.status == "SUCCEEDED", Delivery.completed_at.is_not(None))
                     .order_by(Delivery.completed_at.desc()).limit(20).all())
             if succ:
-                from datetime import timezone as _tz2
                 diffs = []
                 for c, a in succ:
                     if not (c and a):
@@ -191,9 +191,9 @@ async def run_load_test(total_events: int = TOTAL_EVENTS, concurrency: int = CON
                         if (c.tzinfo is None) != (a.tzinfo is None):
                             # Normalize naive/aware mismatch
                             if c.tzinfo is None:
-                                c = c.replace(tzinfo=_tz2.utc)
+                                c = c.replace(tzinfo=UTC)
                             if a.tzinfo is None:
-                                a = a.replace(tzinfo=_tz2.utc)
+                                a = a.replace(tzinfo=UTC)
                         diffs.append(max(0.0, (c - a).total_seconds()))
                     except Exception:
                         continue
@@ -321,7 +321,7 @@ The ingestion engine accepted **{accepted_count}/{total_events} requests** ({acc
     try:
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(report_content)
-        print(f"Benchmark report saved to: docs/BENCHMARK_REPORT.md")
+        print("Benchmark report saved to: docs/BENCHMARK_REPORT.md")
     except Exception as e:
         print(f"Warning: Could not save report file ({e})")
 

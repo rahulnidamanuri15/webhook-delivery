@@ -1,8 +1,9 @@
 import ipaddress
 import socket
 from urllib.parse import urlparse, urlunparse
-from typing import Tuple, Optional, Dict
+
 from app.config import settings
+
 
 def is_ip_prohibited(ip_str: str) -> bool:
     """Checks whether an IP address belongs to loopback, private, link-local, multicast, or reserved ranges."""
@@ -47,7 +48,7 @@ def is_domain_allowed(hostname: str) -> tuple[bool, str | None]:
         f"({', '.join(allowlist)})."
     )
 
-def validate_webhook_url(url: str) -> Tuple[bool, Optional[str]]:
+def validate_webhook_url(url: str) -> tuple[bool, str | None]:
     """
     Validates a destination URL against SSRF attacks (scheme, credentials, and DNS resolution).
     Returns:
@@ -101,7 +102,7 @@ def validate_webhook_url(url: str) -> Tuple[bool, Optional[str]]:
 
     return True, None
 
-def resolve_and_pin_destination(url: str) -> Tuple[bool, Optional[str], str, Dict[str, str]]:
+def resolve_and_pin_destination(url: str) -> tuple[bool, str | None, str, dict[str, str]]:
     """
     DNS Rebinding Protection:
     Resolves the hostname, validates every resolved IP address against restricted ranges,

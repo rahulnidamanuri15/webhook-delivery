@@ -1,10 +1,7 @@
 import time
-import pytest
-from app.services.signing import (
-    compute_signature,
-    generate_webhook_headers,
-    verify_webhook_signature
-)
+
+from app.services.signing import compute_signature, verify_webhook_signature
+
 
 def test_signature_generation_and_verification():
     secret = "whsec_test_secret_12345"

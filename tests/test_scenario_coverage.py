@@ -1,34 +1,34 @@
-import uuid
-import pytest
 import concurrent.futures
+import uuid
 from unittest.mock import MagicMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.config import settings
 from app.db.session import SessionLocal
+from app.main import app
 from app.models import (
-    User,
-    Organization,
-    OrganizationMember,
-    Project,
     ApiKey,
+    Delivery,
     Endpoint,
     EndpointSubscription,
     Event,
-    Delivery,
-    utc_now,
+    Organization,
+    OrganizationMember,
+    Project,
+    User,
 )
+from app.services.delivery_service import execute_delivery
+from app.services.event_service import ingest_event
 from app.services.security import (
-    hash_password,
     create_session_token,
+    encrypt_secret,
     generate_api_key,
     generate_signing_secret,
-    encrypt_secret,
     get_csrf_token_for_request,
+    hash_password,
 )
-from app.services.event_service import ingest_event
-from app.services.delivery_service import execute_delivery
-from app.config import settings
 
 
 def _mock_stream_response(status_code: int = 200, text: str = "", headers: dict | None = None):

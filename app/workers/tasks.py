@@ -1,5 +1,6 @@
 """Celery task definitions for background webhook execution and dispatching."""
 import logging
+
 from app.db.session import SessionLocal
 from app.services.delivery_service import execute_delivery
 from app.services.tracing import start_trace_span

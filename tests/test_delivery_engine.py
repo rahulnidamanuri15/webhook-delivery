@@ -1,25 +1,20 @@
-import time
 from datetime import timedelta
+from unittest.mock import MagicMock, patch
+
 import pytest
-import httpx
-from unittest.mock import patch, MagicMock
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from app.db.session import Base
-from app.models import Organization, Project, Endpoint, EndpointSubscription, Event, Delivery, DeliveryAttempt, utc_now
-from app.services.event_service import ingest_event
-from app.services.delivery_service import (
-    execute_delivery,
-    recover_abandoned_leases,
-    replay_delivery
-)
-from app.services.security import generate_signing_secret, encrypt_secret
+
 from app.config import settings
+from app.db.session import Base
+from app.models import Endpoint, EndpointSubscription, Organization, Project, utc_now
+from app.services.delivery_service import execute_delivery, recover_abandoned_leases, replay_delivery
+from app.services.event_service import ingest_event
+from app.services.security import encrypt_secret, generate_signing_secret
 
 
 def _mock_stream_response(status_code: int = 200, text: str = "", headers: dict | None = None):
     """Builds a mocked httpx.Client whose .stream() yields a bounded response."""
-    from unittest.mock import MagicMock, patch
     mock_resp = MagicMock()
     mock_resp.status_code = status_code
     mock_resp.headers = headers or {}

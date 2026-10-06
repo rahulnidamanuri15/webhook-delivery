@@ -8,12 +8,13 @@ Only terminal deliveries (SUCCEEDED/DEAD) and their attempts are purged.
 Events are removed once all their deliveries are terminal and old enough.
 Audit logs older than the window are also trimmed.
 """
-from datetime import timedelta
 import logging
+from datetime import timedelta
+
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
-from app.models import Event, Delivery, DeliveryAttempt, utc_now
+
 from app.config import settings
+from app.models import Delivery, DeliveryAttempt, Event, utc_now
 
 logger = logging.getLogger("webhook.retention")
 

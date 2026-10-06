@@ -1,7 +1,7 @@
-from contextlib import contextmanager
-from typing import Dict, Any, Optional
 import logging
 import os
+from contextlib import contextmanager
+from typing import Any
 
 logger = logging.getLogger("webhook.tracing")
 
@@ -30,7 +30,7 @@ except Exception as e:
     tracer = None
 
 @contextmanager
-def start_trace_span(name: str, attributes: Optional[Dict[str, Any]] = None):
+def start_trace_span(name: str, attributes: dict[str, Any] | None = None):
     """
     Context manager for distributed tracing across event ingestion, dispatch, and delivery.
     Gracefully no-ops if OpenTelemetry exporter is not configured.
@@ -45,7 +45,7 @@ def start_trace_span(name: str, attributes: Optional[Dict[str, Any]] = None):
         yield None
 
 
-def inject_trace_headers(headers: Dict[str, str]) -> Dict[str, str]:
+def inject_trace_headers(headers: dict[str, str]) -> dict[str, str]:
     """Injects W3C trace-context (traceparent/tracestate) into outbound headers.
 
     Allows acceptance → dispatch → delivery spans to be correlated with any

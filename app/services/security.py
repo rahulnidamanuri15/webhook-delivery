@@ -1,10 +1,11 @@
 import hashlib
 import secrets
-from typing import Tuple, Optional
+
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from cryptography.fernet import Fernet
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+
 from app.config import settings
 
 ph = PasswordHasher()
@@ -34,7 +35,7 @@ def decrypt_secret(encrypted_secret: str) -> str:
     return fernet.decrypt(encrypted_secret.encode("utf-8")).decode("utf-8")
 
 # --- Project-Scoped API Keys ---
-def generate_api_key() -> Tuple[str, str, str]:
+def generate_api_key() -> tuple[str, str, str]:
     """
     Returns:
         (full_key, key_prefix, key_hash)
@@ -62,6 +63,7 @@ _denied_session_hashes: dict[str, float] = {}
 _redis_denylist = None
 try:
     import redis as _redis_mod
+
     from app.config import settings as _settings
     _r = _redis_mod.from_url(_settings.REDIS_URL, socket_connect_timeout=0.2)
     _r.ping()
@@ -107,7 +109,7 @@ def is_session_token_denied(token: str) -> bool:
         return False
     return True
 
-def create_session_token(user_id: str, org_id: Optional[str] = None, project_id: Optional[str] = None) -> str:
+def create_session_token(user_id: str, org_id: str | None = None, project_id: str | None = None) -> str:
     data = {
         "user_id": user_id,
         "org_id": org_id,
@@ -115,7 +117,7 @@ def create_session_token(user_id: str, org_id: Optional[str] = None, project_id:
     }
     return serializer.dumps(data)
 
-def verify_session_token(token: str, max_age: int = 86400 * 7) -> Optional[dict]:
+def verify_session_token(token: str, max_age: int = 86400 * 7) -> dict | None:
     if not token or is_session_token_denied(token):
         return None
     try:
@@ -133,7 +135,7 @@ def verify_csrf_token(csrf_token: str, session_id: str, max_age: int = 3600) -> 
     except (BadSignature, SignatureExpired, Exception):
         return False
 
-def get_csrf_token_for_request(request, response = None) -> Tuple[str, Optional[str]]:
+def get_csrf_token_for_request(request, response = None) -> tuple[str, str | None]:
     """
     Returns (csrf_token, new_cookie_id_to_set).
     Binds the CSRF token to wh_session if present, or to an anonymous wh_csrf_id cookie.
@@ -149,7 +151,7 @@ def get_csrf_token_for_request(request, response = None) -> Tuple[str, Optional[
         new_cookie = csrf_id
     return generate_csrf_token(csrf_id), new_cookie
 
-def validate_request_csrf(request, form_csrf_token: Optional[str] = None) -> bool:
+def validate_request_csrf(request, form_csrf_token: str | None = None) -> bool:
     """Validates the CSRF token against the request's session or anonymous cookie."""
     if not form_csrf_token:
         # Check header as fallback

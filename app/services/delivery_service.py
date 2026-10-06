@@ -1,19 +1,17 @@
-import uuid
-import time
-import random
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+import random
+import time
+import uuid
+from datetime import UTC, datetime, timedelta
+
 import httpx
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
 
-from app.models import Delivery, DeliveryAttempt, Endpoint, Event, utc_now
 from app.config import settings
+from app.models import Delivery, DeliveryAttempt, utc_now
 from app.services.security import decrypt_secret
 from app.services.signing import generate_webhook_headers
-from app.services.ssrf import validate_webhook_url
-from app.services.tracing import start_trace_span, inject_trace_headers
+from app.services.tracing import inject_trace_headers, start_trace_span
 
 logger = logging.getLogger("webhook.delivery")
 
@@ -74,7 +72,7 @@ def _read_bounded_excerpt(response: "httpx.Response") -> str:
             text = text + " ... [wire-truncated]"
     return text
 
-def calculate_backoff_seconds(attempt_number: int, retry_after_header: Optional[str] = None) -> int:
+def calculate_backoff_seconds(attempt_number: int, retry_after_header: str | None = None) -> int:
     """Calculates backoff delay in seconds with jitter or honors Retry-After header.
 
     Honors both delay-seconds (e.g. ``120``) and HTTP-date (IMF-fixdate,
@@ -95,10 +93,9 @@ def calculate_backoff_seconds(attempt_number: int, retry_after_header: Optional[
             from email.utils import parsedate_to_datetime
             retry_dt = parsedate_to_datetime(raw)
             if retry_dt is not None:
-                from datetime import timezone as _tz
-                now_dt = datetime.now(_tz.utc)
+                now_dt = datetime.now(UTC)
                 if retry_dt.tzinfo is None:
-                    retry_dt = retry_dt.replace(tzinfo=_tz.utc)
+                    retry_dt = retry_dt.replace(tzinfo=UTC)
                 delay_s = int((retry_dt - now_dt).total_seconds())
                 if delay_s < 1:
                     delay_s = 1
@@ -123,7 +120,7 @@ def is_retryable_http_status(status_code: int) -> bool:
     """HTTP 408 (Request Timeout), 429 (Too Many Requests), and 5xx are retryable."""
     return status_code in (408, 429) or (500 <= status_code <= 599)
 
-def claim_delivery(db: Session, delivery_id: str) -> Optional[Tuple[Delivery, str]]:
+def claim_delivery(db: Session, delivery_id: str) -> tuple[Delivery, str] | None:
     """
     Attempts to atomically acquire an execution lease on a delivery row.
     Returns (delivery, lease_token) if claimed, or None if already claimed/completed.
@@ -295,12 +292,12 @@ def _record_attempt_and_update_state(
     attempt_number: int,
     started_at: datetime,
     finished_at: datetime,
-    http_status: Optional[int],
+    http_status: int | None,
     duration_ms: int,
-    error_code: Optional[str],
-    response_excerpt: Optional[str],
+    error_code: str | None,
+    response_excerpt: str | None,
     outcome: str,
-    retry_after: Optional[str] = None
+    retry_after: str | None = None
 ) -> bool:
     """Verifies lease ownership and updates the delivery and attempt records."""
     delivery = (
@@ -433,7 +430,7 @@ def recover_abandoned_leases(db: Session) -> int:
         logger.info(f"Recovered {recovered_count} abandoned delivery leases.")
     return recovered_count
 
-def replay_delivery(db: Session, delivery_id: str) -> Optional[Delivery]:
+def replay_delivery(db: Session, delivery_id: str) -> Delivery | None:
     """
     Creates a new delivery for the same event and endpoint, linking it to the previous delivery.
     Preserves original attempt history while allocating a fresh attempt budget.

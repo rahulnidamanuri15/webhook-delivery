@@ -1,10 +1,12 @@
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from app.db.session import Base
-from app.models import User, Organization, OrganizationMember, Project, Endpoint, EndpointSubscription, Event, Delivery
-from app.services.event_service import ingest_event, IdempotencyConflictError
-from app.services.security import generate_signing_secret, encrypt_secret
+from app.models import Endpoint, EndpointSubscription, Organization, Project
+from app.services.event_service import IdempotencyConflictError, ingest_event
+from app.services.security import encrypt_secret, generate_signing_secret
+
 
 @pytest.fixture
 def db_session():

@@ -1,7 +1,7 @@
-import hmac
 import hashlib
+import hmac
 import time
-from typing import Dict, Tuple
+
 
 def compute_signature(secret: str, event_id: str, timestamp: int, payload: str) -> str:
     """
@@ -9,12 +9,12 @@ def compute_signature(secret: str, event_id: str, timestamp: int, payload: str) 
     signing_input = event_id + "." + str(timestamp) + "." + payload
     signature = "v1=" + hmac_sha256(secret, signing_input).hexdigest()
     """
-    signing_input = f"{event_id}.{timestamp}.{payload}".encode("utf-8")
+    signing_input = f"{event_id}.{timestamp}.{payload}".encode()
     secret_bytes = secret.encode("utf-8")
     mac = hmac.new(secret_bytes, signing_input, hashlib.sha256)
     return f"v1={mac.hexdigest()}"
 
-def generate_webhook_headers(secret: str, event_id: str, delivery_id: str, payload: str) -> Dict[str, str]:
+def generate_webhook_headers(secret: str, event_id: str, delivery_id: str, payload: str) -> dict[str, str]:
     """Generates standard webhook delivery headers with fresh timestamp and HMAC-SHA256 signature."""
     timestamp = int(time.time())
     signature = compute_signature(secret, event_id, timestamp, payload)
@@ -34,7 +34,7 @@ def verify_webhook_signature(
     payload: str,
     received_signature: str,
     tolerance_seconds: int = 300
-) -> Tuple[bool, str]:
+) -> tuple[bool, str]:
     """
     Verifies the webhook signature in constant time and checks timestamp freshness.
     Returns:

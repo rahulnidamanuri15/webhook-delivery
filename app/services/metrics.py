@@ -1,8 +1,8 @@
-import time
-from typing import Dict
-from sqlalchemy.orm import Session
 from sqlalchemy import func
-from app.models import Event, Delivery, DeliveryAttempt
+from sqlalchemy.orm import Session
+
+from app.models import Delivery, DeliveryAttempt, Event
+
 
 def generate_prometheus_metrics(db: Session) -> str:
     """

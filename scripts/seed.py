@@ -1,17 +1,23 @@
 """Database seeding script for local development and demonstration."""
-import sys
 import os
+import sys
 
 # Add root directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.db.session import SessionLocal, Base, engine
+from app.db.session import Base, SessionLocal, engine
 from app.models import (
-    User, Organization, OrganizationMember, Project,
-    ApiKey, Endpoint, EndpointSubscription, Event, Delivery, utc_now
+    ApiKey,
+    Endpoint,
+    EndpointSubscription,
+    Organization,
+    OrganizationMember,
+    Project,
+    User,
 )
-from app.services.security import hash_password, hash_api_key, encrypt_secret
 from app.services.event_service import ingest_event
+from app.services.security import encrypt_secret, hash_api_key, hash_password
+
 
 def seed():
     print("Creating database tables if not existing...")

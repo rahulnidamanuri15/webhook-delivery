@@ -1,8 +1,10 @@
-import time
 import threading
-from typing import Tuple, Optional
+import time
+
 import redis
+
 from app.config import settings
+
 
 class MemoryTokenBucket:
     """Thread-safe in-memory token bucket implementation for rate limiting."""
@@ -10,7 +12,7 @@ class MemoryTokenBucket:
         self._buckets = {}
         self._lock = threading.Lock()
 
-    def acquire(self, key: str, rate_per_second: float, capacity: Optional[float] = None) -> Tuple[bool, float]:
+    def acquire(self, key: str, rate_per_second: float, capacity: float | None = None) -> tuple[bool, float]:
         """
         Attempts to acquire 1 token from the bucket.
         Returns:
@@ -80,7 +82,7 @@ class RedisTokenBucket:
         self.redis = redis_client
         self._script = self.redis.register_script(self.LUA_SCRIPT)
 
-    def acquire(self, key: str, rate_per_second: float, capacity: Optional[float] = None) -> Tuple[bool, float]:
+    def acquire(self, key: str, rate_per_second: float, capacity: float | None = None) -> tuple[bool, float]:
         """Atomic Redis token-bucket. On Redis failure raises so callers can
         fall back to the in-memory bucket (documented fail-local behavior)."""
         if capacity is None:
@@ -100,7 +102,7 @@ class RedisTokenBucket:
 # a single instance safe but does NOT coordinate across replicas. For
 # multi-replica production, Redis is required; monitor `redis_bucket is None`.
 memory_bucket = MemoryTokenBucket()
-redis_bucket: Optional[RedisTokenBucket] = None
+redis_bucket: RedisTokenBucket | None = None
 redis_unavailable_logged = False
 
 try:
@@ -115,7 +117,7 @@ except Exception as _e:
     )
     redis_bucket = None
 
-def check_endpoint_rate_limit(endpoint_id: str, rate_per_second: int) -> Tuple[bool, float]:
+def check_endpoint_rate_limit(endpoint_id: str, rate_per_second: int) -> tuple[bool, float]:
     """
     Checks per-endpoint delivery rate limit.
     Returns (allowed, wait_seconds).
@@ -128,7 +130,7 @@ def check_endpoint_rate_limit(endpoint_id: str, rate_per_second: int) -> Tuple[b
             pass
     return memory_bucket.acquire(f"endpoint:{endpoint_id}", rate)
 
-def check_ingestion_rate_limit(project_id: str, max_per_second: float = 30.0) -> Tuple[bool, float]:
+def check_ingestion_rate_limit(project_id: str, max_per_second: float = 30.0) -> tuple[bool, float]:
     """
     Checks project event ingestion rate limit.
     Returns (allowed, wait_seconds).
@@ -140,7 +142,7 @@ def check_ingestion_rate_limit(project_id: str, max_per_second: float = 30.0) ->
             pass
     return memory_bucket.acquire(f"ingest:{project_id}", max_per_second)
 
-def check_login_rate_limit(client_ip: str, email: str = "") -> Tuple[bool, float]:
+def check_login_rate_limit(client_ip: str, email: str = "") -> tuple[bool, float]:
     """
     Checks login rate limit per client IP (and email).
     Allows 5 attempts per 60 seconds (burst 5).

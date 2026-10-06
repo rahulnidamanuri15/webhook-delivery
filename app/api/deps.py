@@ -1,17 +1,18 @@
-from typing import Optional, Tuple
-from fastapi import Depends, HTTPException, Security, Request, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
+
 from app.db.session import get_db
-from app.models import ApiKey, Project, User, OrganizationMember
+from app.models import ApiKey, Project, User
 from app.services.security import hash_api_key, verify_session_token
 
 security = HTTPBearer(auto_error=False)
 
 def get_current_api_key(
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
+    credentials: HTTPAuthorizationCredentials | None = Security(security),
     db: Session = Depends(get_db)
-) -> Tuple[ApiKey, Project]:
+) -> tuple[ApiKey, Project]:
     """Authenticates Bearer API keys for developer public endpoints."""
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(
@@ -63,7 +64,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
 
     return user
 
-def get_optional_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+def get_optional_user(request: Request, db: Session = Depends(get_db)) -> User | None:
     token = request.cookies.get("wh_session")
     if not token:
         return None

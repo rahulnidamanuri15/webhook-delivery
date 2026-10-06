@@ -1,18 +1,18 @@
 """Regression tests for audit fixes: Retry-After HTTP-date, prefix wildcards,
 recovery history, replay guards, metrics histogram, tracing propagation."""
-import time
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from app.db.session import Base
-from app.models import Organization, Project, Endpoint, EndpointSubscription, Event, Delivery, utc_now
-from app.services.event_service import ingest_event, get_matching_endpoints, _subscription_matches
+from app.models import Endpoint, EndpointSubscription, Organization, Project, utc_now
 from app.services.delivery_service import calculate_backoff_seconds, recover_abandoned_leases, replay_delivery
-from app.services.tracing import inject_trace_headers
+from app.services.event_service import _subscription_matches, get_matching_endpoints, ingest_event
 from app.services.metrics import generate_prometheus_metrics
-from app.services.security import generate_signing_secret, encrypt_secret
-from app.config import settings
+from app.services.security import encrypt_secret, generate_signing_secret
+from app.services.tracing import inject_trace_headers
 
 
 def _mem_db():
@@ -45,13 +45,13 @@ def test_retry_after_integer_honored():
 
 
 def test_retry_after_http_date_honored():
-    future = datetime.now(timezone.utc) + timedelta(seconds=90)
+    future = datetime.now(UTC) + timedelta(seconds=90)
     hdr = format_datetime(future, usegmt=True)
     v = calculate_backoff_seconds(1, hdr)
     # Allow clock skew: 60..120
     assert 30 <= v <= 3600, f"got {v} for {hdr}"
     # Past date clamps to 1
-    past = datetime.now(timezone.utc) - timedelta(seconds=60)
+    past = datetime.now(UTC) - timedelta(seconds=60)
     assert calculate_backoff_seconds(1, format_datetime(past, usegmt=True)) == 1
 
 

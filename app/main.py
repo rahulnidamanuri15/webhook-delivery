@@ -1,19 +1,19 @@
-import threading
 import logging
+import threading
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends
+
+from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.config import settings
-from app.db.session import engine, Base, get_db
 from app.api.v1 import api_router
+from app.config import settings
 from app.dashboard.views import router as dashboard_router
-from app.workers.runner import run_dispatcher_loop, stop_requested
-from app.services.logging_util import setup_structured_logging
+from app.db.session import Base, engine, get_db
 from app.services import tracing as _tracing  # noqa: F401 - configures OTel provider
+from app.services.logging_util import setup_structured_logging
+from app.workers.runner import run_dispatcher_loop
 
 setup_structured_logging()
-import logging
 logger = logging.getLogger("webhook.main")
 
 dispatcher_thread = None
@@ -67,6 +67,7 @@ def healthcheck():
 @app.get("/metrics", tags=["Metrics"])
 def metrics(db = Depends(get_db)):
     from fastapi.responses import PlainTextResponse
+
     from app.services.metrics import generate_prometheus_metrics
     metrics_text = generate_prometheus_metrics(db)
     return PlainTextResponse(metrics_text, media_type="text/plain; version=0.0.4; charset=utf-8")

@@ -1,14 +1,15 @@
 """Background runner loop for in-process or containerized dispatching."""
-import time
 import signal
-import sys
 import threading
-from app.services.logging_util import setup_structured_logging
+import time
+
 from app.services import tracing as _tracing  # noqa: F401 - configures OTel provider
+from app.services.logging_util import setup_structured_logging
 from app.workers.dispatcher import dispatch_batch
 
 setup_structured_logging()
 import logging
+
 logger = logging.getLogger("webhook.dispatcher")
 
 stop_requested = False

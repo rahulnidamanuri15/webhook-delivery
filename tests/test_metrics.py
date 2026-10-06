@@ -1,10 +1,11 @@
-import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from app.db.session import Base
-from app.models import Organization, Project, Event, Delivery, utc_now
+from app.models import Event, Organization, Project
 from app.services.metrics import generate_prometheus_metrics
 from app.services.tracing import start_trace_span
+
 
 def test_prometheus_metrics_generation():
     engine = create_engine("sqlite:///:memory:")

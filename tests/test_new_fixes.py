@@ -1,13 +1,18 @@
 """Regression tests for the audit-fix batch (allowlist, retention, logout, CRUD, RBAC)."""
 from datetime import timedelta
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from app.db.session import Base
-from app.models import Organization, Project, Endpoint, EndpointSubscription, utc_now
+from app.models import Endpoint, EndpointSubscription, Organization, Project, utc_now
 from app.services.event_service import ingest_event
 from app.services.security import (
-    generate_signing_secret, encrypt_secret,
-    create_session_token, verify_session_token, invalidate_session_token,
+    create_session_token,
+    encrypt_secret,
+    generate_signing_secret,
+    invalidate_session_token,
+    verify_session_token,
 )
 
 
@@ -22,8 +27,9 @@ def test_allowlist_blocks_unlisted_domain():
     old = settings.ALLOWED_RECEIVER_DOMAINS
     settings.ALLOWED_RECEIVER_DOMAINS = "example.com"
     try:
-        from app.services.ssrf import is_domain_allowed, validate_webhook_url
         from unittest.mock import patch
+
+        from app.services.ssrf import is_domain_allowed, validate_webhook_url
         ok, _ = is_domain_allowed("api.example.com")
         assert ok is True
         ok2, err = is_domain_allowed("evil.com")

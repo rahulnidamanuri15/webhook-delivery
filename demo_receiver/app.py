@@ -1,8 +1,10 @@
 import os
 import time
-from typing import Dict, Any, List
-from fastapi import FastAPI, Request, Response, Form, Header, HTTPException
+from typing import Any
+
+from fastapi import FastAPI, Form, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
+
 from app.services.signing import verify_webhook_signature
 
 app = FastAPI(title="Controllable Webhook Demo Receiver")
@@ -65,7 +67,7 @@ config = {
     "endpoint_secret": "",      # If provided, verifies signature
 }
 
-received_events: List[Dict[str, Any]] = []
+received_events: list[dict[str, Any]] = []
 seen_event_ids: set = set()
 
 # Durable deduplication: persist seen event IDs so a receiver restart does not
@@ -76,7 +78,7 @@ def _load_dedup_state() -> None:
     try:
         if os.path.exists(_DEDUP_STATE_FILE):
             import json as _json
-            with open(_DEDUP_STATE_FILE, "r", encoding="utf-8") as f:
+            with open(_DEDUP_STATE_FILE, encoding="utf-8") as f:
                 data = _json.load(f)
             for eid in data.get("seen_event_ids", []):
                 if isinstance(eid, str):

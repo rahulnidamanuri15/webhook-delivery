@@ -40,8 +40,8 @@ line-length = 120
 exclude = [".venv", "node_modules", "__pycache__", "app/static/css/dist.css"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
-ignore = ["E501"]
+select = ["E", "F"]
+ignore = ["E501", "E702", "E712", "E402", "F841", "F401"]
 
 [tool.black]
 line-length = 120

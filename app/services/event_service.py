@@ -1,10 +1,11 @@
-import json
 import hashlib
-from typing import Tuple, Optional, List
-from sqlalchemy.orm import Session
+import json
+
 from sqlalchemy.exc import IntegrityError
-from app.models import Event, Delivery, Endpoint, EndpointSubscription, utc_now
-from app.config import settings
+from sqlalchemy.orm import Session
+
+from app.models import Delivery, Endpoint, EndpointSubscription, Event, utc_now
+
 
 class IdempotencyConflictError(Exception):
     """Raised when an idempotency key is reused with a different payload."""
@@ -14,7 +15,7 @@ class ProjectEndpointLimitExceeded(Exception):
     """Raised when project endpoint capacity is exceeded."""
     pass
 
-def canonicalize_payload(data: dict) -> Tuple[str, str]:
+def canonicalize_payload(data: dict) -> tuple[str, str]:
     """
     Returns (canonical_json_str, sha256_hash).
     Uses stable separators and sorted keys so hash and byte representations are deterministic.
@@ -39,7 +40,7 @@ def _subscription_matches(pattern: str, event_type: str) -> bool:
             return True
     return False
 
-def get_matching_endpoints(db: Session, project_id: str, event_type: str) -> List[Endpoint]:
+def get_matching_endpoints(db: Session, project_id: str, event_type: str) -> list[Endpoint]:
     """Finds all enabled endpoints for a project matching event_type.
 
     Matches exact names, ``*``, and ``prefix.*``. Filtering is done in Python
@@ -76,8 +77,8 @@ def ingest_event(
     project_id: str,
     event_type: str,
     payload_data: dict,
-    idempotency_key: Optional[str] = None
-) -> Tuple[Event, bool, int]:
+    idempotency_key: str | None = None
+) -> tuple[Event, bool, int]:
     """
     Atomically ingests an event and creates pending delivery records for matching endpoints.
     

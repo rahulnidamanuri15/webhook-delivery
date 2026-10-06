@@ -1,8 +1,9 @@
-from datetime import datetime, timezone
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Index
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import relationship
+
 from app.db.session import Base
 from app.models import generate_id, utc_now
+
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"

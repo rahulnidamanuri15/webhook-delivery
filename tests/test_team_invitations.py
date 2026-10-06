@@ -1,10 +1,12 @@
+
 import pytest
-from datetime import timedelta
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from app.db.session import Base
-from app.models import User, Organization, OrganizationMember, utc_now
+from app.models import Organization, OrganizationMember, User
 from app.models.invitation import OrganizationInvitation
+
 
 @pytest.fixture
 def team_db():

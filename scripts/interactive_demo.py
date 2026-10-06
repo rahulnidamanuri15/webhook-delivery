@@ -2,9 +2,9 @@
 Interactive End-to-End Interview Demonstration Runner
 Executes all key failure, retry, dead-letter, and replay scenarios live.
 """
-import sys
 import os
 import time
+
 import httpx
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8080")

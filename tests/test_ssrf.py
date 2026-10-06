@@ -1,6 +1,6 @@
-import pytest
-from app.services.ssrf import validate_webhook_url, is_ip_prohibited
 from app.config import settings
+from app.services.ssrf import is_ip_prohibited, validate_webhook_url
+
 
 def test_ip_prohibited_ranges():
     # Loopback

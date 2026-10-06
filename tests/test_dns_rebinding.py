@@ -1,6 +1,6 @@
-import pytest
-from app.services.ssrf import resolve_and_pin_destination
 from app.config import settings
+from app.services.ssrf import resolve_and_pin_destination
+
 
 def test_resolve_and_pin_public_domain():
     settings.ALLOW_LOCAL_RECEIVERS = True

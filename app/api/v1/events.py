@@ -1,19 +1,15 @@
 import json
-from typing import List, Optional
+
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
-from app.db.session import get_db
+
 from app.api.deps import get_current_api_key
-from app.models import ApiKey, Project, Event, Delivery
-from app.schemas.event import (
-    EventIngestRequest,
-    EventIngestResponse,
-    EventResponse,
-    DeliveryResponse
-)
-from app.services.event_service import ingest_event, IdempotencyConflictError
-from app.services.tracing import start_trace_span
 from app.config import settings
+from app.db.session import get_db
+from app.models import ApiKey, Delivery, Event, Project
+from app.schemas.event import DeliveryResponse, EventIngestRequest, EventIngestResponse, EventResponse
+from app.services.event_service import IdempotencyConflictError, ingest_event
+from app.services.tracing import start_trace_span
 
 router = APIRouter(prefix="/api/v1", tags=["Events & Deliveries"])
 
@@ -25,7 +21,7 @@ router = APIRouter(prefix="/api/v1", tags=["Events & Deliveries"])
 )
 def publish_event(
     payload: EventIngestRequest,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     auth: tuple[ApiKey, Project] = Depends(get_current_api_key),
     db: Session = Depends(get_db)
 ):
@@ -107,7 +103,7 @@ def get_event(
 
 @router.get(
     "/events/{event_id}/deliveries",
-    response_model=List[DeliveryResponse],
+    response_model=list[DeliveryResponse],
     summary="List deliveries for an event"
 )
 def get_event_deliveries(
