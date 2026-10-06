@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     
     # Database
     DATABASE_URL: str = Field(
-        default="sqlite:///./webhooks.db",
+        default="postgresql+psycopg://postgres:postgrespassword@localhost:5432/webhook_platform",
         description="PostgreSQL or SQLite connection string"
     )
     

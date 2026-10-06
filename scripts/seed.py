@@ -20,8 +20,6 @@ from app.services.security import encrypt_secret, hash_api_key, hash_password
 
 
 def seed():
-    print("Creating database tables if not existing...")
-    Base.metadata.create_all(bind=engine)
     db = SessionLocal()
 
     try:
