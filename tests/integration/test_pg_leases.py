@@ -5,21 +5,23 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.config import settings
 from app.db.session import Base
 from app.models import Endpoint, EndpointSubscription, Organization, Project
 from app.services.event_service import ingest_event
 from app.services.security import encrypt_secret, generate_signing_secret
 from app.workers.dispatcher import get_due_delivery_ids
 
+pg_url = os.getenv("DATABASE_URL") or settings.DATABASE_URL
 needs_pg = pytest.mark.skipif(
-    not os.getenv("DATABASE_URL", "").startswith("postgresql"),
-    reason="Requires real PostgreSQL (CI DATABASE_URL) for SKIP LOCKED semantics",
+    not pg_url.startswith("postgresql"),
+    reason="Requires real PostgreSQL (DATABASE_URL) for SKIP LOCKED semantics",
 )
 
 
 @needs_pg
 def test_pg_dispatcher_finds_due():
-    url = os.getenv("DATABASE_URL")
+    url = pg_url
     eng = create_engine(url)
     Base.metadata.create_all(bind=eng)
     S = sessionmaker(bind=eng)
