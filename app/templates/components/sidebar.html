@@ -83,7 +83,10 @@
     <div class="flex-shrink-0 flex items-center p-4 bg-slate-950 border-t border-slate-800">
       <div class="flex-1 min-w-0">
         <p class="text-sm font-medium text-white truncate">{{ current_user.email }}</p>
-        <a href="/auth/logout" class="text-xs font-medium text-slate-400 hover:text-red-400 transition">Sign out</a>
+        <form method="post" action="/auth/logout" style="display:inline;">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="text-xs font-medium text-slate-400 hover:text-red-400 transition bg-transparent border-none cursor-pointer p-0">Sign out</button>
+        </form>
       </div>
     </div>
   </div>

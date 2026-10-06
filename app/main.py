@@ -2,7 +2,7 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1 import api_router
@@ -20,10 +20,10 @@ dispatcher_thread = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Initialize Database Schema
-    logger.info("Initializing database tables...")
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database initialized successfully.")
+    # Schema is managed exclusively by Alembic migrations (see compose.yaml).
+    # Do NOT call Base.metadata.create_all here — it conflicts with Alembic
+    # and can mask migration issues. Run: alembic upgrade head
+    logger.info("Database schema managed by Alembic migrations.")
 
     # 2. In local dev mode, spawn background delivery thread only if explicitly enabled
     global dispatcher_thread
@@ -64,9 +64,48 @@ def healthcheck():
     }
 
 @app.get("/metrics", tags=["Metrics"])
-def metrics(db = Depends(get_db)):
+def metrics(request: "Request" = None, db = Depends(get_db)):
+    """Prometheus metrics endpoint. Protected by METRICS_API_KEY (Bearer token)
+    or a valid dashboard session cookie. Returns 401 if neither is provided."""
+    from fastapi import Request as _Req
     from fastapi.responses import PlainTextResponse
 
-    from app.services.metrics import generate_prometheus_metrics
-    metrics_text = generate_prometheus_metrics(db)
-    return PlainTextResponse(metrics_text, media_type="text/plain; version=0.0.4; charset=utf-8")
+    # Check Bearer token first
+    auth_header = request.headers.get("authorization", "") if request else ""
+    if settings.METRICS_API_KEY:
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+            import hmac as _hmac
+            if _hmac.compare_digest(token, settings.METRICS_API_KEY):
+                from app.services.metrics import generate_prometheus_metrics
+                metrics_text = generate_prometheus_metrics(db)
+                return PlainTextResponse(metrics_text, media_type="text/plain; version=0.0.4; charset=utf-8")
+        # Also allow session-authenticated dashboard users
+        from app.services.security import verify_session_token
+        session_token = request.cookies.get("wh_session") if request else None
+        if session_token:
+            data = verify_session_token(session_token)
+            if data and "user_id" in data:
+                from app.services.metrics import generate_prometheus_metrics
+                metrics_text = generate_prometheus_metrics(db)
+                return PlainTextResponse(metrics_text, media_type="text/plain; version=0.0.4; charset=utf-8")
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Valid METRICS_API_KEY Bearer token or dashboard session required."}
+        )
+    else:
+        # No API key configured: require dashboard session auth
+        from app.services.security import verify_session_token
+        session_token = request.cookies.get("wh_session") if request else None
+        if session_token:
+            data = verify_session_token(session_token)
+            if data and "user_id" in data:
+                from app.services.metrics import generate_prometheus_metrics
+                metrics_text = generate_prometheus_metrics(db)
+                return PlainTextResponse(metrics_text, media_type="text/plain; version=0.0.4; charset=utf-8")
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Authentication required. Set METRICS_API_KEY or use a dashboard session."}
+        )

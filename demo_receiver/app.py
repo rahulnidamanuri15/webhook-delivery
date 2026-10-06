@@ -60,6 +60,7 @@ config = {
     "rate_limit_delay_sec": 3,  # Retry-After value for 429
     "slow_delay_sec": 5,        # Sleep duration for slow response
     "endpoint_secret": "",      # If provided, verifies signature
+    "enforce_signatures": True, # When True, reject webhooks if no endpoint_secret is configured
 }
 
 received_events: list[dict[str, Any]] = []
@@ -271,6 +272,8 @@ async def update_config_json(request: Request):
         config["failure_status_code"] = int(data["status_code"])
     if "endpoint_secret" in data:
         config["endpoint_secret"] = str(data["endpoint_secret"]).strip()
+    if "enforce_signatures" in data:
+        config["enforce_signatures"] = bool(data["enforce_signatures"])
     config["current_failures"] = 0
     return {"status": "updated", "config": config}
 
@@ -289,6 +292,7 @@ def configure(
     config["failure_status_code"] = failure_status_code
     config["endpoint_secret"] = endpoint_secret.strip()
     config["current_failures"] = 0  # reset sequence
+    # enforce_signatures defaults True; disable only via JSON API /config
     return RedirectResponse(url="/", status_code=303)
 
 @app.post("/clear")
@@ -310,8 +314,23 @@ async def receive_webhook(
     raw_body_bytes = await request.body()
     raw_body_str = raw_body_bytes.decode("utf-8")
 
-    # 1. Signature Verification (enforced when endpoint_secret is configured)
+    # 1. Signature Verification (enforced by default; rejects if no secret configured)
     sig_valid = None
+    if config["enforce_signatures"] and not config["endpoint_secret"]:
+        received_events.append({
+            "received_at": time.strftime("%H:%M:%S"),
+            "event_id": webhook_event_id or "unknown",
+            "delivery_id": webhook_delivery_id or "unknown",
+            "returned_status": 500,
+            "sig_valid": None,
+            "is_duplicate": False,
+            "payload": raw_body_str
+        })
+        return Response(
+            content='{"error": "Signature verification required but no endpoint_secret configured. Set a secret via POST /configure."}',
+            status_code=500,
+            media_type="application/json"
+        )
     if config["endpoint_secret"]:
         if not (webhook_signature and webhook_event_id and webhook_timestamp):
             received_events.append({

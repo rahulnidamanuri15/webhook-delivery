@@ -277,7 +277,7 @@ def register_post(
     return response
 
 
-@router.api_route("/auth/logout", methods=["GET", "POST"])
+@router.post("/auth/logout")
 def logout(request: Request):
     from app.services.security import invalidate_session_token
     token = request.cookies.get("wh_session")

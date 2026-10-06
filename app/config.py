@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     MAX_ENDPOINTS_PER_PROJECT: int = 20
     INGESTION_RATE_LIMIT_PER_SECOND: float = 30.0
 
+    # Metrics endpoint protection
+    METRICS_API_KEY: str = Field(
+        default="",
+        description="Bearer token required for /metrics. Empty = require session auth instead."
+    )
+
     class Config:
         env_file = ".env"
         extra = "ignore"
