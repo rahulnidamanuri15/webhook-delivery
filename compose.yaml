@@ -127,9 +127,11 @@ services:
       - "8001:8001"
     environment:
       - PORT=8001
-      # Protect demo-receiver behaviour controls; must match the token used
-      # to call POST /configure, /config and /clear (see demo_receiver/app.py).
-      - DEMO_RECEIVER_ADMIN_TOKEN=${DEMO_RECEIVER_ADMIN_TOKEN:-demo-local-token-change-me}
+      - DEMO_RECEIVER_ADMIN_TOKEN=${DEMO_RECEIVER_ADMIN_TOKEN:-}
+      - DEMO_RECEIVER_ENDPOINT_SECRET=${DEMO_RECEIVER_ENDPOINT_SECRET:-whsec_demosecret1234567890abcdef}
+      - DEMO_RECEIVER_DB_FILE=/app/demo_receiver/demo_receiver.db
+    volumes:
+      - ./demo_receiver:/app/demo_receiver
     command: uvicorn demo_receiver.app:app --host 0.0.0.0 --port 8001
 
   # Single-host production entrypoint: TLS termination + header hardening.

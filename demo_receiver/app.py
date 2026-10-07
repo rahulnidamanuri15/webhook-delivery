@@ -1,4 +1,5 @@
 import html
+import json as _json
 import os
 import sqlite3
 import time
@@ -12,6 +13,13 @@ from app.services.signing import verify_webhook_signature
 app = FastAPI(title="Controllable Webhook Demo Receiver")
 
 ADMIN_TOKEN = os.getenv("DEMO_RECEIVER_ADMIN_TOKEN", "")
+
+# Default shared secret seeded by platform for demo receiver
+DEFAULT_ENDPOINT_SECRET = os.getenv("DEMO_RECEIVER_ENDPOINT_SECRET", "whsec_demosecret1234567890abcdef")
+
+# Ensure SQLite DB file lives in demo_receiver directory for persistence across reloads/restarts
+_DEFAULT_DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo_receiver.db")
+_DEDUP_DB_FILE = os.getenv("DEMO_RECEIVER_DB_FILE", _DEFAULT_DB_FILE)
 
 
 def _require_admin(request: Request, token_field: str | None = None):
@@ -51,6 +59,7 @@ def _require_admin(request: Request, token_field: str | None = None):
             detail="Invalid or missing admin token for demo-receiver controls."
         )
 
+
 # Receiver state and configurations
 config = {
     "mode": "success",          # "success", "fail_n", "rate_limit", "slow"
@@ -59,70 +68,162 @@ config = {
     "current_failures": 0,      # Counter of consecutive failures
     "rate_limit_delay_sec": 3,  # Retry-After value for 429
     "slow_delay_sec": 5,        # Sleep duration for slow response
-    "endpoint_secret": "",      # If provided, verifies signature
-    "enforce_signatures": True, # When True, reject webhooks if no endpoint_secret is configured
+    "endpoint_secret": DEFAULT_ENDPOINT_SECRET,  # Pre-populated with default demo secret
+    "enforce_signatures": False, # When True, reject webhooks if signature verification fails
 }
 
 received_events: list[dict[str, Any]] = []
 seen_event_ids: set = set()
 
-# Atomic SQLite-backed deduplication
-_DEDUP_DB_FILE = os.getenv("DEMO_RECEIVER_DB_FILE", "/tmp/demo_receiver.db")
 
-def _init_dedup_db() -> None:
+def _init_db() -> None:
+    """Initializes SQLite tables and loads recent deliveries into memory."""
     try:
-        with sqlite3.connect(_DEDUP_DB_FILE) as conn:
+        os.makedirs(os.path.dirname(os.path.abspath(_DEDUP_DB_FILE)), exist_ok=True)
+        with sqlite3.connect(_DEDUP_DB_FILE, timeout=10.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS processed_events (
                     event_id TEXT PRIMARY KEY,
                     processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS received_webhooks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    received_at TEXT NOT NULL,
+                    event_id TEXT,
+                    delivery_id TEXT,
+                    returned_status INTEGER NOT NULL,
+                    sig_valid INTEGER,
+                    is_duplicate INTEGER DEFAULT 0,
+                    payload TEXT
+                )
+            """)
             conn.commit()
+
+            # Restore deduplicated event IDs
+            seen_event_ids.clear()
             rows = conn.execute("SELECT event_id FROM processed_events").fetchall()
             for r in rows:
                 seen_event_ids.add(r[0])
-    except Exception:
-        pass
+
+            # Restore recent received events (last 50)
+            webhook_rows = conn.execute("""
+                SELECT received_at, event_id, delivery_id, returned_status, sig_valid, is_duplicate, payload
+                FROM received_webhooks
+                ORDER BY id DESC LIMIT 50
+            """).fetchall()
+            received_events.clear()
+            for r in reversed(webhook_rows):
+                received_events.append({
+                    "received_at": r[0],
+                    "event_id": r[1],
+                    "delivery_id": r[2],
+                    "returned_status": r[3],
+                    "sig_valid": True if r[4] == 1 else (False if r[4] == 0 else None),
+                    "is_duplicate": bool(r[5]),
+                    "payload": r[6],
+                })
+    except Exception as e:
+        print(f"Warning: could not initialize demo receiver SQLite db: {e}")
+
 
 def _record_processed_event(event_id: str) -> bool:
     """Atomically records event_id in SQLite transaction."""
     seen_event_ids.add(event_id)
     try:
-        with sqlite3.connect(_DEDUP_DB_FILE) as conn:
+        with sqlite3.connect(_DEDUP_DB_FILE, timeout=10.0) as conn:
             conn.execute("INSERT OR IGNORE INTO processed_events (event_id) VALUES (?)", (event_id,))
             conn.commit()
             return True
     except Exception:
         return False
 
-def _clear_dedup_db() -> None:
-    seen_event_ids.clear()
+
+def _persist_webhook_delivery(item: dict[str, Any]) -> None:
+    """Persists a received webhook delivery to SQLite and memory."""
+    received_events.append(item)
     try:
-        with sqlite3.connect(_DEDUP_DB_FILE) as conn:
+        with sqlite3.connect(_DEDUP_DB_FILE, timeout=10.0) as conn:
+            sig_val = 1 if item["sig_valid"] is True else (0 if item["sig_valid"] is False else None)
+            conn.execute("""
+                INSERT INTO received_webhooks (received_at, event_id, delivery_id, returned_status, sig_valid, is_duplicate, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                item["received_at"],
+                item["event_id"],
+                item["delivery_id"],
+                item["returned_status"],
+                sig_val,
+                1 if item["is_duplicate"] else 0,
+                item["payload"]
+            ))
+            conn.commit()
+    except Exception as e:
+        print(f"Warning: could not persist received webhook to SQLite: {e}")
+
+
+def _clear_all_history() -> None:
+    """Clears in-memory logs and SQLite database."""
+    seen_event_ids.clear()
+    received_events.clear()
+    try:
+        with sqlite3.connect(_DEDUP_DB_FILE, timeout=10.0) as conn:
             conn.execute("DELETE FROM processed_events")
+            conn.execute("DELETE FROM received_webhooks")
             conn.commit()
     except Exception:
         pass
 
-_init_dedup_db()
+
+_init_db()
+
+
+@app.get("/dashboard")
+def dashboard_redirect():
+    """Redirect /dashboard to the main receiver control panel."""
+    return RedirectResponse(url="/", status_code=303)
+
 
 @app.get("/", response_class=HTMLResponse)
 def index():
     """Receiver Dashboard & Control Panel."""
+    # Reload from DB in case another process/thread recorded events
+    try:
+        with sqlite3.connect(_DEDUP_DB_FILE, timeout=2.0) as conn:
+            webhook_rows = conn.execute("""
+                SELECT received_at, event_id, delivery_id, returned_status, sig_valid, is_duplicate, payload
+                FROM received_webhooks
+                ORDER BY id DESC LIMIT 50
+            """).fetchall()
+            received_events.clear()
+            for r in reversed(webhook_rows):
+                received_events.append({
+                    "received_at": r[0],
+                    "event_id": r[1],
+                    "delivery_id": r[2],
+                    "returned_status": r[3],
+                    "sig_valid": True if r[4] == 1 else (False if r[4] == 0 else None),
+                    "is_duplicate": bool(r[5]),
+                    "payload": r[6],
+                })
+    except Exception:
+        pass
+
     rows = ""
-    for item in reversed(received_events[-20:]):
+    for item in reversed(received_events[-30:]):
         sig_badge = (
-            '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:9999px;font-size:12px;">Valid</span>'
+            '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600;">Valid</span>'
             if item["sig_valid"] is True
-            else '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:9999px;font-size:12px;">Invalid</span>'
+            else '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600;">Invalid</span>'
             if item["sig_valid"] is False
             else '<span style="background:#f3f4f6;color:#374151;padding:2px 8px;border-radius:9999px;font-size:12px;">Unverified</span>'
         )
         dedup_badge = (
-            '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:9999px;font-size:12px;">Duplicate</span>'
+            '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600;">Duplicate</span>'
             if item["is_duplicate"]
-            else '<span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:9999px;font-size:12px;">First seen</span>'
+            else '<span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600;">First seen</span>'
         )
         status_color = "#16a34a" if item["returned_status"] < 300 else "#dc2626"
         escaped_payload = html.escape(str(item.get("payload", "")))
@@ -130,16 +231,18 @@ def index():
         <tr style="border-bottom: 1px solid #e5e7eb;">
             <td style="padding:10px;font-family:monospace;font-size:12px;">{item["received_at"]}</td>
             <td style="padding:10px;font-family:monospace;font-size:12px;font-weight:600;">{item["event_id"]}</td>
-            <td style="padding:10px;font-family:monospace;font-size:12px;">{item["delivery_id"]}</td>
+            <td style="padding:10px;font-family:monospace;font-size:12px;color:#6b7280;">{item["delivery_id"]}</td>
             <td style="padding:10px;font-weight:bold;color:{status_color};">{item["returned_status"]}</td>
             <td style="padding:10px;">{sig_badge}</td>
             <td style="padding:10px;">{dedup_badge}</td>
-            <td style="padding:10px;"><pre style="margin:0;font-size:11px;max-width:350px;overflow:hidden;text-overflow:ellipsis;">{escaped_payload}</pre></td>
+            <td style="padding:10px;"><pre style="margin:0;font-size:11px;max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:pre-wrap;word-break:break-all;">{escaped_payload}</pre></td>
         </tr>
         """
 
     if not rows:
         rows = '<tr><td colspan="7" style="padding:30px;text-align:center;color:#6b7280;">No webhooks received yet. Send an event from your platform to <code>http://127.0.0.1:8001/webhook</code></td></tr>'
+
+    enforce_checked = "checked" if config["enforce_signatures"] else ""
 
     return f"""
     <!DOCTYPE html>
@@ -147,22 +250,55 @@ def index():
     <head>
         <title>Demo Webhook Receiver</title>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f9fafb; margin: 0; padding: 24px; color: #111827; }}
             .card {{ background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 20px; margin-bottom: 24px; border: 1px solid #e5e7eb; }}
-            .btn {{ background: #2563eb; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500; }}
+            .btn {{ background: #2563eb; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500; font-size: 13px; }}
+            .btn:hover {{ background: #1d4ed8; }}
             .btn-danger {{ background: #dc2626; }}
-            input, select {{ padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; }}
+            .btn-danger:hover {{ background: #b91c1c; }}
+            input, select {{ padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }}
             table {{ width: 100%; border-collapse: collapse; text-align: left; }}
-            th {{ background: #f3f4f6; padding: 10px; font-size: 13px; text-transform: uppercase; color: #4b5563; }}
+            th {{ background: #f3f4f6; padding: 10px; font-size: 12px; text-transform: uppercase; color: #4b5563; font-weight: 600; letter-spacing: 0.05em; }}
+            .pulse-dot {{ width: 8px; height: 8px; background: #22c55e; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }}
+            @keyframes pulse {{ 0% {{ opacity: 1; }} 50% {{ opacity: 0.3; }} 100% {{ opacity: 1; }} }}
         </style>
+        <script>
+            // Poll for fresh deliveries every 3 seconds without full page reload jumps
+            let autoRefresh = true;
+            setInterval(async () => {{
+                if (!autoRefresh) return;
+                try {{
+                    const res = await fetch(window.location.href);
+                    if (res.ok) {{
+                        const html = await res.text();
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(html, 'text/html');
+                        const newTbody = doc.querySelector('tbody');
+                        const currentTbody = document.querySelector('tbody');
+                        if (newTbody && currentTbody && newTbody.innerHTML !== currentTbody.innerHTML) {{
+                            currentTbody.innerHTML = newTbody.innerHTML;
+                            const countEl = document.getElementById('delivery-count');
+                            const newCountEl = doc.getElementById('delivery-count');
+                            if (countEl && newCountEl) countEl.innerText = newCountEl.innerText;
+                        }}
+                    }}
+                }} catch (e) {{}}
+            }}, 3000);
+        </script>
     </head>
     <body>
         <div style="max-width: 1100px; margin: 0 auto;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
                 <div>
-                    <h1 style="margin:0; font-size: 24px;">Controllable Webhook Receiver</h1>
-                    <p style="margin:4px 0 0 0; color: #6b7280;">Listening on <code>http://127.0.0.1:8001/webhook</code></p>
+                    <h1 style="margin:0; font-size: 24px; display:flex; align-items:center; gap:8px;">
+                        <span>Controllable Webhook Receiver</span>
+                        <span class="pulse-dot" title="Listening for incoming webhooks"></span>
+                    </h1>
+                    <p style="margin:4px 0 0 0; color: #6b7280; font-size: 14px;">
+                        Listening on <code>http://127.0.0.1:8001/webhook</code> | Platform: <a href="http://127.0.0.1:8080/dashboard" target="_blank" style="color:#2563eb; text-decoration:none;">WebhookHub Dashboard (8080) &rarr;</a>
+                    </p>
                 </div>
                 <form action="/clear" method="post" style="display:flex; gap:8px;">
                     <input type="password" name="admin_token" placeholder="Admin token (if configured)" style="padding:6px 10px; border-radius:6px; border:1px solid #d1d5db;">
@@ -171,7 +307,7 @@ def index():
             </div>
 
             <div class="card">
-                <h3 style="margin-top:0;">Behavior Simulator</h3>
+                <h3 style="margin-top:0; font-size: 16px; margin-bottom: 14px;">Behavior Simulator & Signature Settings</h3>
                 <form action="/configure" method="post" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; align-items:end;">
                     <div>
                         <label style="display:block; font-size:13px; font-weight:500; margin-bottom:4px;">Receiver Mode</label>
@@ -199,28 +335,30 @@ def index():
                     </div>
 
                     <div>
-                        <label style="display:block; font-size:13px; font-weight:500; margin-bottom:4px;">Endpoint Signing Secret (Optional)</label>
-                        <input type="text" name="endpoint_secret" value="{config['endpoint_secret']}" placeholder="whsec_..." style="width:90%;">
+                        <label style="display:block; font-size:13px; font-weight:500; margin-bottom:4px;">Endpoint Signing Secret</label>
+                        <input type="text" name="endpoint_secret" value="{config['endpoint_secret']}" placeholder="whsec_..." style="width:90%; font-family:monospace; font-size:12px;">
                     </div>
 
-                    <div>
-                        <label style="display:block; font-size:13px; font-weight:500; margin-bottom:4px;">Admin Token</label>
-                        <input type="password" name="admin_token" value="" placeholder="Admin token (if configured)" style="width:90%;">
-                    </div>
-
-                    <div>
-                        <button class="btn" type="submit" style="width:100%;">Update Behavior</button>
+                    <div style="grid-column: 1 / -1; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-top:4px;">
+                        <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">
+                            <input type="checkbox" name="enforce_signatures" value="true" {enforce_checked}>
+                            <span><strong>Enforce Signatures:</strong> Reject requests with HTTP 401 if HMAC signature is missing or invalid</span>
+                        </label>
+                        <button class="btn" type="submit" style="min-width:140px;">Update Behavior</button>
                     </div>
                 </form>
-                <div style="margin-top:12px; font-size:13px; color:#4b5563;">
-                    Current Mode: <strong>{config['mode']}</strong> | Failures observed in current sequence: <strong>{config['current_failures']}/{config['fail_count']}</strong>
+                <div style="margin-top:12px; font-size:12px; color:#4b5563; border-top:1px solid #f3f4f6; padding-top:8px;">
+                    Current Mode: <strong style="color:#111827;">{config['mode']}</strong> | Failures in sequence: <strong style="color:#111827;">{config['current_failures']}/{config['fail_count']}</strong> | Active Secret: <code style="background:#f3f4f6; padding:2px 6px; border-radius:4px;">{config['endpoint_secret'] or 'None'}</code> | Enforce Signatures: <strong style="color:{'#166534' if config['enforce_signatures'] else '#6b7280'}">{'ON' if config['enforce_signatures'] else 'OFF'}</strong>
                 </div>
             </div>
 
             <div class="card">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                    <h3 style="margin:0;">Received Webhook Deliveries ({len(received_events)})</h3>
-                    <a href="/" style="font-size:13px; color:#2563eb; text-decoration:none;">Refresh table</a>
+                    <h3 style="margin:0; font-size: 16px;">Received Webhook Deliveries (<span id="delivery-count">{len(received_events)}</span>)</h3>
+                    <div style="display:flex; gap:12px; align-items:center;">
+                        <span style="font-size:12px; color:#10b981;">&bull; Auto-refreshing every 3s</span>
+                        <a href="/" style="font-size:13px; color:#2563eb; text-decoration:none; font-weight:500;">Refresh now</a>
+                    </div>
                 </div>
                 <table>
                     <thead>
@@ -244,9 +382,11 @@ def index():
     </html>
     """
 
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
 
 @app.post("/config")
 async def update_config_json(request: Request):
@@ -277,6 +417,7 @@ async def update_config_json(request: Request):
     config["current_failures"] = 0
     return {"status": "updated", "config": config}
 
+
 @app.post("/configure")
 def configure(
     request: Request,
@@ -284,6 +425,7 @@ def configure(
     fail_count: int = Form(...),
     failure_status_code: int = Form(...),
     endpoint_secret: str = Form(""),
+    enforce_signatures: bool = Form(False),
     admin_token: str = Form(""),
 ):
     _require_admin(request, admin_token)
@@ -291,17 +433,18 @@ def configure(
     config["fail_count"] = max(1, fail_count)
     config["failure_status_code"] = failure_status_code
     config["endpoint_secret"] = endpoint_secret.strip()
+    config["enforce_signatures"] = bool(enforce_signatures)
     config["current_failures"] = 0  # reset sequence
-    # enforce_signatures defaults True; disable only via JSON API /config
     return RedirectResponse(url="/", status_code=303)
+
 
 @app.post("/clear")
 def clear(request: Request, admin_token: str = Form("")):
     _require_admin(request, admin_token)
-    received_events.clear()
-    _clear_dedup_db()
+    _clear_all_history()
     config["current_failures"] = 0
     return RedirectResponse(url="/", status_code=303)
+
 
 @app.get("/webhook", response_class=HTMLResponse)
 def webhook_info_get():
@@ -327,69 +470,74 @@ async def receive_webhook(
 ):
     raw_body_bytes = await request.body()
     raw_body_str = raw_body_bytes.decode("utf-8")
+    now_str = time.strftime("%H:%M:%S")
 
-    # 1. Signature Verification (enforced by default; rejects if no secret configured)
+    # 1. Signature Verification
     sig_valid = None
-    if config["enforce_signatures"] and not config["endpoint_secret"]:
-        received_events.append({
-            "received_at": time.strftime("%H:%M:%S"),
+    if config["endpoint_secret"]:
+        if not (webhook_signature and webhook_event_id and webhook_timestamp):
+            sig_valid = False
+            if config["enforce_signatures"]:
+                _persist_webhook_delivery({
+                    "received_at": now_str,
+                    "event_id": webhook_event_id or "unknown",
+                    "delivery_id": webhook_delivery_id or "unknown",
+                    "returned_status": 401,
+                    "sig_valid": False,
+                    "is_duplicate": False,
+                    "payload": raw_body_str
+                })
+                return Response(
+                    content='{"error": "Missing signature headers"}',
+                    status_code=401,
+                    media_type="application/json"
+                )
+        else:
+            valid, msg = verify_webhook_signature(
+                secret=config["endpoint_secret"],
+                event_id=webhook_event_id,
+                timestamp_str=webhook_timestamp,
+                payload=raw_body_str,
+                received_signature=webhook_signature,
+                tolerance_seconds=300
+            )
+            sig_valid = valid
+            if not valid and config["enforce_signatures"]:
+                _persist_webhook_delivery({
+                    "received_at": now_str,
+                    "event_id": webhook_event_id or "unknown",
+                    "delivery_id": webhook_delivery_id or "unknown",
+                    "returned_status": 401,
+                    "sig_valid": False,
+                    "is_duplicate": False,
+                    "payload": raw_body_str
+                })
+                return Response(
+                    content=f'{{"error": "Invalid signature: {msg}"}}',
+                    status_code=401,
+                    media_type="application/json"
+                )
+    elif config["enforce_signatures"]:
+        # Enforce signatures requested, but no secret configured on receiver
+        _persist_webhook_delivery({
+            "received_at": now_str,
             "event_id": webhook_event_id or "unknown",
             "delivery_id": webhook_delivery_id or "unknown",
-            "returned_status": 500,
+            "returned_status": 401,
             "sig_valid": None,
             "is_duplicate": False,
             "payload": raw_body_str
         })
         return Response(
-            content='{"error": "Signature verification required but no endpoint_secret configured. Set a secret via POST /configure."}',
-            status_code=500,
+            content='{"error": "Signature enforcement enabled but no endpoint_secret configured. Set a secret via POST /configure."}',
+            status_code=401,
             media_type="application/json"
         )
-    if config["endpoint_secret"]:
-        if not (webhook_signature and webhook_event_id and webhook_timestamp):
-            received_events.append({
-                "received_at": time.strftime("%H:%M:%S"),
-                "event_id": webhook_event_id or "unknown",
-                "delivery_id": webhook_delivery_id or "unknown",
-                "returned_status": 401,
-                "sig_valid": False,
-                "is_duplicate": False,
-                "payload": raw_body_str
-            })
-            return Response(
-                content='{"error": "Missing signature headers"}',
-                status_code=401,
-                media_type="application/json"
-            )
-        valid, msg = verify_webhook_signature(
-            secret=config["endpoint_secret"],
-            event_id=webhook_event_id,
-            timestamp_str=webhook_timestamp,
-            payload=raw_body_str,
-            received_signature=webhook_signature,
-            tolerance_seconds=300
-        )
-        sig_valid = valid
-        if not valid:
-            received_events.append({
-                "received_at": time.strftime("%H:%M:%S"),
-                "event_id": webhook_event_id or "unknown",
-                "delivery_id": webhook_delivery_id or "unknown",
-                "returned_status": 401,
-                "sig_valid": False,
-                "is_duplicate": False,
-                "payload": raw_body_str
-            })
-            return Response(
-                content=f'{{"error": "Invalid signature: {msg}"}}',
-                status_code=401,
-                media_type="application/json"
-            )
 
     # 2. Event ID Deduplication check: return success idempotently if already processed
     if webhook_event_id and webhook_event_id in seen_event_ids:
-        received_events.append({
-            "received_at": time.strftime("%H:%M:%S"),
+        _persist_webhook_delivery({
+            "received_at": now_str,
             "event_id": webhook_event_id,
             "delivery_id": webhook_delivery_id or "unknown",
             "returned_status": 200,
@@ -435,9 +583,9 @@ async def receive_webhook(
     if 200 <= returned_status < 300 and webhook_event_id:
         _record_processed_event(webhook_event_id)
 
-    # Log to in-memory events list
-    received_events.append({
-        "received_at": time.strftime("%H:%M:%S"),
+    # 5. Persist delivery in SQLite and memory
+    _persist_webhook_delivery({
+        "received_at": now_str,
         "event_id": webhook_event_id or "unknown",
         "delivery_id": webhook_delivery_id or "unknown",
         "returned_status": returned_status,
@@ -446,7 +594,6 @@ async def receive_webhook(
         "payload": raw_body_str
     })
 
-    import json as _json
     return Response(
         content=_json.dumps(response_body),
         status_code=returned_status,
