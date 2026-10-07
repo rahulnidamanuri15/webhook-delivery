@@ -43,6 +43,8 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       SECRET_KEY: ci_secret_key_testing_only_1234567890_super_safe
       SIGNING_SECRET_ENCRYPTION_KEY: yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
+      API_KEY_PEPPER: ci_pepper_testing_only_1234567890
+      METRICS_API_KEY: ci_metrics_testing_only_1234567890
       ALLOW_LOCAL_RECEIVERS: "true"
       DEBUG: "true"
 
@@ -66,7 +68,8 @@ jobs:
       - name: Lint (ruff + black check)
         run: |
           ruff check app demo_receiver tests scripts benchmarks
-          black --check app demo_receiver tests scripts benchmarks || true
+          # black is advisory only (51 pre-existing format drifts); ruff is blocking.
+          black --check app demo_receiver tests scripts benchmarks || echo "::warning::black formatting drift (non-blocking)"
 
       - name: Run database migrations (PostgreSQL)
         run: |

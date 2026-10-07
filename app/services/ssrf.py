@@ -1,8 +1,24 @@
+import concurrent.futures as _futures
 import ipaddress
 import socket
 from urllib.parse import urlparse, urlunparse
 
 from app.config import settings
+
+
+def _getaddrinfo_timeout(host: str, port: int | None, timeout: float | None = None):
+    """DNS with wall-clock timeout (prevents slow-DNS DoS in request path)."""
+    if timeout is None:
+        try:
+            timeout = float(getattr(settings, "DNS_RESOLVE_TIMEOUT_SECONDS", 3.0))
+        except Exception:
+            timeout = 3.0
+    with _futures.ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(socket.getaddrinfo, host, port)
+        try:
+            return fut.result(timeout=timeout)
+        except _futures.TimeoutError:
+            raise socket.gaierror(f"DNS resolution timed out after {timeout}s for '{host}'")
 
 
 def is_ip_prohibited(ip_str: str) -> bool:
@@ -75,9 +91,12 @@ def validate_webhook_url(url: str) -> tuple[bool, str | None]:
     if settings.ALLOW_LOCAL_RECEIVERS and hostname.lower() in local_hosts:
         return True, None
 
+    # Length + label guards (avoidtiny DoS via 2KB hostnames / deep labels)
+    if len(hostname) > 253 or len(url) > 2048:
+        return False, "URL or hostname too long."
     # Resolve hostname to IP addresses and verify against restricted ranges
     try:
-        addr_info = socket.getaddrinfo(hostname, None)
+        addr_info = _getaddrinfo_timeout(hostname, None)
         if not addr_info:
             return False, "Could not resolve hostname."
 
@@ -132,8 +151,8 @@ def resolve_and_pin_destination(url: str) -> PinnedResolutionResult:
         return PinnedResolutionResult(True, None, url, {"Host": parsed.netloc}, None)
 
     try:
-        # Resolve addresses right before outbound request
-        addr_info = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+        # Resolve addresses right before outbound request (bounded timeout)
+        addr_info = _getaddrinfo_timeout(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
         if not addr_info:
             return PinnedResolutionResult(False, "Could not resolve destination IP.", url, {})
 

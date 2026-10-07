@@ -5,7 +5,12 @@ from pydantic import BaseModel, Field
 
 
 class EventIngestRequest(BaseModel):
-    type: str = Field(description="Event name, e.g. payment.succeeded")
+    type: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9._*-]+$",
+        description="Event name, e.g. payment.succeeded",
+    )
     data: dict[str, Any] = Field(description="Arbitrary event payload data")
 
 class EventIngestResponse(BaseModel):

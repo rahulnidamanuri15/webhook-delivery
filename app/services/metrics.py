@@ -56,28 +56,38 @@ def generate_prometheus_metrics(db: Session) -> str:
     avg_latency = db.query(func.avg(DeliveryAttempt.duration_ms)).scalar() or 0.0
     lines.append(f'webhook_delivery_duration_ms {round(avg_latency, 2)}')
 
-    # Latency histogram (fixed buckets) + per-endpoint delivery gauge.
-    # Prometheus-native histograms need explicit buckets; we compute them in
-    # Python to stay backend-agnostic (SQLite + PostgreSQL).
-    try:
-        durations = [r[0] for r in db.query(DeliveryAttempt.duration_ms).all()]
-    except Exception:
-        durations = []
+    # Latency histogram (fixed buckets) — computed in SQL to avoid loading
+    # all durations into Python (OOM with millions of attempts).
+    from sqlalchemy import case as _case
+
     buckets = [50, 100, 250, 500, 1000, 5000]
     lines.extend([
         "# HELP webhook_delivery_duration_ms_bucket Delivery attempt latency histogram",
         "# TYPE webhook_delivery_duration_ms_bucket histogram",
     ])
-    cumulative = 0
-    sorted_d = sorted(durations)
+    try:
+        # Single-row SQL aggregation: count/sum + per-bucket cumulative counts
+        agg = db.query(
+            func.count(DeliveryAttempt.id).label("cnt"),
+            func.coalesce(func.sum(DeliveryAttempt.duration_ms), 0).label("s"),
+            *[
+                func.sum(_case((DeliveryAttempt.duration_ms <= b, 1), else_=0)).label(f"le_{b}")
+                for b in buckets
+            ],
+        ).one()
+        _counts = {b: int(getattr(agg, f"le_{b}") or 0) for b in buckets}
+        _total = int(agg.cnt or 0)
+        _sum = int(agg.s or 0)
+    except Exception:
+        _counts = {b: 0 for b in buckets}
+        _total, _sum = 0, 0
     for bound in buckets:
-        cumulative = sum(1 for d in sorted_d if d <= bound)
-        lines.append(f'webhook_delivery_duration_ms_bucket{{le="{bound}"}} {cumulative}')
-    lines.append(f'webhook_delivery_duration_ms_bucket{{le="+Inf"}} {len(sorted_d)}')
-    lines.append(f'webhook_delivery_duration_ms_count {len(sorted_d)}')
-    lines.append(f'webhook_delivery_duration_ms_sum {sum(sorted_d) if sorted_d else 0}')
+        lines.append(f'webhook_delivery_duration_ms_bucket{{le="{bound}"}} {_counts[bound]}')
+    lines.append(f'webhook_delivery_duration_ms_bucket{{le="+Inf"}} {_total}')
+    lines.append(f'webhook_delivery_duration_ms_count {_total}')
+    lines.append(f'webhook_delivery_duration_ms_sum {_sum}')
 
-    # Per-endpoint breakdown (bounded: endpoints per project are capped).
+    # Per-endpoint breakdown — bounded to 200 series to avoid cardinality explosion.
     try:
         lines.extend([
             "# HELP webhook_deliveries_by_endpoint Deliveries by endpoint and status",
@@ -86,11 +96,16 @@ def generate_prometheus_metrics(db: Session) -> str:
         per_ep = (
             db.query(Delivery.endpoint_id, Delivery.status, func.count(Delivery.id))
             .group_by(Delivery.endpoint_id, Delivery.status)
+            .limit(200)
             .all()
         )
+        import re as _re
+
         for ep_id, st, count in per_ep:
-            # Sanitize label value (IDs are whsec-safe alphanumerics).
-            lines.append(f'webhook_deliveries_by_endpoint{{endpoint_id="{ep_id}",status="{st}"}} {count}')
+            # Sanitize label values (IDs are alphanumerics + underscore).
+            safe_ep = _re.sub(r'[^A-Za-z0-9_-]', '_', str(ep_id))[:64]
+            safe_st = _re.sub(r'[^A-Za-z0-9_]', '_', str(st))[:32]
+            lines.append(f'webhook_deliveries_by_endpoint{{endpoint_id="{safe_ep}",status="{safe_st}"}} {count}')
     except Exception:
         pass
 

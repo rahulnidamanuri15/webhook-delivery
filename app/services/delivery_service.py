@@ -35,10 +35,21 @@ class PinnedSyncBackend(sync_backend.SyncBackend):
 
 
 class PinnedIPTransport(httpx.HTTPTransport):
-    """Custom HTTPX transport connecting directly to pre-verified pinned IP while preserving TLS SNI."""
+    """Custom HTTPX transport connecting directly to pre-verified pinned IP while preserving TLS SNI.
+
+    Uses private httpcore pool API when available; falls back to plain transport
+    (DNS re-validated at send time) if httpcore internals change.
+    """
     def __init__(self, pinned_host_map: dict[str, str], **kwargs):
         super().__init__(**kwargs)
-        self._pool._network_backend = PinnedSyncBackend(pinned_host_map)
+        try:
+            pool = getattr(self, "_pool", None)
+            if pool is not None and hasattr(pool, "_network_backend"):
+                pool._network_backend = PinnedSyncBackend(pinned_host_map)
+            else:
+                logger.warning("PinnedIPTransport: httpcore internals changed, pinning disabled (DNS re-checked).")
+        except Exception as e:
+            logger.warning(f"PinnedIPTransport fallback to default routing: {e}")
 
 
 def _build_timeout() -> "httpx.Timeout":
@@ -411,7 +422,7 @@ def _save_terminal_failure(db: Session, delivery_id: str, lease_token: str, erro
     delivery.lease_expires_at = None
     db.commit()
 
-def recover_abandoned_leases(db: Session) -> int:
+def recover_abandoned_leases(db: Session, batch_size: int | None = None) -> int:
     """
     Finds deliveries that have been IN_FLIGHT past their lease expiration
     (e.g., worker crashed or hung) and returns them to RETRY_SCHEDULED or DEAD.
@@ -420,17 +431,41 @@ def recover_abandoned_leases(db: Session) -> int:
     has no history hole: attempt_number reuses the already-incremented
     attempt_count from claim time, outcome is RETRYABLE_ERROR (or PERMANENT
     when the budget is exhausted), error_code LEASE_EXPIRED.
+
+    Bounded to batch_size rows per call (default settings.RECOVERY_BATCH_SIZE)
+    to avoid OOM when many workers crash at once.
     """
+    if batch_size is None:
+        try:
+            batch_size = int(getattr(settings, "RECOVERY_BATCH_SIZE", 500))
+        except Exception:
+            batch_size = 500
+    batch_size = max(1, min(int(batch_size), 2000))
     now = utc_now()
-    abandoned = (
-        db.query(Delivery)
-        .filter(
-            Delivery.status == "IN_FLIGHT",
-            Delivery.lease_expires_at <= now
+    try:
+        abandoned = (
+            db.query(Delivery)
+            .filter(
+                Delivery.status == "IN_FLIGHT",
+                Delivery.lease_expires_at <= now
+            )
+            .order_by(Delivery.lease_expires_at.asc())
+            .limit(batch_size)
+            .with_for_update(skip_locked=True)
+            .all()
         )
-        .with_for_update(skip_locked=True)
-        .all()
-    )
+    except Exception:
+        db.rollback()
+        abandoned = (
+            db.query(Delivery)
+            .filter(
+                Delivery.status == "IN_FLIGHT",
+                Delivery.lease_expires_at <= now
+            )
+            .order_by(Delivery.lease_expires_at.asc())
+            .limit(batch_size)
+            .all()
+        )
 
     recovered_count = 0
     for dlv in abandoned:

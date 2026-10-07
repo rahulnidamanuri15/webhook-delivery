@@ -1,18 +1,23 @@
+# Dev defaults use insecure placeholders ONLY for local development.
+# Production MUST override via environment / secrets manager:
+#   POSTGRES_PASSWORD, SECRET_KEY, SIGNING_SECRET_ENCRYPTION_KEY,
+#   API_KEY_PEPPER, METRICS_API_KEY, REDIS_PASSWORD, DEMO_RECEIVER_ADMIN_TOKEN
+# app/config.py fail-fasts in ENV=production if placeholders remain.
 services:
   postgres:
     image: postgres:16-alpine
     container_name: webhook_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
-      POSTGRES_DB: webhook_platform
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}
+      POSTGRES_DB: ${POSTGRES_DB:-webhook_platform}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -21,8 +26,11 @@ services:
     image: redis:7-alpine
     container_name: webhook_redis
     restart: unless-stopped
+    command: sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$REDIS_PASSWORD"; else exec redis-server; fi'
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
 
   web:
     build: .
@@ -32,15 +40,19 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - DATABASE_URL=postgresql+psycopg://postgres:postgrespassword@postgres:5432/webhook_platform
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
       - REDIS_URL=redis://redis:6379/0
       - USE_CELERY=True
       - ENABLE_INPROCESS_DISPATCHER=False
-      - SECRET_KEY=wh_dev_insecure_secret_key_change_in_production_1234567890
-      - SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
-      - ALLOW_LOCAL_RECEIVERS=True
+      - ENV=${ENV:-development}
+      - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:-yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=}
+      - API_KEY_PEPPER=${API_KEY_PEPPER:-}
+      - METRICS_API_KEY=${METRICS_API_KEY:-}
+      - ALLOW_LOCAL_RECEIVERS=${ALLOW_LOCAL_RECEIVERS:-False}
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:-}
       - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-90}
+      - AUDIT_RETENTION_DAYS=${AUDIT_RETENTION_DAYS:-365}
       - HTTP_CONNECT_TIMEOUT_SECONDS=${HTTP_CONNECT_TIMEOUT_SECONDS:-3.0}
       - DISPATCH_MAX_WORKERS=${DISPATCH_MAX_WORKERS:-10}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -61,15 +73,18 @@ services:
     container_name: webhook_dispatcher
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql+psycopg://postgres:postgrespassword@postgres:5432/webhook_platform
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
       - REDIS_URL=redis://redis:6379/0
       - USE_CELERY=True
       - ENABLE_INPROCESS_DISPATCHER=False
-      - SECRET_KEY=wh_dev_insecure_secret_key_change_in_production_1234567890
-      - SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
-      - ALLOW_LOCAL_RECEIVERS=True
+      - ENV=${ENV:-development}
+      - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:-yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=}
+      - API_KEY_PEPPER=${API_KEY_PEPPER:-}
+      - ALLOW_LOCAL_RECEIVERS=${ALLOW_LOCAL_RECEIVERS:-False}
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:-}
       - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-90}
+      - AUDIT_RETENTION_DAYS=${AUDIT_RETENTION_DAYS:-365}
       - HTTP_CONNECT_TIMEOUT_SECONDS=${HTTP_CONNECT_TIMEOUT_SECONDS:-3.0}
       - DISPATCH_MAX_WORKERS=${DISPATCH_MAX_WORKERS:-10}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -85,14 +100,17 @@ services:
     container_name: webhook_worker
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql+psycopg://postgres:postgrespassword@postgres:5432/webhook_platform
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
       - REDIS_URL=redis://redis:6379/0
       - USE_CELERY=True
-      - SECRET_KEY=wh_dev_insecure_secret_key_change_in_production_1234567890
-      - SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
-      - ALLOW_LOCAL_RECEIVERS=True
+      - ENV=${ENV:-development}
+      - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:-yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=}
+      - API_KEY_PEPPER=${API_KEY_PEPPER:-}
+      - ALLOW_LOCAL_RECEIVERS=${ALLOW_LOCAL_RECEIVERS:-False}
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:-}
       - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-90}
+      - AUDIT_RETENTION_DAYS=${AUDIT_RETENTION_DAYS:-365}
       - HTTP_CONNECT_TIMEOUT_SECONDS=${HTTP_CONNECT_TIMEOUT_SECONDS:-3.0}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
@@ -107,11 +125,13 @@ services:
     container_name: webhook_beat
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql+psycopg://postgres:postgrespassword@postgres:5432/webhook_platform
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
       - REDIS_URL=redis://redis:6379/0
       - USE_CELERY=True
-      - SECRET_KEY=wh_dev_insecure_secret_key_change_in_production_1234567890
-      - SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
+      - ENV=${ENV:-development}
+      - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:-yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=}
+      - API_KEY_PEPPER=${API_KEY_PEPPER:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -123,15 +143,15 @@ services:
     image: webhook-delivery:latest
     container_name: webhook_demo_receiver
     restart: unless-stopped
+    # Demo-only service: do not expose publicly without DEMO_RECEIVER_ADMIN_TOKEN.
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     environment:
       - PORT=8001
       - DEMO_RECEIVER_ADMIN_TOKEN=${DEMO_RECEIVER_ADMIN_TOKEN:-}
-      - DEMO_RECEIVER_ENDPOINT_SECRET=${DEMO_RECEIVER_ENDPOINT_SECRET:-whsec_demosecret1234567890abcdef}
-      - DEMO_RECEIVER_DB_FILE=/app/demo_receiver/demo_receiver.db
-    volumes:
-      - ./demo_receiver:/app/demo_receiver
+      - DEMO_RECEIVER_ENDPOINT_SECRET=${DEMO_RECEIVER_ENDPOINT_SECRET:-whsec_demosecret_dev_only}
+      - DEMO_RECEIVER_DB_FILE=/tmp/demo_receiver.db
+    # No host bind-mount in prod (was ./demo_receiver:/app/demo_receiver).
     command: uvicorn demo_receiver.app:app --host 0.0.0.0 --port 8001
 
   # Single-host production entrypoint: TLS termination + header hardening.

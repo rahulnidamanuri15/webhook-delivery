@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models import ApiKey, Project, User
-from app.services.security import hash_api_key, verify_session_token
+from app.services.security import hash_api_key_candidates, verify_session_token
 
 security = HTTPBearer(auto_error=False)
 
@@ -22,11 +22,11 @@ def get_current_api_key(
         )
 
     raw_token = credentials.credentials.strip()
-    key_hash = hash_api_key(raw_token)
+    candidates = hash_api_key_candidates(raw_token)
 
     api_key = (
         db.query(ApiKey)
-        .filter(ApiKey.key_hash == key_hash, ApiKey.revoked_at.is_(None))
+        .filter(ApiKey.key_hash.in_(candidates), ApiKey.revoked_at.is_(None))
         .first()
     )
 

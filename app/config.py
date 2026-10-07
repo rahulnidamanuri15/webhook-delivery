@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Reliable Webhook Delivery Platform"
     ENV: str = "development"
-    DEBUG: bool = True
+    DEBUG: bool = False
     PORT: int = 8080
     
     # Database
@@ -29,7 +29,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     USE_CELERY: bool = Field(default=False, description="Enqueue outbound webhook deliveries through Celery and Redis")
     ENABLE_INPROCESS_DISPATCHER: bool = Field(default=False, description="Run background delivery dispatcher thread inside web process")
-    ALLOW_LOCAL_RECEIVERS: bool = True  # Enable for dev & controllable demo receiver
+    # Secure-by-default: loopback receivers are denied unless explicitly
+    # enabled for local dev (ALLOW_LOCAL_RECEIVERS=True in .env).
+    ALLOW_LOCAL_RECEIVERS: bool = False
     # Public-demo safety: comma-separated allowlist of receiver domains.
     # Empty = no allowlist enforcement (dev). Set in production/demo, e.g.
     # "merchant.example.com,receiver.example.org". Localhost is still gated
@@ -44,6 +46,15 @@ class Settings(BaseSettings):
     HTTP_CONNECT_TIMEOUT_SECONDS: float = 3.0
     # Data retention (0/None disables automatic purging)
     DATA_RETENTION_DAYS: int = Field(default=90, description="Purge terminal events/deliveries older than N days (0 disables)")
+    # Audit logs are compliance-sensitive: retain longer than operational data.
+    AUDIT_RETENTION_DAYS: int = Field(default=365, description="Purge audit logs older than N days (0 disables)")
+    # Server-side pepper for API-key hashes (HMAC). Empty = legacy plain
+    # SHA-256 (back-compat); set a strong random value in production.
+    API_KEY_PEPPER: str = Field(default="", description="Pepper for API key hashing (HMAC-SHA256)")
+    # DNS resolution timeout for SSRF checks (prevents slow-DNS DoS in request path)
+    DNS_RESOLVE_TIMEOUT_SECONDS: float = Field(default=3.0, description="Timeout for DNS resolution during URL validation")
+    # Recovery scanner batch bound (prevents OOM when many leases expire)
+    RECOVERY_BATCH_SIZE: int = Field(default=500, description="Max abandoned leases reclaimed per cycle")
     
     # Retry & Delivery policies
     MAX_DELIVERY_ATTEMPTS: int = 5
@@ -80,11 +91,33 @@ settings = Settings()
 _INSECURE_SECRET_DEFAULTS = {
     "wh_dev_insecure_secret_key_change_in_production_1234567890",
 }
+_INSECURE_FERNET_DEFAULTS = {
+    "yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=",
+}
+_INSECURE_DB_SUBSTRINGS = ("postgrespassword", "postgres:postgres@")
 if settings.ENV == "production":
     if settings.SECRET_KEY in _INSECURE_SECRET_DEFAULTS or len(settings.SECRET_KEY) < 32:
         raise RuntimeError(
             "SECRET_KEY must be set to a strong random value (>=32 chars) in production. "
             "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+        )
+    if settings.SIGNING_SECRET_ENCRYPTION_KEY in _INSECURE_FERNET_DEFAULTS:
+        raise RuntimeError(
+            "SIGNING_SECRET_ENCRYPTION_KEY uses the public dev default. "
+            "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+        )
+    if not settings.API_KEY_PEPPER or len(settings.API_KEY_PEPPER) < 16:
+        raise RuntimeError(
+            "API_KEY_PEPPER must be set to a strong random value (>=16 chars) in production. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+        )
+    if any(s in settings.DATABASE_URL for s in _INSECURE_DB_SUBSTRINGS):
+        raise RuntimeError(
+            "DATABASE_URL uses dev default credentials in production. Set a strong POSTGRES_PASSWORD."
+        )
+    if not settings.METRICS_API_KEY or len(settings.METRICS_API_KEY) < 16:
+        raise RuntimeError(
+            "METRICS_API_KEY must be set (>=16 chars) in production to protect /metrics."
         )
     if settings.ALLOW_LOCAL_RECEIVERS:
         # Local receivers (loopback) must never be reachable in a public deployment
@@ -97,9 +130,12 @@ if settings.ENV == "production":
                 "or set I_UNDERSTAND_ALLOW_LOCAL_RISK=1 for a closed demo."
             )
 
-# Ensure signing secret key is valid Fernet key
+# Ensure signing secret key is valid Fernet key — fail fast, never silently rotate
+# (silent rotation would make all stored endpoint secrets undecryptable).
 try:
     Fernet(settings.SIGNING_SECRET_ENCRYPTION_KEY.encode())
-except Exception:
-    # Generate fallback valid Fernet key in dev
-    settings.SIGNING_SECRET_ENCRYPTION_KEY = Fernet.generate_key().decode()
+except Exception as e:
+    raise RuntimeError(
+        f"SIGNING_SECRET_ENCRYPTION_KEY is not a valid Fernet key: {e}. "
+        "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+    )

@@ -19,47 +19,88 @@ from app.models import Delivery, DeliveryAttempt, Event, utc_now
 logger = logging.getLogger("webhook.retention")
 
 
-def purge_expired_data(db: Session, retention_days: int | None = None) -> dict:
+def purge_expired_data(
+    db: Session, retention_days: int | None = None, audit_retention_days: int | None = None, batch_size: int = 1000
+) -> dict:
     if retention_days is None:
         retention_days = settings.DATA_RETENTION_DAYS
+    if audit_retention_days is None:
+        audit_retention_days = getattr(settings, "AUDIT_RETENTION_DAYS", 365)
     if not retention_days or retention_days <= 0:
         return {"purged_attempts": 0, "purged_deliveries": 0, "purged_events": 0, "purged_audit_logs": 0, "disabled": True}
 
     cutoff = utc_now() - timedelta(days=retention_days)
+    audit_cutoff = utc_now() - timedelta(days=audit_retention_days) if audit_retention_days and audit_retention_days > 0 else None
 
-    # 1. Delete attempts belonging to old terminal deliveries
-    old_terminal_delivery_ids = [
-        r[0] for r in db.query(Delivery.id).filter(
-            Delivery.status.in_(["SUCCEEDED", "DEAD"]),
-            Delivery.created_at < cutoff,
-        ).all()
-    ]
     purged_attempts = 0
     purged_deliveries = 0
     purged_events = 0
     purged_audit = 0
 
-    if old_terminal_delivery_ids:
-        purged_attempts = db.query(DeliveryAttempt).filter(
-            DeliveryAttempt.delivery_id.in_(old_terminal_delivery_ids)
-        ).delete(synchronize_session=False)
-        purged_deliveries = db.query(Delivery).filter(
-            Delivery.id.in_(old_terminal_delivery_ids)
-        ).delete(synchronize_session=False)
+    # 1. Batched delete: attempts then deliveries for old terminal deliveries.
+    # Uses keyset batches (no unbounded IN list, short transactions).
+    while True:
+        batch_ids = [
+            r[0]
+            for r in db.query(Delivery.id)
+            .filter(Delivery.status.in_(["SUCCEEDED", "DEAD"]), Delivery.created_at < cutoff)
+            .limit(batch_size)
+            .all()
+        ]
+        if not batch_ids:
+            break
+        purged_attempts += (
+            db.query(DeliveryAttempt)
+            .filter(DeliveryAttempt.delivery_id.in_(batch_ids))
+            .delete(synchronize_session=False)
+        )
+        purged_deliveries += (
+            db.query(Delivery).filter(Delivery.id.in_(batch_ids)).delete(synchronize_session=False)
+        )
+        db.commit()
+        if len(batch_ids) < batch_size:
+            break
 
-    # 2. Delete old events that no longer have deliveries (orphaned terminal events)
-    # Events with remaining non-terminal deliveries are preserved.
-    old_events = db.query(Event).filter(Event.created_at < cutoff).all()
-    for evt in old_events:
-        remaining = db.query(Delivery).filter(Delivery.event_id == evt.id).count()
-        if remaining == 0:
-            db.delete(evt)
-            purged_events += 1
+    # 2. Delete old orphaned events in batches (anti-join, no N+1).
+    while True:
+        orphan_ids = [
+            r[0]
+            for r in db.query(Event.id)
+            .outerjoin(Delivery, Delivery.event_id == Event.id)
+            .filter(Event.created_at < cutoff, Delivery.id.is_(None))
+            .limit(batch_size)
+            .all()
+        ]
+        if not orphan_ids:
+            break
+        purged_events += (
+            db.query(Event).filter(Event.id.in_(orphan_ids)).delete(synchronize_session=False)
+        )
+        db.commit()
+        if len(orphan_ids) < batch_size:
+            break
 
-    # 3. Trim old audit logs
+    # 3. Trim old audit logs (separate longer retention) in batches.
     try:
         from app.models.audit_log import AuditLog
-        purged_audit = db.query(AuditLog).filter(AuditLog.created_at < cutoff).delete(synchronize_session=False)
+
+        if audit_cutoff is not None:
+            while True:
+                audit_ids = [
+                    r[0]
+                    for r in db.query(AuditLog.id)
+                    .filter(AuditLog.created_at < audit_cutoff)
+                    .limit(batch_size)
+                    .all()
+                ]
+                if not audit_ids:
+                    break
+                purged_audit += (
+                    db.query(AuditLog).filter(AuditLog.id.in_(audit_ids)).delete(synchronize_session=False)
+                )
+                db.commit()
+                if len(audit_ids) < batch_size:
+                    break
     except Exception:
         purged_audit = 0
 

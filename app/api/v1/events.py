@@ -31,13 +31,17 @@ def publish_event(
     """
     _, project = auth
 
-    # Enforce maximum event payload size
-    raw_payload_bytes = json.dumps(payload.data, ensure_ascii=False).encode("utf-8")
+    # Enforce maximum event payload size on canonical data AND wire envelope
+    # (envelope adds id/type/created_at overhead that must also be bounded).
+    raw_payload_bytes = json.dumps(payload.data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if len(raw_payload_bytes) > settings.MAX_PAYLOAD_SIZE_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"Payload exceeds maximum allowed size of {settings.MAX_PAYLOAD_SIZE_BYTES} bytes."
         )
+    # Idempotency-Key length bound (header can otherwise blow up unique index)
+    if idempotency_key is not None and len(idempotency_key.strip()) > 255:
+        raise HTTPException(status_code=400, detail="Idempotency-Key must be ≤255 characters.")
 
     # Rate limiting per project
     from app.services.rate_limiter import check_ingestion_rate_limit
@@ -58,15 +62,17 @@ def publish_event(
             event, is_duplicate, delivery_count = ingest_event(
                 db=db,
                 project_id=project.id,
-                event_type=payload.type,
+                event_type=payload.type.strip(),
                 payload_data=payload.data,
-                idempotency_key=idempotency_key
+                idempotency_key=idempotency_key.strip() if isinstance(idempotency_key, str) and idempotency_key.strip() else None,
             )
     except IdempotencyConflictError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e)
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     return EventIngestResponse(
         event_id=event.id,

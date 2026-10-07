@@ -49,8 +49,47 @@ def generate_api_key() -> tuple[str, str, str]:
     key_hash = hash_api_key(full_key)
     return full_key, key_prefix, key_hash
 
+def _pepper() -> str:
+    try:
+        from app.config import settings as _s
+        return (_s.API_KEY_PEPPER or "").strip()
+    except Exception:
+        return ""
+
+
 def hash_api_key(key: str) -> str:
-    return hashlib.sha256(key.strip().encode("utf-8")).hexdigest()
+    """HMAC-SHA256 with server pepper when configured, else legacy plain SHA-256.
+
+    New deployments should set API_KEY_PEPPER. Lookup tries peppered first,
+    then legacy, so existing keys keep working after enabling a pepper.
+    """
+    raw = key.strip().encode("utf-8")
+    pepper = _pepper()
+    if pepper:
+        import hmac as _hmac
+
+        return _hmac.new(pepper.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+    return hashlib.sha256(raw).hexdigest()
+
+
+def hash_api_key_candidates(key: str) -> list[str]:
+    """All hashes to try on lookup (peppered + legacy) for zero-downtime rotation."""
+    raw = key.strip().encode("utf-8")
+    pepper = _pepper()
+    out: list[str] = []
+    if pepper:
+        import hmac as _hmac
+
+        out.append(_hmac.new(pepper.encode("utf-8"), raw, hashlib.sha256).hexdigest())
+    out.append(hashlib.sha256(raw).hexdigest())
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for h in out:
+        if h not in seen:
+            seen.add(h)
+            uniq.append(h)
+    return uniq
 
 # --- Sessions & CSRF ---
 # Server-side logout invalidation via token denylist.

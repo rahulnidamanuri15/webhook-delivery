@@ -38,6 +38,10 @@ from app.services.security import (
 from app.services.ssrf import validate_webhook_url
 
 
+# Module-level dummy Argon2 hash for login timing mitigation (lazy init).
+_DUMMY_LOGIN_HASH: str | None = None
+
+
 def is_cookie_secure() -> bool:
     if settings.COOKIE_SECURE is not None:
         return settings.COOKIE_SECURE
@@ -152,6 +156,34 @@ def require_owner(db: Session, org, user):
         raise HTTPException(status_code=403, detail="Requires owner role")
     return m
 
+
+def safe_back_redirect(request: Request, fallback: str = "/dashboard/endpoints") -> str:
+    """Same-origin back-redirect (fixes open-redirect via Referer header).
+
+    Only allows relative paths starting with '/' (no '//evil', no scheme).
+    Falls back to a safe dashboard path otherwise.
+    """
+    ref = (request.headers.get("referer") or "").strip()
+    if not ref:
+        return fallback
+    try:
+        from urllib.parse import urlparse as _up
+
+        p = _up(ref)
+        # Absolute URL with host → reject (cross-origin)
+        if p.scheme or p.netloc:
+            return fallback
+        path = p.path or ""
+        if not path.startswith("/") or path.startswith("//"):
+            return fallback
+        # Only allow dashboard-internal paths
+        if not path.startswith("/dashboard"):
+            return fallback
+        qs = f"?{p.query}" if p.query else ""
+        return (path + qs)[:500]
+    except Exception:
+        return fallback
+
 # ================= AUTHENTICATION ROUTES =================
 
 @router.get("/", response_class=HTMLResponse)
@@ -190,8 +222,19 @@ def login_post(
             status_code=429
         )
 
+    # Constant-time enumeration defense: always run Argon2 verify,
+    # even when the user does not exist (dummy hash absorbs timing).
+    global _DUMMY_LOGIN_HASH
+    if _DUMMY_LOGIN_HASH is None:
+        try:
+            from app.services.security import ph as _ph
+
+            _DUMMY_LOGIN_HASH = _ph.hash("dummy-password-for-timing-mitigation-!23")
+        except Exception:
+            _DUMMY_LOGIN_HASH = "invalid"
     user = db.query(User).filter(User.email == email.strip().lower()).first()
-    if not user or not verify_password(password, user.password_hash):
+    password_ok = verify_password(password, user.password_hash) if user else verify_password(password, _DUMMY_LOGIN_HASH or "invalid")
+    if not user or not password_ok:
         return templates.TemplateResponse(
             "auth/login.html",
             {"request": request, "error": "Invalid email or password.", "current_user": None},
@@ -235,6 +278,16 @@ def register_post(
     db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
+    # Registration throttle: 10/hour per IP (anti mass-account DoS)
+    from app.services.rate_limiter import check_registration_rate_limit
+    _reg_ip = request.client.host if request.client else "127.0.0.1"
+    _reg_allowed, _reg_wait = check_registration_rate_limit(_reg_ip)
+    if not _reg_allowed:
+        return templates.TemplateResponse(
+            "auth/register.html",
+            {"request": request, "error": f"Too many registrations. Try again in {int(_reg_wait)+1}s.", "current_user": None},
+            status_code=429
+        )
     email = email.strip().lower()
     existing = db.query(User).filter(User.email == email).first()
     if existing:
@@ -243,31 +296,64 @@ def register_post(
             {"request": request, "error": "Email is already registered. Please sign in.", "current_user": None},
             status_code=400
         )
-    
+
     if len(password) < 8:
         return templates.TemplateResponse(
             "auth/register.html",
             {"request": request, "error": "Password must be at least 8 characters long.", "current_user": None},
             status_code=400
         )
+    # Basic complexity: require 3 of 4 classes (upper/lower/digit/symbol)
+    import re as _re
+    _classes = sum([
+        bool(_re.search(r"[A-Z]", password)),
+        bool(_re.search(r"[a-z]", password)),
+        bool(_re.search(r"[0-9]", password)),
+        bool(_re.search(r"[^A-Za-z0-9]", password)),
+    ])
+    if _classes < 3:
+        return templates.TemplateResponse(
+            "auth/register.html",
+            {"request": request, "error": "Password must include 3 of: uppercase, lowercase, digit, symbol.", "current_user": None},
+            status_code=400
+        )
+    # Validate project name length to avoid DB errors
+    _proj_name = (project_name or "").strip() or "Default Project"
+    if len(_proj_name) > 100:
+        return templates.TemplateResponse(
+            "auth/register.html",
+            {"request": request, "error": "Project name must be ≤100 characters.", "current_user": None},
+            status_code=400
+        )
 
     # Atomically create user, organization, membership, and initial project
-    user = User(email=email, password_hash=hash_password(password))
-    db.add(user)
-    db.flush()
+    try:
+        user = User(email=email, password_hash=hash_password(password))
+        db.add(user)
+        db.flush()
 
-    org_name = email.split("@")[0].capitalize() + "'s Org"
-    org = Organization(name=org_name)
-    db.add(org)
-    db.flush()
+        org_name = email.split("@")[0].capitalize() + "'s Org"
+        org = Organization(name=org_name)
+        db.add(org)
+        db.flush()
 
-    member = OrganizationMember(organization_id=org.id, user_id=user.id, role="owner")
-    db.add(member)
+        member = OrganizationMember(organization_id=org.id, user_id=user.id, role="owner")
+        db.add(member)
 
-    project = Project(organization_id=org.id, name=project_name.strip() or "Default Project")
-    db.add(project)
-    
-    db.commit()
+        project = Project(organization_id=org.id, name=_proj_name)
+        db.add(project)
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        from sqlalchemy.exc import IntegrityError as _IE
+        if isinstance(e, _IE) or "UNIQUE" in str(type(e).__name__).upper() or "unique" in str(e).lower():
+            return templates.TemplateResponse(
+                "auth/register.html",
+                {"request": request, "error": "Email is already registered. Please sign in.", "current_user": None},
+                status_code=400
+            )
+        raise
 
     token = create_session_token(user.id, org_id=org.id, project_id=project.id)
     response = RedirectResponse(url="/dashboard", status_code=303)
@@ -378,20 +464,20 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
         "avg_e2e_duration_ms": avg_e2e_duration_ms
     }
 
-    # 7-day activity series for the dashboard chart (vanilla JS canvas, no CDN).
+    # 7-day activity series — bounded to last 7 days only (was full-table scan).
     from datetime import timedelta as _td
     _today = utc_now().date()
     _labels: list[str] = []
     _events_per_day: list[int] = []
     _succeeded_per_day: list[int] = []
     _dead_per_day: list[int] = []
-    # Fetch once (bounded dashboard query) to avoid N+1 scans.
+    _week_ago = utc_now() - _td(days=7)
     try:
-        _all_events = db.query(Event.created_at).filter(Event.project_id == project.id).all()
+        _all_events = db.query(Event.created_at).filter(Event.project_id == project.id, Event.created_at >= _week_ago).limit(5000).all()
     except Exception:
         _all_events = []
     try:
-        _all_dlv = db.query(Delivery.created_at, Delivery.status).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id).all()
+        _all_dlv = db.query(Delivery.created_at, Delivery.status).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id, Delivery.created_at >= _week_ago).limit(5000).all()
     except Exception:
         _all_dlv = []
     _retrying_per_day: list[int] = []
@@ -539,9 +625,12 @@ def dashboard_metrics_chart_fragment(
     succeeded_per_bucket = []
     dead_per_bucket = []
 
+    # Bounded: only fetch window needed for requested range (was full-table scan).
+    _range_days = {"1h": 1, "24h": 1, "7d": 7, "30d": 30}.get(time_range, 1)
+    _window_start = utc_now() - _td(days=_range_days)
     try:
-        raw_events = db.query(Event.created_at).filter(Event.project_id == project.id).all()
-        raw_dlv = db.query(Delivery.created_at, Delivery.status).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id).all()
+        raw_events = db.query(Event.created_at).filter(Event.project_id == project.id, Event.created_at >= _window_start).limit(5000).all()
+        raw_dlv = db.query(Delivery.created_at, Delivery.status).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id, Delivery.created_at >= _window_start).limit(5000).all()
         all_events = [_to_naive(c) for (c,) in raw_events if c is not None]
         all_dlv = [(_to_naive(c), s) for c, s in raw_dlv if c is not None]
     except Exception:
@@ -757,17 +846,37 @@ def create_endpoint_post(
             "message_type": "error"
         }, status_code=400)
 
+    # Validate subscription patterns (prevent DB errors / wildcard abuse)
+    import re as _re
+
+    def _valid_sub(p: str) -> bool:
+        if not p or len(p) > 255:
+            return False
+        if p == "*":
+            return True
+        if not _re.match(r"^[A-Za-z0-9._*-]+$", p):
+            return False
+        # '*' only allowed as full wildcard or trailing '.*'
+        if "*" in p and not (p == "*" or p.endswith(".*")):
+            return False
+        return True
+
     # Generate and encrypt endpoint HMAC signing secret
     plain_secret = generate_signing_secret()
     encrypted_secret = encrypt_secret(plain_secret)
 
+    # Clamp rate limit to schema bounds (1..100)
+    try:
+        _rl = max(1, min(100, int(rate_limit_per_second or 10)))
+    except Exception:
+        _rl = 10
     endpoint = Endpoint(
         project_id=project.id,
-        url=url,
-        description=description.strip() if description else None,
+        url=url[:2048],
+        description=(description.strip()[:500] if description else None),
         encrypted_signing_secret=encrypted_secret,
         enabled=True,
-        rate_limit_per_second=rate_limit_per_second
+        rate_limit_per_second=_rl
     )
     db.add(endpoint)
     db.flush()
@@ -776,9 +885,32 @@ def create_endpoint_post(
     raw_types = [t.strip() for t in event_types.split(",") if t.strip()]
     if not raw_types:
         raw_types = ["*"]
+    if len(raw_types) > 50:
+        db.rollback()
+        endpoints = db.query(Endpoint).filter(Endpoint.project_id == project.id).all()
+        return templates.TemplateResponse("endpoints/index.html", {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "endpoints": endpoints,
+            "message": "Too many subscriptions (max 50).",
+            "message_type": "error"
+        }, status_code=400)
+    for et in raw_types:
+        if not _valid_sub(et):
+            db.rollback()
+            endpoints = db.query(Endpoint).filter(Endpoint.project_id == project.id).all()
+            return templates.TemplateResponse("endpoints/index.html", {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "endpoints": endpoints,
+                "message": f"Invalid subscription pattern: {et}",
+                "message_type": "error"
+            }, status_code=400)
 
     for et in set(raw_types):
-        sub = EndpointSubscription(endpoint_id=endpoint.id, event_type=et)
+        sub = EndpointSubscription(endpoint_id=endpoint.id, event_type=et[:255])
         db.add(sub)
 
     db.commit()
@@ -858,7 +990,7 @@ def toggle_endpoint(
             details={"enabled": endpoint.enabled}
         )
 
-    return RedirectResponse(url=request.headers.get("referer", "/dashboard/endpoints"), status_code=303)
+    return RedirectResponse(url=safe_back_redirect(request, "/dashboard/endpoints"), status_code=303)
 
 @router.post("/dashboard/endpoints/{endpoint_id}/disable")
 def disable_endpoint(
@@ -891,7 +1023,7 @@ def disable_endpoint(
             details={"enabled": False}
         )
 
-    return RedirectResponse(url=request.headers.get("referer", "/dashboard/endpoints"), status_code=303)
+    return RedirectResponse(url=safe_back_redirect(request, "/dashboard/endpoints"), status_code=303)
 
 @router.post("/dashboard/endpoints/{endpoint_id}/rotate-secret")
 def rotate_endpoint_secret(
@@ -952,20 +1084,30 @@ def edit_endpoint_post(
     if not endpoint:
         raise HTTPException(status_code=404, detail="Endpoint not found")
 
-    new_url = (url or "").strip()
+    new_url = (url or "").strip()[:2048]
     is_valid, err = validate_webhook_url(new_url)
     if not is_valid:
         raise HTTPException(status_code=400, detail=f"URL validation failed: {err}")
 
+    import re as _re2
+    raw_types = [t.strip() for t in (event_types or "*").split(",") if t.strip()] or ["*"]
+    if len(raw_types) > 50:
+        raise HTTPException(status_code=400, detail="Too many subscriptions (max 50).")
+    for et in raw_types:
+        if not et or len(et) > 255 or not _re2.match(r"^[A-Za-z0-9._*-]+$", et) or ("*" in et and not (et == "*" or et.endswith(".*"))):
+            raise HTTPException(status_code=400, detail=f"Invalid subscription pattern: {et}")
+
     endpoint.url = new_url
-    endpoint.description = description.strip() if description else None
-    endpoint.rate_limit_per_second = max(1, min(100, int(rate_limit_per_second or 10)))
+    endpoint.description = (description.strip()[:500] if description else None)
+    try:
+        endpoint.rate_limit_per_second = max(1, min(100, int(rate_limit_per_second or 10)))
+    except Exception:
+        endpoint.rate_limit_per_second = 10
 
     # Replace subscriptions atomically
     db.query(EndpointSubscription).filter(EndpointSubscription.endpoint_id == endpoint.id).delete()
-    raw_types = [t.strip() for t in (event_types or "*").split(",") if t.strip()] or ["*"]
     for et in set(raw_types):
-        db.add(EndpointSubscription(endpoint_id=endpoint.id, event_type=et))
+        db.add(EndpointSubscription(endpoint_id=endpoint.id, event_type=et[:255]))
     db.commit()
 
     from app.services.audit import log_audit_event
@@ -1307,15 +1449,24 @@ def replay_all_dead_letters(
         return RedirectResponse(url="/auth/login", status_code=302)
     require_manager(db, org, user)
 
-    dead_deliveries = (
-        db.query(Delivery)
+    # Bounded replay-all: cap at 100 per request to avoid thundering herd / timeouts.
+    REPLAY_ALL_LIMIT = 100
+    dead_ids = [
+        r[0]
+        for r in db.query(Delivery.id)
         .join(Event, Delivery.event_id == Event.id)
         .filter(Event.project_id == project.id, Delivery.status == "DEAD")
+        .limit(REPLAY_ALL_LIMIT + 1)
         .all()
-    )
-
-    for dlv in dead_deliveries:
-        replay_delivery(db, dlv.id)
+    ]
+    capped = len(dead_ids) > REPLAY_ALL_LIMIT
+    replayed = 0
+    for dlv_id in dead_ids[:REPLAY_ALL_LIMIT]:
+        try:
+            if replay_delivery(db, dlv_id):
+                replayed += 1
+        except Exception:
+            continue
 
     from app.services.audit import log_audit_event
     client_ip = request.client.host if request.client else None
@@ -1326,7 +1477,7 @@ def replay_all_dead_letters(
         action="delivery.replay_all",
         resource_type="delivery",
         ip_address=client_ip,
-        details={"replayed_count": len(dead_deliveries)}
+        details={"replayed_count": replayed, "capped": capped, "limit": REPLAY_ALL_LIMIT}
     )
 
     return RedirectResponse(url="/dashboard/deliveries", status_code=303)
@@ -1495,7 +1646,19 @@ def invite_team_member(
         raise HTTPException(status_code=403, detail="Only organization owners and admins can invite team members.")
 
     email_clean = email.strip().lower()
+    # Invite throttle + dedup: prevent spam / mass-invite DoS
+    from app.services.rate_limiter import check_invite_rate_limit
+    _inv_allowed, _inv_wait = check_invite_rate_limit(org.id)
+    if not _inv_allowed:
+        raise HTTPException(status_code=429, detail=f"Too many invites. Try again in {int(_inv_wait)+1}s.")
     from app.models.invitation import OrganizationInvitation
+    _existing_pending = db.query(OrganizationInvitation).filter(
+        OrganizationInvitation.organization_id == org.id,
+        OrganizationInvitation.email == email_clean,
+        OrganizationInvitation.status == "PENDING",
+    ).first()
+    if _existing_pending and _existing_pending.is_valid:
+        raise HTTPException(status_code=400, detail="A pending invitation for this email already exists.")
     invitation = OrganizationInvitation(
         organization_id=org.id,
         email=email_clean,
@@ -1674,7 +1837,16 @@ def accept_invitation_post(
         return HTMLResponse("<p>This invitation link is invalid or has expired.</p>", status_code=400)
 
     user = get_optional_user(request, db)
-    
+    # Enforce email match for logged-in users: a different account cannot
+    # claim an invitation addressed to another email (invite-token guessing).
+    if user and user.email.lower() != invitation.email.lower():
+        return HTMLResponse(
+            "<p style='padding:40px;text-align:center;font-family:sans-serif;'>"
+            "This invitation was sent to a different email. Please log out and "
+            "accept with the invited address.</p>",
+            status_code=403,
+        )
+
     # If not logged in, find user by email or register new user
     if not user:
         user = db.query(User).filter(User.email == invitation.email.lower()).first()

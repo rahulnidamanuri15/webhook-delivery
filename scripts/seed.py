@@ -59,8 +59,9 @@ def seed():
         db.add(project)
         db.flush()
 
-        # 4. API Key
-        raw_key = "wh_live_demo1234567890abcdef123456"
+        # 4. API Key — overridable via SEED_API_KEY (dev default only).
+        # Production: create keys via dashboard; never reuse demo key.
+        raw_key = os.getenv("SEED_API_KEY", "wh_live_demo1234567890abcdef123456")
         key_prefix = raw_key[:16]
         key_hash = hash_api_key(raw_key)
         api_key = ApiKey(
@@ -72,7 +73,7 @@ def seed():
         db.add(api_key)
 
         # 5. Endpoint (pointing to controllable demo receiver)
-        signing_secret = "whsec_demosecret1234567890abcdef"
+        signing_secret = os.getenv("SEED_ENDPOINT_SECRET", "whsec_demosecret1234567890abcdef")
         encrypted_secret = encrypt_secret(signing_secret)
         receiver_url = "http://demo_receiver:8001/webhook" if "postgres" in os.getenv("DATABASE_URL", "") else "http://127.0.0.1:8001/webhook"
         endpoint = Endpoint(

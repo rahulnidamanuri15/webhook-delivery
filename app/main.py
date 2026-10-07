@@ -48,6 +48,31 @@ app = FastAPI(
     redoc_url="/api/redoc"
 )
 
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Harden direct :8080 exposure (nginx also sets these when proxied)."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    # HTMX + inline dashboard JS need 'unsafe-inline'; no object/embed.
+    # CDN scripts (htmx/chart.js) explicitly allowlisted.
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "object-src 'none'; base-uri 'self'"
+    )
+    if settings.ENV == "production" and not settings.DEBUG:
+        # Only send HSTS when serving TLS via reverse_proxy
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
+
 # Mount Static Files
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 

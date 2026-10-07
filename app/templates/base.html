@@ -10,16 +10,15 @@
          npm install && npm run build:css -->
   <link rel="stylesheet" href="/static/css/dist.css">
   
-  <!-- HTMX for partial page updates -->
-  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-  
-  <!-- Chart.js for real-time interactive traffic & outcome graphs -->
-  <script src="/static/js/chart.umd.min.js"></script>
-  <script>
-    if (typeof Chart === 'undefined') {
-      document.write('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"><\/script>');
-    }
-  </script>
+  <!-- HTMX for partial page updates: vendored locally preferred.
+       To vendor: curl -sSL https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js -o app/static/js/htmx.min.js
+       then use /static/js/htmx.min.js. CDN kept without SRI (unpkg dynamic);
+       prefer jsdelivr pinned file with SRI or local vendor for strict CSP. -->
+  <script src="https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js" crossorigin="anonymous" defer></script>
+
+  <!-- Chart.js vendored locally (no CDN fallback to avoid supply-chain + document.write XSS).
+       If local file missing, charts degrade gracefully instead of loading remote JS. -->
+  <script src="/static/js/chart.umd.min.js" defer></script>
   
   <!-- Local App CSS (legacy variables / overrides) -->
   <link rel="stylesheet" href="/static/css/app.css">

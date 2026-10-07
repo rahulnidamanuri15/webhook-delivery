@@ -1,3 +1,4 @@
+import asyncio as _asyncio
 import html
 import json as _json
 import os
@@ -22,42 +23,61 @@ _DEFAULT_DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dem
 _DEDUP_DB_FILE = os.getenv("DEMO_RECEIVER_DB_FILE", _DEFAULT_DB_FILE)
 
 
-def _require_admin(request: Request, token_field: str | None = None):
-    """Protects behaviour-changing controls.
-
-    - Only allow loopback callers without token if DEMO_RECEIVER_ADMIN_TOKEN is empty.
-    - If DEMO_RECEIVER_ADMIN_TOKEN is set: require matching token via X-Admin-Token
-      header, form field admin_token, or query param admin_token.
-    """
+def _is_loopback(request: Request) -> bool:
+    """Checks if request originates from localhost/loopback."""
     client_host = ""
     try:
         client_host = request.client.host if request.client else ""
     except Exception:
         client_host = ""
-    is_loopback = client_host in ("127.0.0.1", "::1", "localhost", "testclient", "")
+    return client_host in ("127.0.0.1", "::1", "localhost", "testclient", "")
 
+
+def _check_admin(request: Request, token_field: str | None = None) -> bool:
+    """Returns True if caller is authorized as admin (via loopback or matching token)."""
+    is_loopback = _is_loopback(request)
     if not ADMIN_TOKEN:
-        if is_loopback:
-            return
-        raise HTTPException(
-            status_code=403,
-            detail="Admin token is not configured on demo receiver."
-        )
+        return is_loopback
 
-    provided = (token_field or "").strip() or request.headers.get("x-admin-token", "").strip()
+    provided = (
+        (token_field or "").strip()
+        or request.headers.get("x-admin-token", "").strip()
+        or request.cookies.get("demo_admin_token", "").strip()
+    )
     if not provided:
         try:
             provided = (request.query_params.get("admin_token", "") or "").strip()
         except Exception:
             provided = ""
 
-    # Allow local loopback callers if provided token matches or in local testing
-    import hmac as _hmac
-    if not provided or not _hmac.compare_digest(provided, ADMIN_TOKEN):
+    if provided:
+        import hmac as _hmac
+        if _hmac.compare_digest(provided, ADMIN_TOKEN):
+            return True
+
+    return False
+
+
+def _require_admin(request: Request, token_field: str | None = None):
+    """Protects behaviour-changing controls and sensitive dashboard views.
+
+    - Only allow loopback callers without token if DEMO_RECEIVER_ADMIN_TOKEN is empty.
+    - If DEMO_RECEIVER_ADMIN_TOKEN is set: require matching token via X-Admin-Token
+      header, form field admin_token, cookie demo_admin_token, or query param admin_token.
+    """
+    if _check_admin(request, token_field):
+        return
+
+    if not ADMIN_TOKEN:
         raise HTTPException(
             status_code=403,
-            detail="Invalid or missing admin token for demo-receiver controls."
+            detail="Admin token is not configured on demo receiver. Remote non-loopback access is forbidden."
         )
+
+    raise HTTPException(
+        status_code=403,
+        detail="Invalid or missing admin token for demo-receiver controls."
+    )
 
 
 # Receiver state and configurations
@@ -186,9 +206,53 @@ def dashboard_redirect():
     return RedirectResponse(url="/", status_code=303)
 
 
+@app.post("/auth")
+def auth(admin_token: str = Form("")):
+    import hmac as _hmac
+    if ADMIN_TOKEN and _hmac.compare_digest(admin_token.strip(), ADMIN_TOKEN):
+        response = RedirectResponse(url="/", status_code=303)
+        response.set_cookie(key="demo_admin_token", value=admin_token.strip(), httponly=True, samesite="lax")
+        return response
+    raise HTTPException(status_code=403, detail="Invalid admin token.")
+
+
 @app.get("/", response_class=HTMLResponse)
-def index():
+def index(request: Request):
     """Receiver Dashboard & Control Panel."""
+    # If admin_token passed in query param, authenticate and redirect to strip token from URL
+    token_param = (request.query_params.get("admin_token") or "").strip()
+    if token_param and ADMIN_TOKEN:
+        import hmac as _hmac
+        if _hmac.compare_digest(token_param, ADMIN_TOKEN):
+            resp = RedirectResponse(url="/", status_code=303)
+            resp.set_cookie(key="demo_admin_token", value=token_param, httponly=True, samesite="lax")
+            return resp
+
+    if not _check_admin(request):
+        if not ADMIN_TOKEN:
+            return HTMLResponse(
+                """<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:40px;text-align:center;color:#1f2937;">
+                <h2 style="color:#dc2626;">403 Forbidden</h2>
+                <p>The demo receiver is running in loopback-only mode because <code>DEMO_RECEIVER_ADMIN_TOKEN</code> is not configured.</p>
+                <p style="color:#6b7280;font-size:14px;">Remote access is blocked to prevent exposing webhook secrets and payloads.</p>
+                </body></html>""",
+                status_code=403
+            )
+        return HTMLResponse(
+            """<!DOCTYPE html><html><head><title>Demo Receiver - Unlock</title></head>
+            <body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:60px 20px;background:#f9fafb;display:flex;justify-content:center;">
+            <div style="background:white;padding:32px;border-radius:8px;border:1px solid #e5e7eb;max-width:400px;width:100%;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+                <h2 style="margin-top:0;font-size:18px;">Demo Webhook Receiver</h2>
+                <p style="color:#6b7280;font-size:13px;margin-bottom:20px;">This receiver is protected. Please enter the <code>DEMO_RECEIVER_ADMIN_TOKEN</code> to access the dashboard:</p>
+                <form action="/auth" method="post">
+                    <input type="password" name="admin_token" placeholder="Admin token" required style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;margin-bottom:16px;">
+                    <button type="submit" style="width:100%;padding:10px;background:#2563eb;color:white;border:none;border-radius:6px;font-weight:600;font-size:14px;cursor:pointer;">Unlock Dashboard</button>
+                </form>
+            </div>
+            </body></html>""",
+            status_code=403
+        )
+
     # Reload from DB in case another process/thread recorded events
     try:
         with sqlite3.connect(_DEDUP_DB_FILE, timeout=2.0) as conn:
@@ -225,14 +289,18 @@ def index():
             if item["is_duplicate"]
             else '<span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600;">First seen</span>'
         )
-        status_color = "#16a34a" if item["returned_status"] < 300 else "#dc2626"
-        escaped_payload = html.escape(str(item.get("payload", "")))
+        status_color = "#16a34a" if int(item.get("returned_status") or 0) < 300 else "#dc2626"
+        escaped_payload = html.escape(str(item.get("payload", ""))[:4000])
+        esc_received_at = html.escape(str(item.get("received_at", "")))
+        esc_event_id = html.escape(str(item.get("event_id", "")))
+        esc_delivery_id = html.escape(str(item.get("delivery_id", "")))
+        esc_status = html.escape(str(item.get("returned_status", "")))
         rows += f"""
         <tr style="border-bottom: 1px solid #e5e7eb;">
-            <td style="padding:10px;font-family:monospace;font-size:12px;">{item["received_at"]}</td>
-            <td style="padding:10px;font-family:monospace;font-size:12px;font-weight:600;">{item["event_id"]}</td>
-            <td style="padding:10px;font-family:monospace;font-size:12px;color:#6b7280;">{item["delivery_id"]}</td>
-            <td style="padding:10px;font-weight:bold;color:{status_color};">{item["returned_status"]}</td>
+            <td style="padding:10px;font-family:monospace;font-size:12px;">{esc_received_at}</td>
+            <td style="padding:10px;font-family:monospace;font-size:12px;font-weight:600;">{esc_event_id}</td>
+            <td style="padding:10px;font-family:monospace;font-size:12px;color:#6b7280;">{esc_delivery_id}</td>
+            <td style="padding:10px;font-weight:bold;color:{status_color};">{esc_status}</td>
             <td style="padding:10px;">{sig_badge}</td>
             <td style="padding:10px;">{dedup_badge}</td>
             <td style="padding:10px;"><pre style="margin:0;font-size:11px;max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:pre-wrap;word-break:break-all;">{escaped_payload}</pre></td>
@@ -243,6 +311,12 @@ def index():
         rows = '<tr><td colspan="7" style="padding:30px;text-align:center;color:#6b7280;">No webhooks received yet. Send an event from your platform to <code>http://127.0.0.1:8001/webhook</code></td></tr>'
 
     enforce_checked = "checked" if config["enforce_signatures"] else ""
+    # Escape admin-controlled values to prevent self-XSS via f-string HTML
+    _esc_mode = html.escape(str(config.get("mode", "")), quote=True)
+    _esc_secret = html.escape(str(config.get("endpoint_secret") or "None"), quote=True)
+    _esc_secret_attr = html.escape(str(config.get("endpoint_secret") or ""), quote=True)
+    _esc_fail = int(config.get("fail_count", 0) or 0)
+    _esc_cur_fail = int(config.get("current_failures", 0) or 0)
 
     return f"""
     <!DOCTYPE html>
@@ -336,7 +410,7 @@ def index():
 
                     <div>
                         <label style="display:block; font-size:13px; font-weight:500; margin-bottom:4px;">Endpoint Signing Secret</label>
-                        <input type="text" name="endpoint_secret" value="{config['endpoint_secret']}" placeholder="whsec_..." style="width:90%; font-family:monospace; font-size:12px;">
+                        <input type="text" name="endpoint_secret" value="{_esc_secret_attr}" placeholder="whsec_..." style="width:90%; font-family:monospace; font-size:12px;">
                     </div>
 
                     <div style="grid-column: 1 / -1; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-top:4px;">
@@ -348,7 +422,7 @@ def index():
                     </div>
                 </form>
                 <div style="margin-top:12px; font-size:12px; color:#4b5563; border-top:1px solid #f3f4f6; padding-top:8px;">
-                    Current Mode: <strong style="color:#111827;">{config['mode']}</strong> | Failures in sequence: <strong style="color:#111827;">{config['current_failures']}/{config['fail_count']}</strong> | Active Secret: <code style="background:#f3f4f6; padding:2px 6px; border-radius:4px;">{config['endpoint_secret'] or 'None'}</code> | Enforce Signatures: <strong style="color:{'#166534' if config['enforce_signatures'] else '#6b7280'}">{'ON' if config['enforce_signatures'] else 'OFF'}</strong>
+                    Current Mode: <strong style="color:#111827;">{_esc_mode}</strong> | Failures in sequence: <strong style="color:#111827;">{_esc_cur_fail}/{_esc_fail}</strong> | Active Secret: <code style="background:#f3f4f6; padding:2px 6px; border-radius:4px;">{_esc_secret}</code> | Enforce Signatures: <strong style="color:{'#166534' if config['enforce_signatures'] else '#6b7280'}">{'ON' if config['enforce_signatures'] else 'OFF'}</strong>
                 </div>
             </div>
 
@@ -575,7 +649,8 @@ async def receive_webhook(
         response_body = {"error": "Rate limit exceeded. Please back off."}
 
     elif mode == "slow":
-        time.sleep(config["slow_delay_sec"])
+        # Non-blocking delay (was time.sleep which blocked the event loop)
+        await _asyncio.sleep(min(float(config["slow_delay_sec"]), 15.0))
         returned_status = 200
         response_body = {"status": "slow_success", "delay": config["slow_delay_sec"]}
 

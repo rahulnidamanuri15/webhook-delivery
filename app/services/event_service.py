@@ -94,11 +94,25 @@ def ingest_event(
     Returns:
         (event: Event, is_duplicate: bool, delivery_count: int)
     """
+    # Normalize inputs: empty/whitespace idempotency keys mean "no key"
+    # (prevents unique-constraint collision on "" across key-less events).
+    if isinstance(event_type, str):
+        event_type = event_type.strip()
+    if idempotency_key is not None:
+        idempotency_key = idempotency_key.strip() if isinstance(idempotency_key, str) else None
+        if not idempotency_key:
+            idempotency_key = None
+    if not event_type or len(event_type) > 255:
+        raise ValueError("event_type must be 1..255 characters")
+    import re as _re
+
+    if not _re.match(r"^[A-Za-z0-9._*-]+$", event_type):
+        raise ValueError("event_type contains invalid characters (allowed: A-Z a-z 0-9 . _ * -)")
+
     canonical_data, request_hash = canonicalize_payload(event_type, payload_data)
 
     # 1. Check idempotency
     if idempotency_key:
-        idempotency_key = idempotency_key.strip()
         existing_event = (
             db.query(Event)
             .filter(

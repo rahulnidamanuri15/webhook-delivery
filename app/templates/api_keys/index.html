@@ -24,7 +24,7 @@
           <div class="flex-1 bg-slate-900 px-3 py-2 rounded-lg font-mono text-xs text-amber-300 select-all truncate border border-slate-800" id="new-key-display">
             {{ new_key }}
           </div>
-          <button onclick="copyToClipboard('{{ new_key }}', 'copy-api-key-btn')" id="copy-api-key-btn"
+          <button onclick="copyToClipboard({{ new_key|tojson }}, 'copy-api-key-btn')" id="copy-api-key-btn"
                   class="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-lg shadow-sm transition">
             Copy Key
           </button>

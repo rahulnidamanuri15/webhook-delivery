@@ -31,6 +31,13 @@ def pg_available():
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
+    # Tests use loopback receivers + http scheme: force dev overrides
+    # (production defaults are secure: ALLOW_LOCAL_RECEIVERS=False, DEBUG=False).
+    from app.config import settings as _s
+
+    _s.ALLOW_LOCAL_RECEIVERS = True
+    _s.DEBUG = True
+    _s.ALLOWED_RECEIVER_DOMAINS = ""
     from app.db.session import engine, Base
     Base.metadata.create_all(bind=engine)
     yield

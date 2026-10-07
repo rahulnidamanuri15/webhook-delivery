@@ -142,19 +142,47 @@ def check_ingestion_rate_limit(project_id: str, max_per_second: float = 30.0) ->
             pass
     return memory_bucket.acquire(f"ingest:{project_id}", max_per_second)
 
-def check_login_rate_limit(client_ip: str, email: str = "") -> tuple[bool, float]:
-    """
-    Checks login rate limit per client IP (and email).
-    Allows 5 attempts per 60 seconds (burst 5).
-    Returns (allowed, wait_seconds).
-    """
-    key = f"login:{client_ip}:{email.strip().lower()}" if email else f"login:{client_ip}"
-    rate_per_sec = 5.0 / 60.0  # 5 per minute
-    capacity = 5.0
+def _acquire_both(key: str, rate_per_sec: float, capacity: float) -> tuple[bool, float]:
+    """Try Redis first, fall back to in-memory. Single bucket helper."""
     if redis_bucket:
         try:
             return redis_bucket.acquire(key, rate_per_sec, capacity)
         except Exception:
             pass
     return memory_bucket.acquire(key, rate_per_sec, capacity)
+
+
+def check_login_rate_limit(client_ip: str, email: str = "") -> tuple[bool, float]:
+    """
+    Dual-bucket login throttle (fixes email-rotation bypass):
+    - per-IP bucket: 20 attempts / 60s (burst 20) — stops distributed guessing
+    - per-IP+email bucket: 5 attempts / 60s (burst 5) — stops targeted guessing
+    Both must allow; returns longest wait on denial.
+    """
+    ip = (client_ip or "unknown").strip() or "unknown"
+    em = (email or "").strip().lower()
+    ip_allowed, ip_wait = _acquire_both(f"login:ip:{ip}", 20.0 / 60.0, 20.0)
+    if not ip_allowed:
+        return False, ip_wait
+    if em:
+        em_allowed, em_wait = _acquire_both(f"login:ip-email:{ip}:{em}", 5.0 / 60.0, 5.0)
+        if not em_allowed:
+            return False, em_wait
+    else:
+        # No email supplied: apply stricter per-IP email-less bucket
+        em_allowed, em_wait = _acquire_both(f"login:ip:{ip}:noemail", 5.0 / 60.0, 5.0)
+        if not em_allowed:
+            return False, em_wait
+    return True, 0.0
+
+
+def check_registration_rate_limit(client_ip: str) -> tuple[bool, float]:
+    """Registration throttle: 10 accounts / hour per IP (burst 10)."""
+    ip = (client_ip or "unknown").strip() or "unknown"
+    return _acquire_both(f"register:ip:{ip}", 10.0 / 3600.0, 10.0)
+
+
+def check_invite_rate_limit(org_id: str) -> tuple[bool, float]:
+    """Team-invite throttle: 20 invites / hour per org (burst 20)."""
+    return _acquire_both(f"invite:org:{org_id}", 20.0 / 3600.0, 20.0)
 

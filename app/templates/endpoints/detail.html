@@ -79,7 +79,7 @@
           <div class="flex-1 bg-slate-900 px-3 py-2 rounded-lg font-mono text-xs text-indigo-300 select-all truncate border border-slate-800" id="signing-secret-text">
             {{ decrypted_secret }}
           </div>
-          <button onclick="copyToClipboard('{{ decrypted_secret }}', 'copy-sec-btn')" id="copy-sec-btn"
+          <button onclick="copyToClipboard({{ decrypted_secret|tojson }}, 'copy-sec-btn')" id="copy-sec-btn"
                   class="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs rounded-lg border border-indigo-200 transition">
             Copy Secret
           </button>
