@@ -109,6 +109,35 @@ def ingest_event(
     if not _re.match(r"^[A-Za-z0-9._*-]+$", event_type):
         raise ValueError("event_type contains invalid characters (allowed: A-Z a-z 0-9 . _ * -)")
 
+    # Bound payload shape (CPU DoS): depth <= 16, total keys <= 1000.
+    # 1 MB byte cap is enforced by callers; this caps sort/serialize cost.
+    def _check_shape(obj, depth: int = 0) -> int:
+        if depth > 16:
+            raise ValueError("payload exceeds max nesting depth (16)")
+        if isinstance(obj, dict):
+            if len(obj) > 1000:
+                raise ValueError("payload object exceeds max keys (1000)")
+            total = len(obj)
+            for v in obj.values():
+                total += _check_shape(v, depth + 1)
+                if total > 5000:
+                    raise ValueError("payload exceeds max total nodes (5000)")
+            return total
+        if isinstance(obj, list):
+            if len(obj) > 1000:
+                raise ValueError("payload array exceeds max items (1000)")
+            total = len(obj)
+            for v in obj:
+                total += _check_shape(v, depth + 1)
+                if total > 5000:
+                    raise ValueError("payload exceeds max total nodes (5000)")
+            return total
+        return 1
+
+    if not isinstance(payload_data, dict):
+        raise ValueError("payload data must be a JSON object")
+    _check_shape(payload_data)
+
     canonical_data, request_hash = canonicalize_payload(event_type, payload_data)
 
     # 1. Check idempotency

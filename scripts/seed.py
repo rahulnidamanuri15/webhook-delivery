@@ -20,6 +20,11 @@ from app.services.security import encrypt_secret, hash_api_key, hash_password
 
 
 def seed():
+    # Fail closed in production: demo seed must never create known credentials.
+    if os.getenv("ENV", "development").lower() == "production":
+        print("ERROR: refusing to seed demo credentials with ENV=production. "
+              "Run only in development (ENV=development).")
+        sys.exit(1)
     db = SessionLocal()
 
     try:

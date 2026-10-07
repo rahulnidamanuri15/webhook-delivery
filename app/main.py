@@ -1,3 +1,4 @@
+
 import logging
 import threading
 from contextlib import asynccontextmanager
@@ -44,8 +45,9 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     version="0.1.0",
     lifespan=lifespan,
-    docs_url="/api/docs",
-    redoc_url="/api/redoc"
+    # Hide interactive docs in production (fingerprinting + attack surface).
+    docs_url=None if settings.ENV == "production" else "/api/docs",
+    redoc_url=None if settings.ENV == "production" else "/api/redoc",
 )
 
 
@@ -80,12 +82,16 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(api_router)
 app.include_router(dashboard_router)
 
+# Short-lived cache for /metrics (global text, same for all scrapers).
+_metrics_cache: dict = {"text": None, "at": 0.0}
+_METRICS_TTL_SECONDS = 30.0
+
 @app.get("/health", tags=["Health"])
 def healthcheck():
+    # Minimal response: version is safe; never leak ENV/isolation details.
     return {
         "status": "ok",
-        "env": settings.ENV,
-        "version": "0.1.0"
+        "version": "0.1.0",
     }
 
 @app.get("/webhook")
@@ -105,46 +111,52 @@ def webhook_guide():
 @app.get("/metrics", tags=["Metrics"])
 def metrics(request: "Request" = None, db = Depends(get_db)):
     """Prometheus metrics endpoint. Protected by METRICS_API_KEY (Bearer token)
-    or a valid dashboard session cookie. Returns 401 if neither is provided."""
-    from fastapi import Request as _Req
-    from fastapi.responses import PlainTextResponse
+    or a valid dashboard session cookie. Returns 401 if neither is provided.
+    Responses are cached for 30s to prevent full-table scrape DoS."""
+    import time as _time
+    from fastapi.responses import JSONResponse, PlainTextResponse
 
-    # Check Bearer token first
-    auth_header = request.headers.get("authorization", "") if request else ""
-    if settings.METRICS_API_KEY:
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:].strip()
-            import hmac as _hmac
-            if _hmac.compare_digest(token, settings.METRICS_API_KEY):
-                from app.services.metrics import generate_prometheus_metrics
-                metrics_text = generate_prometheus_metrics(db)
-                return PlainTextResponse(metrics_text, media_type="text/plain; version=0.0.4; charset=utf-8")
-        # Also allow session-authenticated dashboard users
-        from app.services.security import verify_session_token
+    def _authorized() -> bool:
+        auth_header = request.headers.get("authorization", "") if request else ""
+        if settings.METRICS_API_KEY:
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:].strip()
+                import hmac as _hmac
+                if _hmac.compare_digest(token, settings.METRICS_API_KEY):
+                    return True
+            from app.services.security import verify_session_token
+            session_token = request.cookies.get("wh_session") if request else None
+            if session_token:
+                data = verify_session_token(session_token)
+                if data and "user_id" in data:
+                    return True
+            return False
+        from app.services.security import verify_session_token as _v
         session_token = request.cookies.get("wh_session") if request else None
         if session_token:
-            data = verify_session_token(session_token)
+            data = _v(session_token)
             if data and "user_id" in data:
-                from app.services.metrics import generate_prometheus_metrics
-                metrics_text = generate_prometheus_metrics(db)
-                return PlainTextResponse(metrics_text, media_type="text/plain; version=0.0.4; charset=utf-8")
-        from fastapi.responses import JSONResponse
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Valid METRICS_API_KEY Bearer token or dashboard session required."}
-        )
-    else:
-        # No API key configured: require dashboard session auth
-        from app.services.security import verify_session_token
-        session_token = request.cookies.get("wh_session") if request else None
-        if session_token:
-            data = verify_session_token(session_token)
-            if data and "user_id" in data:
-                from app.services.metrics import generate_prometheus_metrics
-                metrics_text = generate_prometheus_metrics(db)
-                return PlainTextResponse(metrics_text, media_type="text/plain; version=0.0.4; charset=utf-8")
-        from fastapi.responses import JSONResponse
+                return True
+        return False
+
+    if not _authorized():
+        if settings.METRICS_API_KEY:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Valid METRICS_API_KEY Bearer token or dashboard session required."}
+            )
         return JSONResponse(
             status_code=401,
             content={"detail": "Authentication required. Set METRICS_API_KEY or use a dashboard session."}
         )
+
+    # Cache global metrics text briefly (same for all authorized scrapers).
+    now = _time.monotonic()
+    cached = _metrics_cache.get("text")
+    if cached is not None and (now - _metrics_cache.get("at", 0.0)) < _METRICS_TTL_SECONDS:
+        return PlainTextResponse(cached, media_type="text/plain; version=0.0.4; charset=utf-8")
+    from app.services.metrics import generate_prometheus_metrics
+    metrics_text = generate_prometheus_metrics(db)
+    _metrics_cache["text"] = metrics_text
+    _metrics_cache["at"] = now
+    return PlainTextResponse(metrics_text, media_type="text/plain; version=0.0.4; charset=utf-8")

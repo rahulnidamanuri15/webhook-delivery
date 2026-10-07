@@ -37,19 +37,22 @@ class PinnedSyncBackend(sync_backend.SyncBackend):
 class PinnedIPTransport(httpx.HTTPTransport):
     """Custom HTTPX transport connecting directly to pre-verified pinned IP while preserving TLS SNI.
 
-    Uses private httpcore pool API when available; falls back to plain transport
-    (DNS re-validated at send time) if httpcore internals change.
+    Fail-closed: if httpcore internals change so pinning cannot be applied,
+    `pinning_active` stays False and callers must refuse to send (prevents
+    DNS-rebinding TOCTOU). Never silently fall back to normal DNS.
     """
     def __init__(self, pinned_host_map: dict[str, str], **kwargs):
+        self.pinning_active = False
         super().__init__(**kwargs)
         try:
             pool = getattr(self, "_pool", None)
             if pool is not None and hasattr(pool, "_network_backend"):
                 pool._network_backend = PinnedSyncBackend(pinned_host_map)
+                self.pinning_active = True
             else:
-                logger.warning("PinnedIPTransport: httpcore internals changed, pinning disabled (DNS re-checked).")
+                logger.error("PinnedIPTransport: httpcore internals changed, pinning unavailable (fail-closed).")
         except Exception as e:
-            logger.warning(f"PinnedIPTransport fallback to default routing: {e}")
+            logger.error(f"PinnedIPTransport init failed, pinning unavailable (fail-closed): {e}")
 
 
 def _build_timeout() -> "httpx.Timeout":
@@ -251,11 +254,29 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
 
     # 5. Outbound HTTP request executed safely outside DB transaction.
     # Timeouts: connect (short) vs total (HTTP_TIMEOUT_SECONDS) both < lease (30s).
+    # Claim committed in claim_delivery(), so no open DB transaction is held
+    # across network I/O (connection already returned to pool). Detach ORM
+    # state before blocking calls to avoid holding session resources.
     from urllib.parse import urlparse
     parsed_target = urlparse(pin_res.url)
     client_kwargs: dict = {"timeout": _build_timeout(), "follow_redirects": False}
+    transport = None
     if getattr(pin_res, "pinned_ip", None) and parsed_target.hostname:
-        client_kwargs["transport"] = PinnedIPTransport({parsed_target.hostname: pin_res.pinned_ip})
+        transport = PinnedIPTransport({parsed_target.hostname: pin_res.pinned_ip})
+        if not transport.pinning_active:
+            # Fail closed: refusing to send without verified IP pinning
+            # (DNS-rebinding TOCTOU). Retryable so a fixed worker can deliver.
+            logger.error(f"Delivery {delivery_id}: IP pinning unavailable, refusing to send (fail-closed).")
+            db.rollback()
+            _save_terminal_failure(db, delivery_id, claimed_lease_token, "IP pinning unavailable (fail-closed)")
+            return False
+        client_kwargs["transport"] = transport
+    # Release session resources before blocking HTTP. claim_delivery() already
+    # committed, so no DB transaction (and no pooled connection) is held here.
+    # Snapshot primitives only — never touch ORM relationships after this point
+    # (callers may still hold references to these rows in the same session).
+    wire_payload_bytes = event.wire_payload.encode("utf-8")
+    attempt_number_snapshot = delivery.attempt_count
 
     started_at = utc_now()
     start_time = time.perf_counter()
@@ -272,7 +293,7 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
                 with client.stream(
                     "POST",
                     pin_res.url,
-                    content=event.wire_payload.encode("utf-8"),
+                    content=wire_payload_bytes,
                     headers=headers,
                 ) as resp:
                     if time.monotonic() > deadline:
@@ -321,7 +342,7 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
         db=db,
         delivery_id=delivery_id,
         lease_token=claimed_lease_token,
-        attempt_number=delivery.attempt_count,
+        attempt_number=attempt_number_snapshot,
         started_at=started_at,
         finished_at=finished_at,
         http_status=http_status,

@@ -233,7 +233,11 @@ def login_post(
         except Exception:
             _DUMMY_LOGIN_HASH = "invalid"
     user = db.query(User).filter(User.email == email.strip().lower()).first()
-    password_ok = verify_password(password, user.password_hash) if user else verify_password(password, _DUMMY_LOGIN_HASH or "invalid")
+    # Bound password length before Argon2 (CPU DoS): oversized input fails fast.
+    if len(password) > 128:
+        password_ok = False
+    else:
+        password_ok = verify_password(password, user.password_hash) if user else verify_password(password, _DUMMY_LOGIN_HASH or "invalid")
     if not user or not password_ok:
         return templates.TemplateResponse(
             "auth/login.html",
@@ -297,10 +301,10 @@ def register_post(
             status_code=400
         )
 
-    if len(password) < 8:
+    if len(password) < 8 or len(password) > 128:
         return templates.TemplateResponse(
             "auth/register.html",
-            {"request": request, "error": "Password must be at least 8 characters long.", "current_user": None},
+            {"request": request, "error": "Password must be 8..128 characters long.", "current_user": None},
             status_code=400
         )
     # Basic complexity: require 3 of 4 classes (upper/lower/digit/symbol)
@@ -526,26 +530,42 @@ def deliveries_table_fragment(
     if not user or not project:
         return HTMLResponse("<p class='text-xs text-rose-500 p-4'>Not authorized</p>", status_code=401)
 
+    # Clamp client-controlled pagination (deep-offset + huge-limit DoS).
+    try:
+        page = min(max(1, int(page)), 1000)
+    except Exception:
+        page = 1
+    try:
+        per_page = min(max(1, int(per_page)), 50)
+    except Exception:
+        per_page = 15
+
     query = (
         db.query(Delivery)
         .join(Event, Delivery.event_id == Event.id)
         .filter(Event.project_id == project.id)
     )
     if status and status.strip():
-        query = query.filter(Delivery.status == status.strip().upper())
+        # Allowlist statuses to avoid arbitrary filter scans.
+        _st = status.strip().upper()
+        if _st in ("PENDING", "IN_FLIGHT", "RETRY_SCHEDULED", "SUCCEEDED", "DEAD"):
+            query = query.filter(Delivery.status == _st)
     if q and q.strip():
-        search_term = f"%{q.strip()}%"
+        # Escape LIKE wildcards (%, _, \) to prevent wildcard-injection scans.
+        _raw = q.strip()[:100]
+        _esc = _raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        search_term = f"%{_esc}%"
         query = query.filter(
             or_(
-                Delivery.id.ilike(search_term),
-                Event.id.ilike(search_term),
-                Event.event_type.ilike(search_term),
-                Event.idempotency_key.ilike(search_term),
-                Delivery.target_url_snapshot.ilike(search_term)
+                Delivery.id.ilike(search_term, escape="\\"),
+                Event.id.ilike(search_term, escape="\\"),
+                Event.event_type.ilike(search_term, escape="\\"),
+                Event.idempotency_key.ilike(search_term, escape="\\"),
+                Delivery.target_url_snapshot.ilike(search_term, escape="\\")
             )
         )
 
-    page = max(1, page)
+    page = min(max(1, page), 1000)
     total_count = query.count()
     total_pages = max(1, (total_count + per_page - 1) // per_page)
     deliveries = query.order_by(Delivery.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
@@ -1198,7 +1218,7 @@ def list_events(request: Request, type: str | None = None, page: int = 1, db: Se
     if type and type.strip():
         query = query.filter(Event.event_type == type.strip())
 
-    page = max(1, page)
+    page = min(max(1, page), 1000)
     per_page = 20
     total_count = query.count()
     total_pages = max(1, (total_count + per_page - 1) // per_page)
@@ -1301,7 +1321,7 @@ def event_detail_view(event_id: str, request: Request, page: int = 1, db: Sessio
         formatted_payload = event.payload_json
 
     # Paginate deliveries for this event (previously unpaginated full list).
-    page = max(1, page)
+    page = min(max(1, page), 1000)
     per_page = 20
     _dq = db.query(Delivery).filter(Delivery.event_id == event.id).order_by(Delivery.created_at.desc())
     _total = _dq.count()
@@ -1335,7 +1355,7 @@ def list_deliveries(request: Request, status: str | None = None, page: int = 1, 
     if status and status.strip():
         query = query.filter(Delivery.status == status.strip().upper())
 
-    page = max(1, page)
+    page = min(max(1, page), 1000)
     per_page = 20
     total_count = query.count()
     total_pages = max(1, (total_count + per_page - 1) // per_page)
@@ -1420,7 +1440,7 @@ def list_dead_letters(request: Request, page: int = 1, db: Session = Depends(get
         .order_by(Delivery.created_at.desc())
     )
 
-    page = max(1, page)
+    page = min(max(1, page), 1000)
     per_page = 20
     total_count = query.count()
     total_pages = max(1, (total_count + per_page - 1) // per_page)
@@ -1585,7 +1605,7 @@ def list_audit_logs(request: Request, page: int = 1, db: Session = Depends(get_d
         .order_by(AuditLog.created_at.desc())
     )
 
-    page = max(1, page)
+    page = min(max(1, page), 1000)
     per_page = 20
     total_count = query.count()
     total_pages = max(1, (total_count + per_page - 1) // per_page)
@@ -1848,15 +1868,24 @@ def accept_invitation_post(
         )
 
     # If not logged in, find user by email or register new user
+    # Same password policy as /auth/register (length + 3/4 complexity).
     if not user:
         user = db.query(User).filter(User.email == invitation.email.lower()).first()
         if not user:
-            if not password or len(password) < 8:
+            import re as _re_inv
+            _pw = password or ""
+            _cls = sum([
+                bool(_re_inv.search(r"[A-Z]", _pw)),
+                bool(_re_inv.search(r"[a-z]", _pw)),
+                bool(_re_inv.search(r"[0-9]", _pw)),
+                bool(_re_inv.search(r"[^A-Za-z0-9]", _pw)),
+            ])
+            if len(_pw) < 8 or len(_pw) > 128 or _cls < 3:
                 return templates.TemplateResponse("team/accept_invitation.html", {
                     "request": request,
                     "invitation": invitation,
                     "current_user": None,
-                    "error": "Password must be at least 8 characters long."
+                    "error": "Password must be 8..128 chars with 3 of: uppercase, lowercase, digit, symbol."
                 }, status_code=400)
             user = User(email=invitation.email.lower(), password_hash=hash_password(password))
             db.add(user)

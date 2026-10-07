@@ -186,3 +186,13 @@ def check_invite_rate_limit(org_id: str) -> tuple[bool, float]:
     """Team-invite throttle: 20 invites / hour per org (burst 20)."""
     return _acquire_both(f"invite:org:{org_id}", 20.0 / 3600.0, 20.0)
 
+
+def check_api_auth_rate_limit(client_ip: str) -> tuple[bool, float]:
+    """Pre-auth API-key throttle: 60 attempts / min per IP (burst 60).
+
+    Runs BEFORE DB lookup in get_current_api_key to slow online key
+    guessing. Uses shared buckets (Redis when available, in-memory fallback).
+    """
+    ip = (client_ip or "unknown").strip() or "unknown"
+    return _acquire_both(f"api-auth:ip:{ip}", 60.0 / 60.0, 60.0)
+

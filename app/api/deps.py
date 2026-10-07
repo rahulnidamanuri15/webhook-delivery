@@ -10,8 +10,9 @@ from app.services.security import hash_api_key_candidates, verify_session_token
 security = HTTPBearer(auto_error=False)
 
 def get_current_api_key(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(security),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> tuple[ApiKey, Project]:
     """Authenticates Bearer API keys for developer public endpoints."""
     if not credentials or credentials.scheme.lower() != "bearer":
@@ -20,6 +21,22 @@ def get_current_api_key(
             detail="Missing or invalid Bearer authentication token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Pre-auth IP throttle (before expensive DB lookup) to slow key guessing.
+    try:
+        from app.services.rate_limiter import check_api_auth_rate_limit
+        _ip = request.client.host if request.client else "unknown"
+        _allowed, _wait = check_api_auth_rate_limit(_ip)
+        if not _allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many authentication attempts.",
+                headers={"Retry-After": str(max(1, int(_wait)))},
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
 
     raw_token = credentials.credentials.strip()
     candidates = hash_api_key_candidates(raw_token)

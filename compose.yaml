@@ -1,8 +1,8 @@
-# Dev defaults use insecure placeholders ONLY for local development.
-# Production MUST override via environment / secrets manager:
-#   POSTGRES_PASSWORD, SECRET_KEY, SIGNING_SECRET_ENCRYPTION_KEY,
-#   API_KEY_PEPPER, METRICS_API_KEY, REDIS_PASSWORD, DEMO_RECEIVER_ADMIN_TOKEN
-# app/config.py fail-fasts in ENV=production if placeholders remain.
+# Base compose: local development defaults (insecure placeholders allowed).
+# Production: use `docker compose -f compose.yaml -f compose.prod.yaml up`
+# with real secrets in environment / Vault. compose.prod.yaml enforces
+# ENV=production, strong secrets, no demo seed, no demo_receiver.
+# app/config.py also fail-fasts in ENV=production on placeholders.
 services:
   postgres:
     image: postgres:16-alpine
@@ -26,11 +26,18 @@ services:
     image: redis:7-alpine
     container_name: webhook_redis
     restart: unless-stopped
-    command: sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$REDIS_PASSWORD"; else exec redis-server; fi'
+    command: sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes; else exec redis-server --appendonly yes; fi'
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     ports:
       - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG; else redis-cli ping | grep -q PONG; fi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   web:
     build: .
@@ -41,7 +48,7 @@ services:
       - "8080:8080"
     environment:
       - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - USE_CELERY=True
       - ENABLE_INPROCESS_DISPATCHER=False
       - ENV=${ENV:-development}
@@ -62,20 +69,49 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # NOTE: migrations only. Seeding is an explicit one-shot service below
+    # (`docker compose --profile seed run seed`) — never auto-run in prod.
     command: >
       sh -c "alembic upgrade head &&
-             python scripts/seed.py &&
              uvicorn app.main:app --host 0.0.0.0 --port 8080"
 
+  # One-shot demo seed (dev only). Never started automatically.
+  # Usage: docker compose --profile seed run --rm seed
+  seed:
+    image: webhook-delivery:latest
+    profiles: ["seed"]
+    environment:
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
+      - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:-yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=}
+      - API_KEY_PEPPER=${API_KEY_PEPPER:-}
+      - ENV=${ENV:-development}
+      - SEED_API_KEY=${SEED_API_KEY:-}
+      - SEED_ENDPOINT_SECRET=${SEED_ENDPOINT_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c "alembic upgrade head && python scripts/seed.py"
+
+  # Standalone dispatcher loop (non-Celery mode only).
+  # Prod with USE_CELERY=True uses celery_beat for dispatch — do NOT run
+  # this alongside beat (duplicate enqueue). Enabled via profile.
   dispatcher:
     image: webhook-delivery:latest
     container_name: webhook_dispatcher
+    profiles: ["standalone-dispatcher"]
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
-      - REDIS_URL=redis://redis:6379/0
-      - USE_CELERY=True
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - USE_CELERY=False
       - ENABLE_INPROCESS_DISPATCHER=False
       - ENV=${ENV:-development}
       - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
@@ -92,7 +128,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     command: python -m app.workers.runner
 
   celery_worker:
@@ -101,7 +137,7 @@ services:
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - USE_CELERY=True
       - ENV=${ENV:-development}
       - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
@@ -117,7 +153,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     command: celery -A app.workers.celery_app.celery_app worker --loglevel=info -c 4
 
   celery_beat:
@@ -126,7 +162,7 @@ services:
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - USE_CELERY=True
       - ENV=${ENV:-development}
       - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
@@ -136,14 +172,17 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
-    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info
+        condition: service_healthy
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info --pidfile=/tmp/celerybeat.pid
 
   demo_receiver:
     image: webhook-delivery:latest
     container_name: webhook_demo_receiver
+    profiles: ["demo"]
     restart: unless-stopped
     # Demo-only service: do not expose publicly without DEMO_RECEIVER_ADMIN_TOKEN.
+    # Excluded from prod (compose.prod.yaml) — start explicitly for demos:
+    #   docker compose --profile demo up demo_receiver
     ports:
       - "127.0.0.1:8001:8001"
     environment:
@@ -154,21 +193,20 @@ services:
     # No host bind-mount in prod (was ./demo_receiver:/app/demo_receiver).
     command: uvicorn demo_receiver.app:app --host 0.0.0.0 --port 8001
 
-  # Single-host production entrypoint: TLS termination + header hardening.
-  # HTTP on :80 always works. For HTTPS, place certs in ./deploy/tls/ and
-  # uncomment the 443 block in deploy/nginx.conf, then expose 443 below.
+  # Single-host entrypoint: dev uses plain-HTTP proxy (nginx.dev.conf).
+  # Prod overlay (compose.prod.yaml) swaps in deploy/nginx.conf with TLS.
   reverse_proxy:
     image: nginx:1.27-alpine
     container_name: webhook_proxy
     restart: unless-stopped
     ports:
       - "80:80"
-      # - "443:443"
     volumes:
-      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      # - ./deploy/tls:/etc/nginx/tls:ro
+      - ./deploy/nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - web
+      web:
+        condition: service_healthy
 
 volumes:
   pgdata:
+  redisdata:
