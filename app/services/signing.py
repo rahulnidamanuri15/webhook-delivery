@@ -14,6 +14,7 @@ def compute_signature(secret: str, event_id: str, timestamp: int, payload: str) 
     mac = hmac.new(secret_bytes, signing_input, hashlib.sha256)
     return f"v1={mac.hexdigest()}"
 
+
 def generate_webhook_headers(secret: str, event_id: str, delivery_id: str, payload: str) -> dict[str, str]:
     """Generates standard webhook delivery headers with fresh timestamp and HMAC-SHA256 signature."""
     timestamp = int(time.time())
@@ -24,16 +25,12 @@ def generate_webhook_headers(secret: str, event_id: str, delivery_id: str, paylo
         "Webhook-Event-Id": event_id,
         "Webhook-Delivery-Id": delivery_id,
         "Webhook-Timestamp": str(timestamp),
-        "Webhook-Signature": signature
+        "Webhook-Signature": signature,
     }
 
+
 def verify_webhook_signature(
-    secret: str,
-    event_id: str,
-    timestamp_str: str,
-    payload: str,
-    received_signature: str,
-    tolerance_seconds: int = 300
+    secret: str, event_id: str, timestamp_str: str, payload: str, received_signature: str, tolerance_seconds: int = 300
 ) -> tuple[bool, str]:
     """
     Verifies the webhook signature in constant time and checks timestamp freshness.
@@ -50,9 +47,9 @@ def verify_webhook_signature(
         return False, f"Timestamp is outside the {tolerance_seconds}s tolerance window (diff: {abs(now - ts)}s)"
 
     expected_signature = compute_signature(secret, event_id, ts, payload)
-    
+
     # Constant-time comparison to prevent timing attacks
     if hmac.compare_digest(expected_signature, received_signature):
         return True, "Signature valid"
-    
+
     return False, "Signature mismatch"

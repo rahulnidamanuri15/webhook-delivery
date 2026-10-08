@@ -33,13 +33,14 @@ from app.services.security import (
     encrypt_secret,
     generate_api_key,
     generate_signing_secret,
+    get_client_ip,
     get_csrf_token_for_request,
     hash_password,
+    rotate_secret_ciphertext,
     validate_request_csrf,
     verify_password,
 )
 from app.services.ssrf import validate_webhook_url
-
 
 # Module-level dummy Argon2 hash for login timing mitigation (lazy init).
 _DUMMY_LOGIN_HASH: str | None = None
@@ -52,6 +53,7 @@ def is_cookie_secure() -> bool:
         return True
     return not settings.DEBUG
 
+
 def assert_csrf(request: Request, csrf_token: str | None = None):
     """Enforces CSRF protection on state-changing dashboard requests."""
     # Allow testing override if explicitly running without csrf in dev testing fixture
@@ -60,11 +62,13 @@ def assert_csrf(request: Request, csrf_token: str | None = None):
     if not validate_request_csrf(request, csrf_token):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Invalid or missing CSRF token. Please refresh the page and try again."
+            detail="Forbidden: Invalid or missing CSRF token. Please refresh the page and try again.",
         )
+
 
 class CompatibleJinja2Templates(Jinja2Templates):
     """Ensures seamless compatibility across Starlette versions for TemplateResponse and injects CSRF token."""
+
     def TemplateResponse(self, *args, **kwargs):
         new_cookie = None
         if len(args) >= 2 and isinstance(args[0], str) and isinstance(args[1], dict):
@@ -89,6 +93,7 @@ class CompatibleJinja2Templates(Jinja2Templates):
             resp.set_cookie("wh_csrf_id", new_cookie, httponly=True, samesite="lax", secure=is_cookie_secure())
         return resp
 
+
 templates = CompatibleJinja2Templates(directory="app/templates")
 router = APIRouter()
 
@@ -102,20 +107,24 @@ def get_user_and_project(request: Request, db: Session):
     active_org_id = request.cookies.get("wh_active_org_id")
     membership = None
     if active_org_id:
-        membership = db.query(OrganizationMember).filter(
-            OrganizationMember.user_id == user.id,
-            OrganizationMember.organization_id == active_org_id
-        ).first()
+        membership = (
+            db.query(OrganizationMember)
+            .filter(OrganizationMember.user_id == user.id, OrganizationMember.organization_id == active_org_id)
+            .first()
+        )
 
     # If no active org chosen, check active project's organization
     active_project_id = request.cookies.get("wh_active_project_id")
     if not membership and active_project_id:
         proj = db.query(Project).filter(Project.id == active_project_id).first()
         if proj:
-            membership = db.query(OrganizationMember).filter(
-                OrganizationMember.user_id == user.id,
-                OrganizationMember.organization_id == proj.organization_id
-            ).first()
+            membership = (
+                db.query(OrganizationMember)
+                .filter(
+                    OrganizationMember.user_id == user.id, OrganizationMember.organization_id == proj.organization_id
+                )
+                .first()
+            )
 
     # Fallback to user's first membership
     if not membership:
@@ -137,10 +146,14 @@ def get_user_and_project(request: Request, db: Session):
 
 
 def get_membership(db: Session, org_id: str, user_id: str):
-    return db.query(OrganizationMember).filter(
-        OrganizationMember.organization_id == org_id,
-        OrganizationMember.user_id == user_id,
-    ).first()
+    return (
+        db.query(OrganizationMember)
+        .filter(
+            OrganizationMember.organization_id == org_id,
+            OrganizationMember.user_id == user_id,
+        )
+        .first()
+    )
 
 
 def require_manager(db: Session, org, user):
@@ -165,7 +178,7 @@ def require_owner(db: Session, org, user):
 def safe_back_redirect(request: Request, fallback: str = "/dashboard/endpoints") -> str:
     """Same-origin back-redirect (fixes open-redirect via Referer header).
 
-    Only allows relative paths starting with '/' (no '//evil', no scheme).
+    Allows relative paths or same-host URLs starting with '/dashboard'.
     Falls back to a safe dashboard path otherwise.
     """
     ref = (request.headers.get("referer") or "").strip()
@@ -175,9 +188,12 @@ def safe_back_redirect(request: Request, fallback: str = "/dashboard/endpoints")
         from urllib.parse import urlparse as _up
 
         p = _up(ref)
-        # Absolute URL with host → reject (cross-origin)
+        req_host = (request.headers.get("host") or "").lower().split(":")[0]
+        ref_host = (p.hostname or "").lower()
         if p.scheme or p.netloc:
-            return fallback
+            # Reject cross-origin hostnames
+            if not req_host or ref_host != req_host:
+                return fallback
         path = p.path or ""
         if not path.startswith("/") or path.startswith("//"):
             return fallback
@@ -189,7 +205,9 @@ def safe_back_redirect(request: Request, fallback: str = "/dashboard/endpoints")
     except Exception:
         return fallback
 
+
 # ================= AUTHENTICATION ROUTES =================
+
 
 @router.get("/", response_class=HTMLResponse)
 def root(request: Request, db: Session = Depends(get_db)):
@@ -198,9 +216,11 @@ def root(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url="/dashboard", status_code=302)
     return RedirectResponse(url="/auth/login", status_code=302)
 
+
 @router.get("/auth/login", response_class=HTMLResponse)
 def login_page(request: Request):
     return templates.TemplateResponse("auth/login.html", {"request": request, "current_user": None})
+
 
 @router.post("/auth/login")
 def login_post(
@@ -208,13 +228,14 @@ def login_post(
     email: str = Form(...),
     password: str = Form(...),
     csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     assert_csrf(request, csrf_token)
 
     # Login rate limiting (5 attempts per minute)
     from app.services.rate_limiter import check_login_rate_limit
-    client_ip = request.client.host if request.client else "127.0.0.1"
+
+    client_ip = get_client_ip(request)
     allowed, wait_sec = check_login_rate_limit(client_ip, email)
     if not allowed:
         return templates.TemplateResponse(
@@ -222,9 +243,9 @@ def login_post(
             {
                 "request": request,
                 "error": f"Too many login attempts. Please wait {int(wait_sec) + 1}s before trying again.",
-                "current_user": None
+                "current_user": None,
             },
-            status_code=429
+            status_code=429,
         )
 
     # Constant-time enumeration defense: always run Argon2 verify,
@@ -242,19 +263,24 @@ def login_post(
     if len(password) > 128:
         password_ok = False
     else:
-        password_ok = verify_password(password, user.password_hash) if user else verify_password(password, _DUMMY_LOGIN_HASH or "invalid")
+        password_ok = (
+            verify_password(password, user.password_hash)
+            if user
+            else verify_password(password, _DUMMY_LOGIN_HASH or "invalid")
+        )
     if not user or not password_ok:
         return templates.TemplateResponse(
             "auth/login.html",
             {"request": request, "error": "Invalid email or password.", "current_user": None},
-            status_code=400
+            status_code=400,
         )
-    
+
     membership = db.query(OrganizationMember).filter(OrganizationMember.user_id == user.id).first()
     org_id = membership.organization_id if membership else None
-    
+
     # Session-fixation defense: invalidate any pre-login token, then issue fresh.
     from app.services.security import invalidate_session_token
+
     _old = request.cookies.get("wh_session")
     if _old:
         try:
@@ -264,18 +290,15 @@ def login_post(
     token = create_session_token(user.id, org_id=org_id)
     response = RedirectResponse(url="/dashboard", status_code=303)
     response.set_cookie(
-        key="wh_session",
-        value=token,
-        httponly=True,
-        max_age=86400 * 7,
-        samesite="lax",
-        secure=is_cookie_secure()
+        key="wh_session", value=token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_cookie_secure()
     )
     return response
+
 
 @router.get("/auth/register", response_class=HTMLResponse)
 def register_page(request: Request):
     return templates.TemplateResponse("auth/register.html", {"request": request, "current_user": None})
+
 
 @router.post("/auth/register")
 def register_post(
@@ -284,53 +307,65 @@ def register_post(
     password: str = Form(...),
     project_name: str = Form("Default Project"),
     csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     assert_csrf(request, csrf_token)
     # Registration throttle: 10/hour per IP (anti mass-account DoS)
     from app.services.rate_limiter import check_registration_rate_limit
-    _reg_ip = request.client.host if request.client else "127.0.0.1"
+
+    _reg_ip = get_client_ip(request)
     _reg_allowed, _reg_wait = check_registration_rate_limit(_reg_ip)
     if not _reg_allowed:
         return templates.TemplateResponse(
             "auth/register.html",
-            {"request": request, "error": f"Too many registrations. Try again in {int(_reg_wait)+1}s.", "current_user": None},
-            status_code=429
+            {
+                "request": request,
+                "error": f"Too many registrations. Try again in {int(_reg_wait)+1}s.",
+                "current_user": None,
+            },
+            status_code=429,
         )
     email = email.strip().lower()
     if not _EMAIL_REGEX.match(email):
         return templates.TemplateResponse(
             "auth/register.html",
             {"request": request, "error": "Invalid email address format.", "current_user": None},
-            status_code=400
+            status_code=400,
         )
     existing = db.query(User).filter(User.email == email).first()
     if existing:
         return templates.TemplateResponse(
             "auth/register.html",
             {"request": request, "error": "Email is already registered. Please sign in.", "current_user": None},
-            status_code=400
+            status_code=400,
         )
 
     if len(password) < 8 or len(password) > 128:
         return templates.TemplateResponse(
             "auth/register.html",
             {"request": request, "error": "Password must be 8..128 characters long.", "current_user": None},
-            status_code=400
+            status_code=400,
         )
     # Basic complexity: require 3 of 4 classes (upper/lower/digit/symbol)
     import re as _re
-    _classes = sum([
-        bool(_re.search(r"[A-Z]", password)),
-        bool(_re.search(r"[a-z]", password)),
-        bool(_re.search(r"[0-9]", password)),
-        bool(_re.search(r"[^A-Za-z0-9]", password)),
-    ])
+
+    _classes = sum(
+        [
+            bool(_re.search(r"[A-Z]", password)),
+            bool(_re.search(r"[a-z]", password)),
+            bool(_re.search(r"[0-9]", password)),
+            bool(_re.search(r"[^A-Za-z0-9]", password)),
+        ]
+    )
     if _classes < 3:
         return templates.TemplateResponse(
             "auth/register.html",
-            {"request": request, "error": "Password must include 3 of: uppercase, lowercase, digit, symbol.", "current_user": None},
-            status_code=400
+            {
+                "request": request,
+                "error": "Password must include 3 of: uppercase, lowercase, digit, symbol.",
+                "current_user": None,
+            },
+            status_code=400,
         )
     # Validate project name length to avoid DB errors
     _proj_name = (project_name or "").strip() or "Default Project"
@@ -338,7 +373,7 @@ def register_post(
         return templates.TemplateResponse(
             "auth/register.html",
             {"request": request, "error": "Project name must be ≤100 characters.", "current_user": None},
-            status_code=400
+            status_code=400,
         )
 
     # Atomically create user, organization, membership, and initial project
@@ -362,19 +397,24 @@ def register_post(
     except Exception as e:
         db.rollback()
         from sqlalchemy.exc import IntegrityError as _IE
+
         if isinstance(e, _IE) or "UNIQUE" in str(type(e).__name__).upper() or "unique" in str(e).lower():
             return templates.TemplateResponse(
                 "auth/register.html",
                 {"request": request, "error": "Email is already registered. Please sign in.", "current_user": None},
-                status_code=400
+                status_code=400,
             )
         raise
 
     token = create_session_token(user.id, org_id=org.id, project_id=project.id)
     response = RedirectResponse(url="/dashboard", status_code=303)
-    response.set_cookie("wh_session", token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_cookie_secure())
+    response.set_cookie(
+        "wh_session", token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_cookie_secure()
+    )
     # Project selector is HttpOnly: JS never needs to read it; server validates org scope.
-    response.set_cookie("wh_active_project_id", project.id, httponly=True, max_age=86400 * 30, samesite="lax", secure=is_cookie_secure())
+    response.set_cookie(
+        "wh_active_project_id", project.id, httponly=True, max_age=86400 * 30, samesite="lax", secure=is_cookie_secure()
+    )
     return response
 
 
@@ -382,6 +422,7 @@ def register_post(
 def logout(request: Request, csrf_token: str | None = Form(None)):
     assert_csrf(request, csrf_token)
     from app.services.security import invalidate_session_token
+
     token = request.cookies.get("wh_session")
     if token:
         invalidate_session_token(token)
@@ -392,7 +433,9 @@ def logout(request: Request, csrf_token: str | None = Form(None)):
     response.delete_cookie("wh_csrf_id")
     return response
 
+
 # ================= DASHBOARD CORE =================
+
 
 @router.get("/dashboard", response_class=HTMLResponse)
 def dashboard_overview(request: Request, db: Session = Depends(get_db)):
@@ -404,26 +447,26 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
 
     # Gather metrics
     total_events = db.query(func.count(Event.id)).filter(Event.project_id == project.id).scalar() or 0
-    
+
     delivery_base = db.query(Delivery).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id)
     succeeded_deliveries = delivery_base.filter(Delivery.status == "SUCCEEDED").count()
     pending_deliveries = delivery_base.filter(Delivery.status.in_(["PENDING", "IN_FLIGHT", "RETRY_SCHEDULED"])).count()
-    
+
     now = utc_now()
-    deliveries_due = (
-        delivery_base
-        .filter(
-            Delivery.status.in_(["PENDING", "RETRY_SCHEDULED"]),
-            Delivery.next_attempt_at <= now
-        )
-        .count()
-    )
-    
+    deliveries_due = delivery_base.filter(
+        Delivery.status.in_(["PENDING", "RETRY_SCHEDULED"]), Delivery.next_attempt_at <= now
+    ).count()
+
     dead_deliveries = delivery_base.filter(Delivery.status == "DEAD").count()
     total_deliveries = succeeded_deliveries + pending_deliveries + dead_deliveries
 
     # Attempt stats
-    attempts_query = db.query(DeliveryAttempt).join(Delivery, DeliveryAttempt.delivery_id == Delivery.id).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id)
+    attempts_query = (
+        db.query(DeliveryAttempt)
+        .join(Delivery, DeliveryAttempt.delivery_id == Delivery.id)
+        .join(Event, Delivery.event_id == Event.id)
+        .filter(Event.project_id == project.id)
+    )
     total_attempts = attempts_query.count()
     successful_attempts = attempts_query.filter(DeliveryAttempt.outcome == "SUCCESS").count()
     avg_latency = attempts_query.with_entities(func.avg(DeliveryAttempt.duration_ms)).scalar() or 0
@@ -435,11 +478,7 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
     completed_records = (
         db.query(Delivery.completed_at, Event.created_at)
         .join(Event, Delivery.event_id == Event.id)
-        .filter(
-            Event.project_id == project.id,
-            Delivery.status == "SUCCEEDED",
-            Delivery.completed_at.is_not(None)
-        )
+        .filter(Event.project_id == project.id, Delivery.status == "SUCCEEDED", Delivery.completed_at.is_not(None))
         .limit(100)
         .all()
     )
@@ -452,16 +491,11 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
     avg_e2e_duration_ms = round(sum(e2e_durations) / len(e2e_durations), 1) if e2e_durations else 0.0
 
     recent_events = (
-        db.query(Event)
-        .filter(Event.project_id == project.id)
-        .order_by(Event.created_at.desc())
-        .limit(10)
-        .all()
+        db.query(Event).filter(Event.project_id == project.id).order_by(Event.created_at.desc()).limit(10).all()
     )
 
     recent_deliveries = (
-        delivery_base
-        .options(joinedload(Delivery.event), joinedload(Delivery.endpoint))
+        delivery_base.options(joinedload(Delivery.event), joinedload(Delivery.endpoint))
         .order_by(Delivery.created_at.desc())
         .limit(15)
         .all()
@@ -478,11 +512,12 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
         "delivery_success_rate": delivery_success_rate,
         "attempt_success_rate": attempt_success_rate,
         "avg_latency_ms": round(avg_latency, 1),
-        "avg_e2e_duration_ms": avg_e2e_duration_ms
+        "avg_e2e_duration_ms": avg_e2e_duration_ms,
     }
 
     # 7-day activity series — bounded to last 7 days only (was full-table scan).
     from datetime import timedelta as _td
+
     _today = utc_now().date()
     _labels: list[str] = []
     _events_per_day: list[int] = []
@@ -490,11 +525,22 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
     _dead_per_day: list[int] = []
     _week_ago = utc_now() - _td(days=7)
     try:
-        _all_events = db.query(Event.created_at).filter(Event.project_id == project.id, Event.created_at >= _week_ago).limit(5000).all()
+        _all_events = (
+            db.query(Event.created_at)
+            .filter(Event.project_id == project.id, Event.created_at >= _week_ago)
+            .limit(5000)
+            .all()
+        )
     except Exception:
         _all_events = []
     try:
-        _all_dlv = db.query(Delivery.created_at, Delivery.status).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id, Delivery.created_at >= _week_ago).limit(5000).all()
+        _all_dlv = (
+            db.query(Delivery.created_at, Delivery.status)
+            .join(Event, Delivery.event_id == Event.id)
+            .filter(Event.project_id == project.id, Delivery.created_at >= _week_ago)
+            .limit(5000)
+            .all()
+        )
     except Exception:
         _all_dlv = []
     _retrying_per_day: list[int] = []
@@ -518,15 +564,19 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
         "range": "7d",
     }
 
-    return templates.TemplateResponse("dashboard/index.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "stats": stats,
-        "recent_events": recent_events,
-        "deliveries": recent_deliveries,
-        "chart": chart,
-    })
+    return templates.TemplateResponse(
+        "dashboard/index.html",
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "stats": stats,
+            "recent_events": recent_events,
+            "deliveries": recent_deliveries,
+            "chart": chart,
+        },
+    )
+
 
 @router.get("/dashboard/deliveries/table", response_class=HTMLResponse)
 def deliveries_table_fragment(
@@ -535,10 +585,11 @@ def deliveries_table_fragment(
     q: str | None = None,
     page: int = 1,
     per_page: int = 15,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """HTMX partial fragment endpoint with search and status filtering."""
     from app.services.security import get_csrf_token_for_request
+
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
         return HTMLResponse("<p class='text-xs text-rose-500 p-4'>Not authorized</p>", status_code=401)
@@ -553,11 +604,7 @@ def deliveries_table_fragment(
     except Exception:
         per_page = 15
 
-    query = (
-        db.query(Delivery)
-        .join(Event, Delivery.event_id == Event.id)
-        .filter(Event.project_id == project.id)
-    )
+    query = db.query(Delivery).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id)
     if status and status.strip():
         # Allowlist statuses to avoid arbitrary filter scans.
         _st = status.strip().upper()
@@ -574,7 +621,7 @@ def deliveries_table_fragment(
                 Event.id.ilike(search_term, escape="\\"),
                 Event.event_type.ilike(search_term, escape="\\"),
                 Event.idempotency_key.ilike(search_term, escape="\\"),
-                Delivery.target_url_snapshot.ilike(search_term, escape="\\")
+                Delivery.target_url_snapshot.ilike(search_term, escape="\\"),
             )
         )
 
@@ -584,27 +631,28 @@ def deliveries_table_fragment(
     deliveries = query.order_by(Delivery.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
 
     csrf_token, _ = get_csrf_token_for_request(request)
-    return templates.TemplateResponse("deliveries/_table.html", {
-        "request": request,
-        "deliveries": deliveries,
-        "csrf_token": csrf_token,
-        "page": page,
-        "per_page": per_page,
-        "total_pages": total_pages,
-        "total_count": total_count,
-        "status_filter": status,
-        "current_user": user,
-        "current_project": project,
-    })
+    return templates.TemplateResponse(
+        "deliveries/_table.html",
+        {
+            "request": request,
+            "deliveries": deliveries,
+            "csrf_token": csrf_token,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "total_count": total_count,
+            "status_filter": status,
+            "current_user": user,
+            "current_project": project,
+        },
+    )
+
 
 @router.get("/dashboard/deliveries/{delivery_id}/drawer", response_class=HTMLResponse)
-def delivery_drawer_fragment(
-    delivery_id: str,
-    request: Request,
-    db: Session = Depends(get_db)
-):
+def delivery_drawer_fragment(delivery_id: str, request: Request, db: Session = Depends(get_db)):
     """HTMX slide-over drawer log inspector for Svix/Stripe debugging experience."""
     from app.services.security import get_csrf_token_for_request
+
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
         return HTMLResponse("<div class='p-6 text-sm text-rose-500'>Unauthorized</div>", status_code=401)
@@ -626,20 +674,22 @@ def delivery_drawer_fragment(
         pass
 
     csrf_token, _ = get_csrf_token_for_request(request)
-    return templates.TemplateResponse("components/drawer.html", {
-        "request": request,
-        "delivery": delivery,
-        "formatted_payload": formatted_payload,
-        "csrf_token": csrf_token,
-        "current_user": user,
-        "current_project": project,
-    })
+    return templates.TemplateResponse(
+        "components/drawer.html",
+        {
+            "request": request,
+            "delivery": delivery,
+            "formatted_payload": formatted_payload,
+            "csrf_token": csrf_token,
+            "current_user": user,
+            "current_project": project,
+        },
+    )
+
 
 @router.get("/dashboard/metrics/chart", response_class=HTMLResponse)
 def dashboard_metrics_chart_fragment(
-    request: Request,
-    time_range: str = Query(default="24h", alias="range"),
-    db: Session = Depends(get_db)
+    request: Request, time_range: str = Query(default="24h", alias="range"), db: Session = Depends(get_db)
 ):
     """HTMX partial endpoint to dynamically switch chart time ranges (1h, 24h, 7d, 30d)."""
     user, org, project = get_user_and_project(request, db)
@@ -647,6 +697,7 @@ def dashboard_metrics_chart_fragment(
         return HTMLResponse("", status_code=401)
 
     from datetime import timedelta as _td
+
     def _to_naive(dt):
         if dt is None:
             return None
@@ -662,8 +713,19 @@ def dashboard_metrics_chart_fragment(
     _range_days = {"1h": 1, "24h": 1, "7d": 7, "30d": 30}.get(time_range, 1)
     _window_start = utc_now() - _td(days=_range_days)
     try:
-        raw_events = db.query(Event.created_at).filter(Event.project_id == project.id, Event.created_at >= _window_start).limit(5000).all()
-        raw_dlv = db.query(Delivery.created_at, Delivery.status).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id, Delivery.created_at >= _window_start).limit(5000).all()
+        raw_events = (
+            db.query(Event.created_at)
+            .filter(Event.project_id == project.id, Event.created_at >= _window_start)
+            .limit(5000)
+            .all()
+        )
+        raw_dlv = (
+            db.query(Delivery.created_at, Delivery.status)
+            .join(Event, Delivery.event_id == Event.id)
+            .filter(Event.project_id == project.id, Delivery.created_at >= _window_start)
+            .limit(5000)
+            .all()
+        )
         all_events = [_to_naive(c) for (c,) in raw_events if c is not None]
         all_dlv = [(_to_naive(c), s) for c, s in raw_dlv if c is not None]
     except Exception:
@@ -679,7 +741,9 @@ def dashboard_metrics_chart_fragment(
             labels.append(t_end.strftime("%H:%M"))
             events_per_bucket.append(sum(1 for c in all_events if t_start <= c <= t_end))
             succeeded_per_bucket.append(sum(1 for c, s in all_dlv if t_start <= c <= t_end and s == "SUCCEEDED"))
-            retrying_per_bucket.append(sum(1 for c, s in all_dlv if t_start <= c <= t_end and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT")))
+            retrying_per_bucket.append(
+                sum(1 for c, s in all_dlv if t_start <= c <= t_end and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT"))
+            )
             dead_per_bucket.append(sum(1 for c, s in all_dlv if t_start <= c <= t_end and s == "DEAD"))
     elif time_range == "7d":
         for i in range(6, -1, -1):
@@ -687,16 +751,30 @@ def dashboard_metrics_chart_fragment(
             labels.append(day.strftime("%m-%d"))
             events_per_bucket.append(sum(1 for c in all_events if c.date() == day))
             succeeded_per_bucket.append(sum(1 for c, s in all_dlv if c.date() == day and s == "SUCCEEDED"))
-            retrying_per_bucket.append(sum(1 for c, s in all_dlv if c.date() == day and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT")))
+            retrying_per_bucket.append(
+                sum(1 for c, s in all_dlv if c.date() == day and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT"))
+            )
             dead_per_bucket.append(sum(1 for c, s in all_dlv if c.date() == day and s == "DEAD"))
     elif time_range == "30d":
         for i in range(29, -1, -5):
             day = (now - _td(days=i)).date()
             labels.append(day.strftime("%m-%d"))
             events_per_bucket.append(sum(1 for c in all_events if c.date() >= day - _td(days=4) and c.date() <= day))
-            succeeded_per_bucket.append(sum(1 for c, s in all_dlv if c.date() >= day - _td(days=4) and c.date() <= day and s == "SUCCEEDED"))
-            retrying_per_bucket.append(sum(1 for c, s in all_dlv if c.date() >= day - _td(days=4) and c.date() <= day and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT")))
-            dead_per_bucket.append(sum(1 for c, s in all_dlv if c.date() >= day - _td(days=4) and c.date() <= day and s == "DEAD"))
+            succeeded_per_bucket.append(
+                sum(1 for c, s in all_dlv if c.date() >= day - _td(days=4) and c.date() <= day and s == "SUCCEEDED")
+            )
+            retrying_per_bucket.append(
+                sum(
+                    1
+                    for c, s in all_dlv
+                    if c.date() >= day - _td(days=4)
+                    and c.date() <= day
+                    and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT")
+                )
+            )
+            dead_per_bucket.append(
+                sum(1 for c, s in all_dlv if c.date() >= day - _td(days=4) and c.date() <= day and s == "DEAD")
+            )
     else:  # 24h default
         for i in range(5, -1, -1):
             t_start = now - _td(hours=(i + 1) * 4)
@@ -704,7 +782,9 @@ def dashboard_metrics_chart_fragment(
             labels.append(t_end.strftime("%H:00"))
             events_per_bucket.append(sum(1 for c in all_events if t_start <= c <= t_end))
             succeeded_per_bucket.append(sum(1 for c, s in all_dlv if t_start <= c <= t_end and s == "SUCCEEDED"))
-            retrying_per_bucket.append(sum(1 for c, s in all_dlv if t_start <= c <= t_end and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT")))
+            retrying_per_bucket.append(
+                sum(1 for c, s in all_dlv if t_start <= c <= t_end and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT"))
+            )
             dead_per_bucket.append(sum(1 for c, s in all_dlv if t_start <= c <= t_end and s == "DEAD"))
 
     # Compute overall stats
@@ -715,7 +795,12 @@ def dashboard_metrics_chart_fragment(
     total_del = succeeded_del + pending_del + dead_del
     delivery_success_rate = round((succeeded_del / total_del * 100), 1) if total_del > 0 else 100.0
 
-    attempts_query = db.query(DeliveryAttempt).join(Delivery, DeliveryAttempt.delivery_id == Delivery.id).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id)
+    attempts_query = (
+        db.query(DeliveryAttempt)
+        .join(Delivery, DeliveryAttempt.delivery_id == Delivery.id)
+        .join(Event, Delivery.event_id == Event.id)
+        .filter(Event.project_id == project.id)
+    )
     avg_latency = attempts_query.with_entities(func.avg(DeliveryAttempt.duration_ms)).scalar() or 0
 
     stats = {
@@ -737,15 +822,20 @@ def dashboard_metrics_chart_fragment(
         "range": time_range,
     }
 
-    return templates.TemplateResponse("dashboard/_charts.html", {
-        "request": request,
-        "chart": chart,
-        "stats": stats,
-        "current_user": user,
-        "current_project": project,
-    })
+    return templates.TemplateResponse(
+        "dashboard/_charts.html",
+        {
+            "request": request,
+            "chart": chart,
+            "stats": stats,
+            "current_user": user,
+            "current_project": project,
+        },
+    )
+
 
 # ================= PROJECTS =================
+
 
 @router.get("/dashboard/projects", response_class=HTMLResponse)
 def list_projects(request: Request, db: Session = Depends(get_db)):
@@ -753,27 +843,20 @@ def list_projects(request: Request, db: Session = Depends(get_db)):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
     if not org:
-        return templates.TemplateResponse("projects/index.html", {
-            "request": request,
-            "current_user": user,
-            "current_project": None,
-            "projects": []
-        })
+        return templates.TemplateResponse(
+            "projects/index.html", {"request": request, "current_user": user, "current_project": None, "projects": []}
+        )
 
     projects = db.query(Project).filter(Project.organization_id == org.id).order_by(Project.created_at.desc()).all()
-    return templates.TemplateResponse("projects/index.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "projects": projects
-    })
+    return templates.TemplateResponse(
+        "projects/index.html",
+        {"request": request, "current_user": user, "current_project": project, "projects": projects},
+    )
+
 
 @router.post("/dashboard/projects")
 def create_project(
-    request: Request,
-    name: str = Form(...),
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    request: Request, name: str = Form(...), csrf_token: str | None = Form(None), db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
     user, org, _ = get_user_and_project(request, db)
@@ -793,6 +876,7 @@ def create_project(
 
     # Rotate session so embedded project_id stays in sync with the selector cookie.
     from app.services.security import invalidate_session_token as _inv
+
     _old = request.cookies.get("wh_session")
     if _old:
         try:
@@ -801,20 +885,27 @@ def create_project(
             pass
     _new_token = create_session_token(user.id, org_id=org.id, project_id=new_project.id)
     response = RedirectResponse(url="/dashboard/projects", status_code=303)
-    response.set_cookie("wh_session", _new_token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_cookie_secure())
-    response.set_cookie("wh_active_project_id", new_project.id, httponly=True, max_age=86400 * 30, samesite="lax", secure=is_cookie_secure())
+    response.set_cookie(
+        "wh_session", _new_token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_cookie_secure()
+    )
+    response.set_cookie(
+        "wh_active_project_id",
+        new_project.id,
+        httponly=True,
+        max_age=86400 * 30,
+        samesite="lax",
+        secure=is_cookie_secure(),
+    )
     return response
+
 
 @router.post("/dashboard/projects/switch")
 def switch_project(
-    request: Request,
-    project_id: str = Form(...),
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    request: Request, project_id: str = Form(...), csrf_token: str | None = Form(None), db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
     user, org, _ = get_user_and_project(request, db)
-    if not user:
+    if not user or not org:
         return RedirectResponse(url="/auth/login", status_code=302)
 
     project = db.query(Project).filter(Project.id == project_id, Project.organization_id == org.id).first()
@@ -823,6 +914,7 @@ def switch_project(
 
     # Rotate session on privilege-context change (project switch).
     from app.services.security import invalidate_session_token as _inv2
+
     _old2 = request.cookies.get("wh_session")
     if _old2:
         try:
@@ -831,11 +923,17 @@ def switch_project(
             pass
     _new_token2 = create_session_token(user.id, org_id=org.id, project_id=project.id)
     response = RedirectResponse(url="/dashboard", status_code=303)
-    response.set_cookie("wh_session", _new_token2, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_cookie_secure())
-    response.set_cookie("wh_active_project_id", project.id, httponly=True, max_age=86400 * 30, samesite="lax", secure=is_cookie_secure())
+    response.set_cookie(
+        "wh_session", _new_token2, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_cookie_secure()
+    )
+    response.set_cookie(
+        "wh_active_project_id", project.id, httponly=True, max_age=86400 * 30, samesite="lax", secure=is_cookie_secure()
+    )
     return response
 
+
 # ================= ENDPOINTS =================
+
 
 @router.get("/dashboard/endpoints", response_class=HTMLResponse)
 def list_endpoints(request: Request, db: Session = Depends(get_db)):
@@ -844,12 +942,11 @@ def list_endpoints(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url="/auth/login", status_code=302)
 
     endpoints = db.query(Endpoint).filter(Endpoint.project_id == project.id).order_by(Endpoint.created_at.desc()).all()
-    return templates.TemplateResponse("endpoints/index.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "endpoints": endpoints
-    })
+    return templates.TemplateResponse(
+        "endpoints/index.html",
+        {"request": request, "current_user": user, "current_project": project, "endpoints": endpoints},
+    )
+
 
 @router.post("/dashboard/endpoints")
 def create_endpoint_post(
@@ -859,7 +956,7 @@ def create_endpoint_post(
     event_types: str = Form("*"),
     rate_limit_per_second: int = Form(10),
     csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
@@ -871,27 +968,35 @@ def create_endpoint_post(
     cur_ep_count = db.query(func.count(Endpoint.id)).filter(Endpoint.project_id == project.id).scalar() or 0
     if cur_ep_count >= settings.MAX_ENDPOINTS_PER_PROJECT:
         endpoints = db.query(Endpoint).filter(Endpoint.project_id == project.id).all()
-        return templates.TemplateResponse("endpoints/index.html", {
-            "request": request,
-            "current_user": user,
-            "current_project": project,
-            "endpoints": endpoints,
-            "message": f"Project limit reached. Maximum {settings.MAX_ENDPOINTS_PER_PROJECT} endpoints allowed per project.",
-            "message_type": "error"
-        }, status_code=400)
+        return templates.TemplateResponse(
+            "endpoints/index.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "endpoints": endpoints,
+                "message": f"Project limit reached. Maximum {settings.MAX_ENDPOINTS_PER_PROJECT} endpoints allowed per project.",
+                "message_type": "error",
+            },
+            status_code=400,
+        )
 
     url = url.strip()
     is_valid, err = validate_webhook_url(url)
     if not is_valid:
         endpoints = db.query(Endpoint).filter(Endpoint.project_id == project.id).all()
-        return templates.TemplateResponse("endpoints/index.html", {
-            "request": request,
-            "current_user": user,
-            "current_project": project,
-            "endpoints": endpoints,
-            "message": f"URL validation failed: {err}",
-            "message_type": "error"
-        }, status_code=400)
+        return templates.TemplateResponse(
+            "endpoints/index.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "endpoints": endpoints,
+                "message": f"URL validation failed: {err}",
+                "message_type": "error",
+            },
+            status_code=400,
+        )
 
     # Validate subscription patterns (prevent DB errors / wildcard abuse)
     import re as _re
@@ -923,7 +1028,7 @@ def create_endpoint_post(
         description=(description.strip()[:500] if description else None),
         encrypted_signing_secret=encrypted_secret,
         enabled=True,
-        rate_limit_per_second=_rl
+        rate_limit_per_second=_rl,
     )
     db.add(endpoint)
     db.flush()
@@ -935,26 +1040,34 @@ def create_endpoint_post(
     if len(raw_types) > 50:
         db.rollback()
         endpoints = db.query(Endpoint).filter(Endpoint.project_id == project.id).all()
-        return templates.TemplateResponse("endpoints/index.html", {
-            "request": request,
-            "current_user": user,
-            "current_project": project,
-            "endpoints": endpoints,
-            "message": "Too many subscriptions (max 50).",
-            "message_type": "error"
-        }, status_code=400)
-    for et in raw_types:
-        if not _valid_sub(et):
-            db.rollback()
-            endpoints = db.query(Endpoint).filter(Endpoint.project_id == project.id).all()
-            return templates.TemplateResponse("endpoints/index.html", {
+        return templates.TemplateResponse(
+            "endpoints/index.html",
+            {
                 "request": request,
                 "current_user": user,
                 "current_project": project,
                 "endpoints": endpoints,
-                "message": f"Invalid subscription pattern: {et}",
-                "message_type": "error"
-            }, status_code=400)
+                "message": "Too many subscriptions (max 50).",
+                "message_type": "error",
+            },
+            status_code=400,
+        )
+    for et in raw_types:
+        if not _valid_sub(et):
+            db.rollback()
+            endpoints = db.query(Endpoint).filter(Endpoint.project_id == project.id).all()
+            return templates.TemplateResponse(
+                "endpoints/index.html",
+                {
+                    "request": request,
+                    "current_user": user,
+                    "current_project": project,
+                    "endpoints": endpoints,
+                    "message": f"Invalid subscription pattern: {et}",
+                    "message_type": "error",
+                },
+                status_code=400,
+            )
 
     for et in set(raw_types):
         sub = EndpointSubscription(endpoint_id=endpoint.id, event_type=et[:255])
@@ -964,7 +1077,8 @@ def create_endpoint_post(
 
     # Audit log
     from app.services.audit import log_audit_event
-    client_ip = request.client.host if request.client else None
+
+    client_ip = get_client_ip(request)
     log_audit_event(
         db=db,
         organization_id=org.id,
@@ -973,10 +1087,11 @@ def create_endpoint_post(
         resource_type="endpoint",
         resource_id=endpoint.id,
         ip_address=client_ip,
-        details={"url": endpoint.url, "subscriptions": raw_types}
+        details={"url": endpoint.url, "subscriptions": raw_types},
     )
 
     return RedirectResponse(url=f"/dashboard/endpoints/{endpoint.id}", status_code=303)
+
 
 @router.get("/dashboard/endpoints/{endpoint_id}", response_class=HTMLResponse)
 def endpoint_detail(endpoint_id: str, request: Request, db: Session = Depends(get_db)):
@@ -990,7 +1105,21 @@ def endpoint_detail(endpoint_id: str, request: Request, db: Session = Depends(ge
 
     membership = get_membership(db, org.id, user.id)
     is_mgr = bool(membership and membership.role in ("owner", "admin"))
-    decrypted_secret = decrypt_secret(endpoint.encrypted_signing_secret) if is_mgr else None
+    decrypted_secret = None
+    decryption_failed = False
+    if is_mgr:
+        try:
+            decrypted_secret = decrypt_secret(endpoint.encrypted_signing_secret)
+            # Opportunistic rotation: upgrade ciphertext to primary key in DB
+            try:
+                rotated_ct, was_rotated = rotate_secret_ciphertext(endpoint.encrypted_signing_secret)
+                if was_rotated:
+                    endpoint.encrypted_signing_secret = rotated_ct
+                    db.commit()
+            except Exception:
+                pass
+        except Exception:
+            decryption_failed = True
 
     recent_deliveries = (
         db.query(Delivery)
@@ -1001,21 +1130,24 @@ def endpoint_detail(endpoint_id: str, request: Request, db: Session = Depends(ge
         .all()
     )
 
-    return templates.TemplateResponse("endpoints/detail.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "endpoint": endpoint,
-        "decrypted_secret": decrypted_secret,
-        "endpoint_deliveries": recent_deliveries
-    })
+    return templates.TemplateResponse(
+        "endpoints/detail.html",
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "endpoint": endpoint,
+            "decrypted_secret": decrypted_secret,
+            "decryption_failed": decryption_failed,
+            "is_mgr": is_mgr,
+            "endpoint_deliveries": recent_deliveries,
+        },
+    )
+
 
 @router.post("/dashboard/endpoints/{endpoint_id}/toggle")
 def toggle_endpoint(
-    endpoint_id: str,
-    request: Request,
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    endpoint_id: str, request: Request, csrf_token: str | None = Form(None), db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
@@ -1029,7 +1161,8 @@ def toggle_endpoint(
         db.commit()
 
         from app.services.audit import log_audit_event
-        client_ip = request.client.host if request.client else None
+
+        client_ip = get_client_ip(request)
         log_audit_event(
             db=db,
             organization_id=org.id,
@@ -1038,17 +1171,15 @@ def toggle_endpoint(
             resource_type="endpoint",
             resource_id=endpoint.id,
             ip_address=client_ip,
-            details={"enabled": endpoint.enabled}
+            details={"enabled": endpoint.enabled},
         )
 
     return RedirectResponse(url=safe_back_redirect(request, "/dashboard/endpoints"), status_code=303)
 
+
 @router.post("/dashboard/endpoints/{endpoint_id}/disable")
 def disable_endpoint(
-    endpoint_id: str,
-    request: Request,
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    endpoint_id: str, request: Request, csrf_token: str | None = Form(None), db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
@@ -1062,7 +1193,8 @@ def disable_endpoint(
         db.commit()
 
         from app.services.audit import log_audit_event
-        client_ip = request.client.host if request.client else None
+
+        client_ip = get_client_ip(request)
         log_audit_event(
             db=db,
             organization_id=org.id,
@@ -1071,24 +1203,21 @@ def disable_endpoint(
             resource_type="endpoint",
             resource_id=endpoint.id,
             ip_address=client_ip,
-            details={"enabled": False}
+            details={"enabled": False},
         )
 
     return RedirectResponse(url=safe_back_redirect(request, "/dashboard/endpoints"), status_code=303)
 
+
 @router.post("/dashboard/endpoints/{endpoint_id}/rotate-secret")
 def rotate_endpoint_secret(
-    endpoint_id: str,
-    request: Request,
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    endpoint_id: str, request: Request, csrf_token: str | None = Form(None), db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
     require_manager(db, org, user)
-
 
     endpoint = db.query(Endpoint).filter(Endpoint.id == endpoint_id, Endpoint.project_id == project.id).first()
     if not endpoint:
@@ -1099,7 +1228,8 @@ def rotate_endpoint_secret(
     db.commit()
 
     from app.services.audit import log_audit_event
-    client_ip = request.client.host if request.client else None
+
+    client_ip = get_client_ip(request)
     log_audit_event(
         db=db,
         organization_id=org.id,
@@ -1108,10 +1238,11 @@ def rotate_endpoint_secret(
         resource_type="endpoint",
         resource_id=endpoint.id,
         ip_address=client_ip,
-        details={"status": "rotated"}
+        details={"status": "rotated"},
     )
 
     return RedirectResponse(url=f"/dashboard/endpoints/{endpoint.id}", status_code=303)
+
 
 @router.post("/dashboard/endpoints/{endpoint_id}/edit")
 def edit_endpoint_post(
@@ -1122,7 +1253,7 @@ def edit_endpoint_post(
     event_types: str = Form("*"),
     rate_limit_per_second: int = Form(10),
     csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Full endpoint CRUD: update URL, description, rate limit and subscriptions."""
     assert_csrf(request, csrf_token)
@@ -1141,15 +1272,21 @@ def edit_endpoint_post(
         raise HTTPException(status_code=400, detail=f"URL validation failed: {err}")
 
     import re as _re2
+
     raw_types = [t.strip() for t in (event_types or "*").split(",") if t.strip()] or ["*"]
     if len(raw_types) > 50:
         raise HTTPException(status_code=400, detail="Too many subscriptions (max 50).")
     for et in raw_types:
-        if not et or len(et) > 255 or not _re2.match(r"^[A-Za-z0-9._*-]+$", et) or ("*" in et and not (et == "*" or et.endswith(".*"))):
+        if (
+            not et
+            or len(et) > 255
+            or not _re2.match(r"^[A-Za-z0-9._*-]+$", et)
+            or ("*" in et and not (et == "*" or et.endswith(".*")))
+        ):
             raise HTTPException(status_code=400, detail=f"Invalid subscription pattern: {et}")
 
     endpoint.url = new_url
-    endpoint.description = (description.strip()[:500] if description else None)
+    endpoint.description = description.strip()[:500] if description else None
     try:
         endpoint.rate_limit_per_second = max(1, min(100, int(rate_limit_per_second or 10)))
     except Exception:
@@ -1162,10 +1299,15 @@ def edit_endpoint_post(
     db.commit()
 
     from app.services.audit import log_audit_event
+
     log_audit_event(
-        db=db, organization_id=org.id, user_id=user.id,
-        action="endpoint.update", resource_type="endpoint", resource_id=endpoint.id,
-        ip_address=request.client.host if request.client else None,
+        db=db,
+        organization_id=org.id,
+        user_id=user.id,
+        action="endpoint.update",
+        resource_type="endpoint",
+        resource_id=endpoint.id,
+        ip_address=get_client_ip(request),
         details={"url": endpoint.url, "subscriptions": raw_types},
     )
     return RedirectResponse(url=f"/dashboard/endpoints/{endpoint.id}", status_code=303)
@@ -1173,10 +1315,7 @@ def edit_endpoint_post(
 
 @router.post("/dashboard/endpoints/{endpoint_id}/delete")
 def delete_endpoint_post(
-    endpoint_id: str,
-    request: Request,
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    endpoint_id: str, request: Request, csrf_token: str | None = Form(None), db: Session = Depends(get_db)
 ):
     """Full endpoint CRUD: delete endpoint and its subscriptions.
 
@@ -1198,20 +1337,23 @@ def delete_endpoint_post(
     db.commit()
 
     from app.services.audit import log_audit_event
+
     log_audit_event(
-        db=db, organization_id=org.id, user_id=user.id,
-        action="endpoint.delete", resource_type="endpoint", resource_id=ep_id,
-        ip_address=request.client.host if request.client else None,
+        db=db,
+        organization_id=org.id,
+        user_id=user.id,
+        action="endpoint.delete",
+        resource_type="endpoint",
+        resource_id=ep_id,
+        ip_address=get_client_ip(request),
         details={"url": ep_url},
     )
     return RedirectResponse(url="/dashboard/endpoints", status_code=303)
 
+
 @router.post("/dashboard/endpoints/{endpoint_id}/ping")
 def ping_endpoint(
-    endpoint_id: str,
-    request: Request,
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    endpoint_id: str, request: Request, csrf_token: str | None = Form(None), db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
@@ -1225,6 +1367,7 @@ def ping_endpoint(
 
     # Throttle dashboard ingest the same as the public API (prevents member/CSRF fan-out).
     from app.services.rate_limiter import check_ingestion_rate_limit
+
     _allowed, _wait = check_ingestion_rate_limit(
         project.id, max_per_second=float(settings.INGESTION_RATE_LIMIT_PER_SECOND)
     )
@@ -1232,21 +1375,36 @@ def ping_endpoint(
         raise HTTPException(status_code=429, detail="Ingestion rate limit exceeded. Try again shortly.")
 
     # Ingest a ping event
-    ping_payload = {
-        "ping": True,
-        "timestamp": utc_now().isoformat(),
-        "message": "Webhook platform test ping"
-    }
+    ping_payload = {"ping": True, "timestamp": utc_now().isoformat(), "message": "Webhook platform test ping"}
     # Enforce payload-size limit consistently with public API (defense in depth;
     # ping body is tiny but keeps behavior uniform if template changes).
     import json as _json
+
     if len(_json.dumps(ping_payload, ensure_ascii=False).encode("utf-8")) > settings.MAX_PAYLOAD_SIZE_BYTES:
         raise HTTPException(status_code=413, detail="Ping payload exceeds maximum size.")
     event, _, _ = ingest_event(db, project.id, "endpoint.ping", ping_payload)
 
+    # Ensure this specific endpoint receives the delivery even if its subscriptions do not match 'endpoint.ping'
+    target_dlv = db.query(Delivery).filter(Delivery.event_id == event.id, Delivery.endpoint_id == endpoint.id).first()
+    if not target_dlv:
+        now = utc_now()
+        ping_delivery = Delivery(
+            event_id=event.id,
+            endpoint_id=endpoint.id,
+            target_url_snapshot=endpoint.url,
+            status="PENDING",
+            attempt_count=0,
+            next_attempt_at=now,
+            created_at=now,
+        )
+        db.add(ping_delivery)
+        db.commit()
+
     return RedirectResponse(url=f"/dashboard/events/{event.id}", status_code=303)
 
+
 # ================= EVENTS =================
+
 
 @router.get("/dashboard/events", response_class=HTMLResponse)
 def list_events(request: Request, type: str | None = None, page: int = 1, db: Session = Depends(get_db)):
@@ -1264,17 +1422,21 @@ def list_events(request: Request, type: str | None = None, page: int = 1, db: Se
     total_pages = max(1, (total_count + per_page - 1) // per_page)
     events = query.order_by(Event.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
 
-    return templates.TemplateResponse("events/index.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "events": events,
-        "event_type_filter": type,
-        "page": page,
-        "per_page": per_page,
-        "total_pages": total_pages,
-        "total_count": total_count
-    })
+    return templates.TemplateResponse(
+        "events/index.html",
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "events": events,
+            "event_type_filter": type,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "total_count": total_count,
+        },
+    )
+
 
 @router.get("/dashboard/events/send-test", response_class=HTMLResponse)
 def send_test_event_page(request: Request, db: Session = Depends(get_db)):
@@ -1282,11 +1444,10 @@ def send_test_event_page(request: Request, db: Session = Depends(get_db)):
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    return templates.TemplateResponse("events/send_test.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project
-    })
+    return templates.TemplateResponse(
+        "events/send_test.html", {"request": request, "current_user": user, "current_project": project}
+    )
+
 
 @router.post("/dashboard/events/send-test")
 def send_test_event_post(
@@ -1295,7 +1456,7 @@ def send_test_event_post(
     idempotency_key: str | None = Form(None),
     payload_data: str = Form(...),
     csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
@@ -1306,76 +1467,99 @@ def send_test_event_post(
     # Same throttle as public ingest + idempotency-key bound (DB column is 255).
     _idem = idempotency_key.strip() if idempotency_key and idempotency_key.strip() else None
     if _idem and len(_idem) > 255:
-        return templates.TemplateResponse("events/send_test.html", {
-            "request": request,
-            "current_user": user,
-            "current_project": project,
-            "message": "Idempotency-Key must be \u2264255 characters.",
-            "message_type": "error"
-        }, status_code=400)
+        return templates.TemplateResponse(
+            "events/send_test.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "message": "Idempotency-Key must be \u2264255 characters.",
+                "message_type": "error",
+            },
+            status_code=400,
+        )
     from app.services.rate_limiter import check_ingestion_rate_limit as _check_ingest
+
     _ok, _wait = _check_ingest(project.id, max_per_second=float(settings.INGESTION_RATE_LIMIT_PER_SECOND))
     if not _ok:
-        return templates.TemplateResponse("events/send_test.html", {
-            "request": request,
-            "current_user": user,
-            "current_project": project,
-            "message": "Ingestion rate limit exceeded. Try again shortly.",
-            "message_type": "error"
-        }, status_code=429)
+        return templates.TemplateResponse(
+            "events/send_test.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "message": "Ingestion rate limit exceeded. Try again shortly.",
+                "message_type": "error",
+            },
+            status_code=429,
+        )
 
     try:
         parsed_data = json.loads(payload_data)
         if not isinstance(parsed_data, dict):
             raise ValueError("Payload must be a JSON object.")
     except Exception:
-        return templates.TemplateResponse("events/send_test.html", {
-            "request": request,
-            "current_user": user,
-            "current_project": project,
-            "message": "Invalid JSON payload: please provide a valid JSON object.",
-            "message_type": "error"
-        }, status_code=400)
+        return templates.TemplateResponse(
+            "events/send_test.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "message": "Invalid JSON payload: please provide a valid JSON object.",
+                "message_type": "error",
+            },
+            status_code=400,
+        )
 
     # Enforce the same payload-size limit as POST /api/v1/events (413).
     if len(json.dumps(parsed_data, ensure_ascii=False).encode("utf-8")) > settings.MAX_PAYLOAD_SIZE_BYTES:
-        return templates.TemplateResponse("events/send_test.html", {
-            "request": request,
-            "current_user": user,
-            "current_project": project,
-            "message": f"Payload exceeds maximum allowed size of {settings.MAX_PAYLOAD_SIZE_BYTES} bytes.",
-            "message_type": "error"
-        }, status_code=413)
+        return templates.TemplateResponse(
+            "events/send_test.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "message": f"Payload exceeds maximum allowed size of {settings.MAX_PAYLOAD_SIZE_BYTES} bytes.",
+                "message_type": "error",
+            },
+            status_code=413,
+        )
 
     try:
         event, is_dup, count = ingest_event(
-            db=db,
-            project_id=project.id,
-            event_type=event_type.strip(),
-            payload_data=parsed_data,
-            idempotency_key=_idem
+            db=db, project_id=project.id, event_type=event_type.strip(), payload_data=parsed_data, idempotency_key=_idem
         )
     except ValueError as e:
         safe_msg = str(e) if str(e).startswith(("Event type", "Payload", "Idempotency-Key")) else "Invalid event data."
-        return templates.TemplateResponse("events/send_test.html", {
-            "request": request,
-            "current_user": user,
-            "current_project": project,
-            "message": f"Event ingestion error: {safe_msg}",
-            "message_type": "error"
-        }, status_code=400)
+        return templates.TemplateResponse(
+            "events/send_test.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "message": f"Event ingestion error: {safe_msg}",
+                "message_type": "error",
+            },
+            status_code=400,
+        )
     except Exception:
         import logging as _logging
+
         _logging.getLogger("webhook.dashboard").exception("send-test ingest failed")
-        return templates.TemplateResponse("events/send_test.html", {
-            "request": request,
-            "current_user": user,
-            "current_project": project,
-            "message": "Event ingestion failed. Please check your payload and try again.",
-            "message_type": "error"
-        }, status_code=400)
+        return templates.TemplateResponse(
+            "events/send_test.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "message": "Event ingestion failed. Please check your payload and try again.",
+                "message_type": "error",
+            },
+            status_code=400,
+        )
 
     return RedirectResponse(url=f"/dashboard/events/{event.id}", status_code=303)
+
 
 @router.get("/dashboard/events/{event_id}", response_class=HTMLResponse)
 def event_detail_view(event_id: str, request: Request, page: int = 1, db: Session = Depends(get_db)):
@@ -1403,20 +1587,25 @@ def event_detail_view(event_id: str, request: Request, page: int = 1, db: Sessio
         page = _total_pages
     _deliveries = _dq.options(joinedload(Delivery.endpoint)).offset((page - 1) * per_page).limit(per_page).all()
 
-    return templates.TemplateResponse("events/detail.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "event": event,
-        "formatted_payload": formatted_payload,
-        "deliveries": _deliveries,
-        "page": page,
-        "per_page": per_page,
-        "total_pages": _total_pages,
-        "total_count": _total,
-    })
+    return templates.TemplateResponse(
+        "events/detail.html",
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "event": event,
+            "formatted_payload": formatted_payload,
+            "deliveries": _deliveries,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": _total_pages,
+            "total_count": _total,
+        },
+    )
+
 
 # ================= DELIVERIES & DEAD LETTERS =================
+
 
 @router.get("/dashboard/deliveries", response_class=HTMLResponse)
 def list_deliveries(request: Request, status: str | None = None, page: int = 1, db: Session = Depends(get_db)):
@@ -1439,20 +1628,29 @@ def list_deliveries(request: Request, status: str | None = None, page: int = 1, 
         .limit(per_page)
         .all()
     )
-    dead_count = db.query(Delivery).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id, Delivery.status == "DEAD").count()
+    dead_count = (
+        db.query(Delivery)
+        .join(Event, Delivery.event_id == Event.id)
+        .filter(Event.project_id == project.id, Delivery.status == "DEAD")
+        .count()
+    )
 
-    return templates.TemplateResponse("deliveries/index.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "deliveries": deliveries,
-        "status_filter": status,
-        "dead_count": dead_count,
-        "page": page,
-        "per_page": per_page,
-        "total_pages": total_pages,
-        "total_count": total_count
-    })
+    return templates.TemplateResponse(
+        "deliveries/index.html",
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "deliveries": deliveries,
+            "status_filter": status,
+            "dead_count": dead_count,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "total_count": total_count,
+        },
+    )
+
 
 @router.get("/dashboard/deliveries/{delivery_id}", response_class=HTMLResponse)
 def delivery_detail_view(delivery_id: str, request: Request, db: Session = Depends(get_db)):
@@ -1469,19 +1667,15 @@ def delivery_detail_view(delivery_id: str, request: Request, db: Session = Depen
     if not delivery:
         raise HTTPException(status_code=404, detail="Delivery not found")
 
-    return templates.TemplateResponse("deliveries/detail.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "delivery": delivery
-    })
+    return templates.TemplateResponse(
+        "deliveries/detail.html",
+        {"request": request, "current_user": user, "current_project": project, "delivery": delivery},
+    )
+
 
 @router.post("/dashboard/deliveries/{delivery_id}/replay")
 def replay_delivery_post(
-    delivery_id: str,
-    request: Request,
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    delivery_id: str, request: Request, csrf_token: str | None = Form(None), db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
@@ -1506,6 +1700,7 @@ def replay_delivery_post(
 
     return RedirectResponse(url=f"/dashboard/deliveries/{new_delivery.id}", status_code=303)
 
+
 @router.get("/dashboard/dead-letters", response_class=HTMLResponse)
 def list_dead_letters(request: Request, page: int = 1, db: Session = Depends(get_db)):
     user, org, project = get_user_and_project(request, db)
@@ -1525,23 +1720,23 @@ def list_dead_letters(request: Request, page: int = 1, db: Session = Depends(get
     total_pages = max(1, (total_count + per_page - 1) // per_page)
     dead_deliveries = query.offset((page - 1) * per_page).limit(per_page).all()
 
-    return templates.TemplateResponse("deliveries/dead_letters.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "deliveries": dead_deliveries,
-        "page": page,
-        "per_page": per_page,
-        "total_pages": total_pages,
-        "total_count": total_count
-    })
+    return templates.TemplateResponse(
+        "deliveries/dead_letters.html",
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "deliveries": dead_deliveries,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "total_count": total_count,
+        },
+    )
+
 
 @router.post("/dashboard/dead-letters/replay-all")
-def replay_all_dead_letters(
-    request: Request,
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
-):
+def replay_all_dead_letters(request: Request, csrf_token: str | None = Form(None), db: Session = Depends(get_db)):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
@@ -1568,7 +1763,8 @@ def replay_all_dead_letters(
             continue
 
     from app.services.audit import log_audit_event
-    client_ip = request.client.host if request.client else None
+
+    client_ip = get_client_ip(request)
     log_audit_event(
         db=db,
         organization_id=org.id,
@@ -1576,12 +1772,14 @@ def replay_all_dead_letters(
         action="delivery.replay_all",
         resource_type="delivery",
         ip_address=client_ip,
-        details={"replayed_count": replayed, "capped": capped, "limit": REPLAY_ALL_LIMIT}
+        details={"replayed_count": replayed, "capped": capped, "limit": REPLAY_ALL_LIMIT},
     )
 
     return RedirectResponse(url="/dashboard/deliveries", status_code=303)
 
+
 # ================= API KEYS =================
+
 
 @router.get("/dashboard/api-keys", response_class=HTMLResponse)
 def list_api_keys(request: Request, new_key: str | None = None, db: Session = Depends(get_db)):
@@ -1590,20 +1788,15 @@ def list_api_keys(request: Request, new_key: str | None = None, db: Session = De
         return RedirectResponse(url="/auth/login", status_code=302)
 
     keys = db.query(ApiKey).filter(ApiKey.project_id == project.id).order_by(ApiKey.created_at.desc()).all()
-    return templates.TemplateResponse("api_keys/index.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "api_keys": keys,
-        "new_key": new_key
-    })
+    return templates.TemplateResponse(
+        "api_keys/index.html",
+        {"request": request, "current_user": user, "current_project": project, "api_keys": keys, "new_key": new_key},
+    )
+
 
 @router.post("/dashboard/api-keys")
 def create_api_key_post(
-    request: Request,
-    name: str = Form(...),
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    request: Request, name: str = Form(...), csrf_token: str | None = Form(None), db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
@@ -1613,28 +1806,28 @@ def create_api_key_post(
     clean_name = (name or "").strip()
     if not (1 <= len(clean_name) <= 100):
         keys = db.query(ApiKey).filter(ApiKey.project_id == project.id).order_by(ApiKey.created_at.desc()).all()
-        return templates.TemplateResponse("api_keys/index.html", {
-            "request": request,
-            "current_user": user,
-            "current_project": project,
-            "api_keys": keys,
-            "new_key": None,
-            "message": "API key name must be between 1 and 100 characters.",
-            "message_type": "error"
-        }, status_code=400)
+        return templates.TemplateResponse(
+            "api_keys/index.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "api_keys": keys,
+                "new_key": None,
+                "message": "API key name must be between 1 and 100 characters.",
+                "message_type": "error",
+            },
+            status_code=400,
+        )
 
     full_key, key_prefix, key_hash = generate_api_key()
-    api_key_obj = ApiKey(
-        project_id=project.id,
-        name=clean_name,
-        key_prefix=key_prefix,
-        key_hash=key_hash
-    )
+    api_key_obj = ApiKey(project_id=project.id, name=clean_name, key_prefix=key_prefix, key_hash=key_hash)
     db.add(api_key_obj)
     db.commit()
 
     from app.services.audit import log_audit_event
-    client_ip = request.client.host if request.client else None
+
+    client_ip = get_client_ip(request)
     log_audit_event(
         db=db,
         organization_id=org.id,
@@ -1643,17 +1836,15 @@ def create_api_key_post(
         resource_type="api_key",
         resource_id=api_key_obj.id,
         ip_address=client_ip,
-        details={"name": api_key_obj.name, "prefix": key_prefix}
+        details={"name": api_key_obj.name, "prefix": key_prefix},
     )
 
     return list_api_keys(request=request, new_key=full_key, db=db)
 
+
 @router.post("/dashboard/api-keys/{key_id}/revoke")
 def revoke_api_key_post(
-    key_id: str,
-    request: Request,
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    key_id: str, request: Request, csrf_token: str | None = Form(None), db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
@@ -1667,7 +1858,8 @@ def revoke_api_key_post(
         db.commit()
 
         from app.services.audit import log_audit_event
-        client_ip = request.client.host if request.client else None
+
+        client_ip = get_client_ip(request)
         log_audit_event(
             db=db,
             organization_id=org.id,
@@ -1676,12 +1868,14 @@ def revoke_api_key_post(
             resource_type="api_key",
             resource_id=key.id,
             ip_address=client_ip,
-            details={"name": key.name, "prefix": key.key_prefix}
+            details={"name": key.name, "prefix": key.key_prefix},
         )
 
     return RedirectResponse(url="/dashboard/api-keys", status_code=303)
 
+
 # ================= AUDIT LOGS =================
+
 
 @router.get("/dashboard/audit-logs", response_class=HTMLResponse)
 def list_audit_logs(request: Request, page: int = 1, db: Session = Depends(get_db)):
@@ -1690,11 +1884,8 @@ def list_audit_logs(request: Request, page: int = 1, db: Session = Depends(get_d
         return RedirectResponse(url="/auth/login", status_code=302)
 
     from app.models.audit_log import AuditLog
-    query = (
-        db.query(AuditLog)
-        .filter(AuditLog.organization_id == org.id)
-        .order_by(AuditLog.created_at.desc())
-    )
+
+    query = db.query(AuditLog).filter(AuditLog.organization_id == org.id).order_by(AuditLog.created_at.desc())
 
     page = min(max(1, page), 1000)
     per_page = 20
@@ -1702,18 +1893,23 @@ def list_audit_logs(request: Request, page: int = 1, db: Session = Depends(get_d
     total_pages = max(1, (total_count + per_page - 1) // per_page)
     logs = query.offset((page - 1) * per_page).limit(per_page).all()
 
-    return templates.TemplateResponse("audit_logs/index.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "audit_logs": logs,
-        "page": page,
-        "per_page": per_page,
-        "total_pages": total_pages,
-        "total_count": total_count
-    })
+    return templates.TemplateResponse(
+        "audit_logs/index.html",
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "audit_logs": logs,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "total_count": total_count,
+        },
+    )
+
 
 # ================= TEAM & INVITATIONS =================
+
 
 @router.get("/dashboard/team", response_class=HTMLResponse)
 def list_team(request: Request, db: Session = Depends(get_db)):
@@ -1725,6 +1921,7 @@ def list_team(request: Request, db: Session = Depends(get_db)):
     is_mgr = bool(membership and membership.role in ("owner", "admin"))
 
     from app.models.invitation import OrganizationInvitation
+
     members = (
         db.query(OrganizationMember)
         .options(joinedload(OrganizationMember.user))
@@ -1742,15 +1939,19 @@ def list_team(request: Request, db: Session = Depends(get_db)):
         for inv in invitations:
             inv.token = None
 
-    return templates.TemplateResponse("team/index.html", {
-        "request": request,
-        "current_user": user,
-        "current_project": project,
-        "current_org": org,
-        "members": members,
-        "invitations": invitations,
-        "is_manager": is_mgr,
-    })
+    return templates.TemplateResponse(
+        "team/index.html",
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "current_org": org,
+            "members": members,
+            "invitations": invitations,
+            "is_manager": is_mgr,
+        },
+    )
+
 
 @router.post("/dashboard/team/invite")
 def invite_team_member(
@@ -1758,7 +1959,7 @@ def invite_team_member(
     email: str = Form(...),
     role: str = Form("member"),
     csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
@@ -1766,10 +1967,11 @@ def invite_team_member(
         return RedirectResponse(url="/auth/login", status_code=302)
 
     # Enforce role hierarchy: only owner or admin can invite
-    cur_membership = db.query(OrganizationMember).filter(
-        OrganizationMember.organization_id == org.id,
-        OrganizationMember.user_id == user.id
-    ).first()
+    cur_membership = (
+        db.query(OrganizationMember)
+        .filter(OrganizationMember.organization_id == org.id, OrganizationMember.user_id == user.id)
+        .first()
+    )
 
     if not cur_membership or cur_membership.role not in ("owner", "admin"):
         raise HTTPException(status_code=403, detail="Only organization owners and admins can invite team members.")
@@ -1779,28 +1981,35 @@ def invite_team_member(
         raise HTTPException(status_code=400, detail="Invalid email address.")
     # Invite throttle + dedup: prevent spam / mass-invite DoS
     from app.services.rate_limiter import check_invite_rate_limit
+
     _inv_allowed, _inv_wait = check_invite_rate_limit(org.id)
     if not _inv_allowed:
         raise HTTPException(status_code=429, detail=f"Too many invites. Try again in {int(_inv_wait)+1}s.")
     from app.models.invitation import OrganizationInvitation
-    _existing_pending = db.query(OrganizationInvitation).filter(
+    from app.services.security import hash_invitation_token
+    import secrets as _sec_inv
+
+    # Invalidate previous pending invitations for the same organization and email
+    db.query(OrganizationInvitation).filter(
         OrganizationInvitation.organization_id == org.id,
         OrganizationInvitation.email == email_clean,
         OrganizationInvitation.status == "PENDING",
-    ).first()
-    if _existing_pending and _existing_pending.is_valid:
-        raise HTTPException(status_code=400, detail="A pending invitation for this email already exists.")
+    ).update({"status": "REVOKED"}, synchronize_session=False)
+
+    raw_token = _sec_inv.token_urlsafe(32)
     invitation = OrganizationInvitation(
         organization_id=org.id,
         email=email_clean,
         role=role if role in ("admin", "member") else "member",
-        invited_by_user_id=user.id
+        token=hash_invitation_token(raw_token),
+        invited_by_user_id=user.id,
     )
     db.add(invitation)
     db.commit()
 
     from app.services.audit import log_audit_event
-    client_ip = request.client.host if request.client else None
+
+    client_ip = get_client_ip(request)
     log_audit_event(
         db=db,
         organization_id=org.id,
@@ -1809,17 +2018,15 @@ def invite_team_member(
         resource_type="invitation",
         resource_id=invitation.id,
         ip_address=client_ip,
-        details={"invitee_email": email_clean, "role": invitation.role}
+        details={"invitee_email": email_clean, "role": invitation.role},
     )
 
     return RedirectResponse(url="/dashboard/team", status_code=303)
 
+
 @router.post("/dashboard/team/invitations/{inv_id}/revoke")
 def revoke_invitation(
-    inv_id: str,
-    request: Request,
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    inv_id: str, request: Request, csrf_token: str | None = Form(None), db: Session = Depends(get_db)
 ):
     assert_csrf(request, csrf_token)
     user, org, _ = get_user_and_project(request, db)
@@ -1828,17 +2035,20 @@ def revoke_invitation(
     require_manager(db, org, user)
 
     from app.models.invitation import OrganizationInvitation
-    invitation = db.query(OrganizationInvitation).filter(
-        OrganizationInvitation.id == inv_id,
-        OrganizationInvitation.organization_id == org.id
-    ).first()
+
+    invitation = (
+        db.query(OrganizationInvitation)
+        .filter(OrganizationInvitation.id == inv_id, OrganizationInvitation.organization_id == org.id)
+        .first()
+    )
 
     if invitation and invitation.status == "PENDING":
         invitation.status = "REVOKED"
         db.commit()
 
         from app.services.audit import log_audit_event
-        client_ip = request.client.host if request.client else None
+
+        client_ip = get_client_ip(request)
         log_audit_event(
             db=db,
             organization_id=org.id,
@@ -1847,10 +2057,11 @@ def revoke_invitation(
             resource_type="invitation",
             resource_id=invitation.id,
             ip_address=client_ip,
-            details={"invitee_email": invitation.email}
+            details={"invitee_email": invitation.email},
         )
 
     return RedirectResponse(url="/dashboard/team", status_code=303)
+
 
 @router.post("/dashboard/team/members/{member_id}/role")
 def update_member_role(
@@ -1858,7 +2069,7 @@ def update_member_role(
     request: Request,
     role: str = Form(...),
     csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Change a member's role. Owners can assign any role; admins can only manage members."""
     assert_csrf(request, csrf_token)
@@ -1867,10 +2078,14 @@ def update_member_role(
         return RedirectResponse(url="/auth/login", status_code=302)
     actor = require_manager(db, org, user)
 
-    target = db.query(OrganizationMember).filter(
-        OrganizationMember.id == member_id,
-        OrganizationMember.organization_id == org.id,
-    ).first()
+    target = (
+        db.query(OrganizationMember)
+        .filter(
+            OrganizationMember.id == member_id,
+            OrganizationMember.organization_id == org.id,
+        )
+        .first()
+    )
     if not target:
         raise HTTPException(status_code=404, detail="Member not found")
     if target.user_id == user.id:
@@ -1887,22 +2102,22 @@ def update_member_role(
     db.commit()
 
     from app.services.audit import log_audit_event
+
     log_audit_event(
-        db=db, organization_id=org.id, user_id=user.id,
-        action="team.change_role", resource_type="membership", resource_id=target.id,
-        ip_address=request.client.host if request.client else None,
+        db=db,
+        organization_id=org.id,
+        user_id=user.id,
+        action="team.change_role",
+        resource_type="membership",
+        resource_id=target.id,
+        ip_address=get_client_ip(request),
         details={"email": target.user.email if target.user else None, "new_role": new_role},
     )
     return RedirectResponse(url="/dashboard/team", status_code=303)
 
 
 @router.post("/dashboard/team/members/{member_id}/remove")
-def remove_member(
-    member_id: str,
-    request: Request,
-    csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
-):
+def remove_member(member_id: str, request: Request, csrf_token: str | None = Form(None), db: Session = Depends(get_db)):
     """Remove a member. Owners cannot be removed while they are the last owner."""
     assert_csrf(request, csrf_token)
     user, org, _ = get_user_and_project(request, db)
@@ -1910,19 +2125,27 @@ def remove_member(
         return RedirectResponse(url="/auth/login", status_code=302)
     actor = require_manager(db, org, user)
 
-    target = db.query(OrganizationMember).filter(
-        OrganizationMember.id == member_id,
-        OrganizationMember.organization_id == org.id,
-    ).first()
+    target = (
+        db.query(OrganizationMember)
+        .filter(
+            OrganizationMember.id == member_id,
+            OrganizationMember.organization_id == org.id,
+        )
+        .first()
+    )
     if not target:
         raise HTTPException(status_code=404, detail="Member not found")
     if target.user_id == user.id:
         raise HTTPException(status_code=400, detail="You cannot remove yourself")
     if target.role == "owner":
-        owners = db.query(OrganizationMember).filter(
-            OrganizationMember.organization_id == org.id,
-            OrganizationMember.role == "owner",
-        ).count()
+        owners = (
+            db.query(OrganizationMember)
+            .filter(
+                OrganizationMember.organization_id == org.id,
+                OrganizationMember.role == "owner",
+            )
+            .count()
+        )
         if owners <= 1:
             raise HTTPException(status_code=400, detail="Cannot remove the last owner")
         if actor.role != "owner":
@@ -1931,27 +2154,46 @@ def remove_member(
     db.commit()
 
     from app.services.audit import log_audit_event
+
     log_audit_event(
-        db=db, organization_id=org.id, user_id=user.id,
-        action="team.remove_member", resource_type="membership", resource_id=member_id,
-        ip_address=request.client.host if request.client else None,
+        db=db,
+        organization_id=org.id,
+        user_id=user.id,
+        action="team.remove_member",
+        resource_type="membership",
+        resource_id=member_id,
+        ip_address=get_client_ip(request),
         details={"removed_user_id": target.user_id},
     )
     return RedirectResponse(url="/dashboard/team", status_code=303)
 
+
 @router.get("/auth/invitations/{token}", response_class=HTMLResponse)
 def accept_invitation_page(token: str, request: Request, db: Session = Depends(get_db)):
     from app.models.invitation import OrganizationInvitation
-    invitation = db.query(OrganizationInvitation).filter(OrganizationInvitation.token == token.strip()).first()
+    from app.services.security import hash_invitation_token_candidates
+
+    candidates = hash_invitation_token_candidates(token)
+    invitation = db.query(OrganizationInvitation).filter(OrganizationInvitation.token.in_(candidates)).first()
     if not invitation or not invitation.is_valid:
-        return HTMLResponse("<p style='padding:40px;text-align:center;font-family:sans-serif;'>This invitation link is invalid or has expired.</p>", status_code=400)
+        return HTMLResponse(
+            "<p style='padding:40px;text-align:center;font-family:sans-serif;'>This invitation link is invalid or has expired.</p>",
+            status_code=400,
+        )
 
     user = get_optional_user(request, db)
-    return templates.TemplateResponse("team/accept_invitation.html", {
-        "request": request,
-        "invitation": invitation,
-        "current_user": user
-    })
+    existing_account = db.query(User).filter(User.email == invitation.email.lower()).first() if not user else None
+    return templates.TemplateResponse(
+        "team/accept_invitation.html",
+        {
+            "request": request,
+            "invitation": invitation,
+            "token": token,
+            "current_user": user,
+            "existing_account": existing_account is not None,
+        },
+    )
+
 
 @router.post("/auth/invitations/{token}/accept")
 def accept_invitation_post(
@@ -1959,11 +2201,21 @@ def accept_invitation_post(
     request: Request,
     password: str | None = Form(None),
     csrf_token: str | None = Form(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     assert_csrf(request, csrf_token)
+    from app.services.rate_limiter import check_invitation_accept_rate_limit
+
+    client_ip = get_client_ip(request)
+    allowed, wait_sec = check_invitation_accept_rate_limit(client_ip)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=f"Too many invitation attempts. Please wait {int(wait_sec)+1}s.")
+
     from app.models.invitation import OrganizationInvitation
-    invitation = db.query(OrganizationInvitation).filter(OrganizationInvitation.token == token.strip()).first()
+    from app.services.security import hash_invitation_token_candidates
+
+    candidates = hash_invitation_token_candidates(token)
+    invitation = db.query(OrganizationInvitation).filter(OrganizationInvitation.token.in_(candidates)).first()
     if not invitation or not invitation.is_valid:
         return HTMLResponse("<p>This invitation link is invalid or has expired.</p>", status_code=400)
 
@@ -1972,48 +2224,65 @@ def accept_invitation_post(
     # claim an invitation addressed to another email (invite-token guessing).
     if user and user.email.lower() != invitation.email.lower():
         return HTMLResponse(
-            "<p style='padding:40px;text-align:center;font-family:sans-serif;'>"
-            "This invitation was sent to a different email. Please log out and "
-            "accept with the invited address.</p>",
+            "<p style='padding:40px;text-align:center;font-family:sans-serif;'>This invitation was sent to a different email. Please log out and accept with the invited address.</p>",
             status_code=403,
         )
 
     # If not logged in, find user by email or register new user
-    # Same password policy as /auth/register (length + 3/4 complexity).
     if not user:
-        user = db.query(User).filter(User.email == invitation.email.lower()).first()
-        if not user:
+        existing_user = db.query(User).filter(User.email == invitation.email.lower()).first()
+        if existing_user:
+            # Prevent Account Takeover: Require existing user password verification
+            if not password or not verify_password(password, existing_user.password_hash):
+                return templates.TemplateResponse(
+                    "team/accept_invitation.html",
+                    {
+                        "request": request,
+                        "invitation": invitation,
+                        "current_user": None,
+                        "existing_account": True,
+                        "error": "An account with this email already exists. Please enter your existing password to accept.",
+                    },
+                    status_code=400,
+                )
+            user = existing_user
+        else:
             import re as _re_inv
+
             _pw = password or ""
-            _cls = sum([
-                bool(_re_inv.search(r"[A-Z]", _pw)),
-                bool(_re_inv.search(r"[a-z]", _pw)),
-                bool(_re_inv.search(r"[0-9]", _pw)),
-                bool(_re_inv.search(r"[^A-Za-z0-9]", _pw)),
-            ])
+            _cls = sum(
+                [
+                    bool(_re_inv.search(r"[A-Z]", _pw)),
+                    bool(_re_inv.search(r"[a-z]", _pw)),
+                    bool(_re_inv.search(r"[0-9]", _pw)),
+                    bool(_re_inv.search(r"[^A-Za-z0-9]", _pw)),
+                ]
+            )
             if len(_pw) < 8 or len(_pw) > 128 or _cls < 3:
-                return templates.TemplateResponse("team/accept_invitation.html", {
-                    "request": request,
-                    "invitation": invitation,
-                    "current_user": None,
-                    "error": "Password must be 8..128 chars with 3 of: uppercase, lowercase, digit, symbol."
-                }, status_code=400)
+                return templates.TemplateResponse(
+                    "team/accept_invitation.html",
+                    {
+                        "request": request,
+                        "invitation": invitation,
+                        "current_user": None,
+                        "existing_account": False,
+                        "error": "Password must be 8..128 chars with 3 of: uppercase, lowercase, digit, symbol.",
+                    },
+                    status_code=400,
+                )
             user = User(email=invitation.email.lower(), password_hash=hash_password(_pw))
             db.add(user)
             db.flush()
 
     # Add organization membership
-    existing_mem = db.query(OrganizationMember).filter(
-        OrganizationMember.organization_id == invitation.organization_id,
-        OrganizationMember.user_id == user.id
-    ).first()
+    existing_mem = (
+        db.query(OrganizationMember)
+        .filter(OrganizationMember.organization_id == invitation.organization_id, OrganizationMember.user_id == user.id)
+        .first()
+    )
 
     if not existing_mem:
-        new_mem = OrganizationMember(
-            organization_id=invitation.organization_id,
-            user_id=user.id,
-            role=invitation.role
-        )
+        new_mem = OrganizationMember(organization_id=invitation.organization_id, user_id=user.id, role=invitation.role)
         db.add(new_mem)
 
     # Mark invitation as accepted
@@ -2022,7 +2291,8 @@ def accept_invitation_post(
 
     # Log audit event
     from app.services.audit import log_audit_event
-    client_ip = request.client.host if request.client else None
+
+    client_ip = get_client_ip(request)
     log_audit_event(
         db=db,
         organization_id=invitation.organization_id,
@@ -2031,12 +2301,13 @@ def accept_invitation_post(
         resource_type="invitation",
         resource_id=invitation.id,
         ip_address=client_ip,
-        details={"email": user.email, "role": invitation.role}
+        details={"email": user.email, "role": invitation.role},
     )
 
     # Set session cookie and redirect
     # Rotate: invalidate any pre-accept token (privilege change).
     from app.services.security import invalidate_session_token as _invA
+
     _oldA = request.cookies.get("wh_session")
     if _oldA:
         try:
@@ -2045,8 +2316,9 @@ def accept_invitation_post(
             pass
     session_token = create_session_token(user.id, org_id=invitation.organization_id)
     response = RedirectResponse(url="/dashboard", status_code=303)
-    response.set_cookie("wh_session", session_token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_cookie_secure())
+    response.set_cookie(
+        "wh_session", session_token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_cookie_secure()
+    )
     # Clear stale project selector; get_user_and_project will default to first project in new org.
     response.delete_cookie("wh_active_project_id")
     return response
-

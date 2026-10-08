@@ -1,11 +1,12 @@
 """Database seeding script for local development and demonstration."""
+
 import os
 import sys
 
 # Add root directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.db.session import Base, SessionLocal, engine
+from app.db.session import SessionLocal
 from app.models import (
     ApiKey,
     Endpoint,
@@ -22,8 +23,10 @@ from app.services.security import encrypt_secret, hash_api_key, hash_password
 def seed():
     # Fail closed in production: demo seed must never create known credentials.
     if os.getenv("ENV", "development").lower() == "production":
-        print("ERROR: refusing to seed demo credentials with ENV=production. "
-              "Run only in development (ENV=development).")
+        print(
+            "ERROR: refusing to seed demo credentials with ENV=production. "
+            "Run only in development (ENV=development)."
+        )
         sys.exit(1)
     db = SessionLocal()
 
@@ -37,10 +40,7 @@ def seed():
         print("Seeding demo user, organization, project, endpoint, and events...")
 
         # 1. User
-        user = User(
-            email="demo@example.com",
-            password_hash=hash_password("Password123!")
-        )
+        user = User(email="demo@example.com", password_hash=hash_password("Password123!"))
         db.add(user)
         db.flush()
 
@@ -49,18 +49,11 @@ def seed():
         db.add(org)
         db.flush()
 
-        member = OrganizationMember(
-            organization_id=org.id,
-            user_id=user.id,
-            role="owner"
-        )
+        member = OrganizationMember(organization_id=org.id, user_id=user.id, role="owner")
         db.add(member)
 
         # 3. Project
-        project = Project(
-            organization_id=org.id,
-            name="Production Storefront"
-        )
+        project = Project(organization_id=org.id, name="Production Storefront")
         db.add(project)
         db.flush()
 
@@ -69,25 +62,24 @@ def seed():
         raw_key = os.getenv("SEED_API_KEY", "wh_live_demo1234567890abcdef123456")
         key_prefix = raw_key[:16]
         key_hash = hash_api_key(raw_key)
-        api_key = ApiKey(
-            project_id=project.id,
-            name="Main Server Key",
-            key_prefix=key_prefix,
-            key_hash=key_hash
-        )
+        api_key = ApiKey(project_id=project.id, name="Main Server Key", key_prefix=key_prefix, key_hash=key_hash)
         db.add(api_key)
 
         # 5. Endpoint (pointing to controllable demo receiver)
         signing_secret = os.getenv("SEED_ENDPOINT_SECRET", "whsec_demosecret1234567890abcdef")
         encrypted_secret = encrypt_secret(signing_secret)
-        receiver_url = "http://demo_receiver:8001/webhook" if "postgres" in os.getenv("DATABASE_URL", "") else "http://127.0.0.1:8001/webhook"
+        receiver_url = (
+            "http://demo_receiver:8001/webhook"
+            if "postgres" in os.getenv("DATABASE_URL", "")
+            else "http://127.0.0.1:8001/webhook"
+        )
         endpoint = Endpoint(
             project_id=project.id,
             url=receiver_url,
             description="Controllable Local Demo Receiver",
             encrypted_signing_secret=encrypted_secret,
             enabled=True,
-            rate_limit_per_second=10
+            rate_limit_per_second=10,
         )
         db.add(endpoint)
         db.flush()
@@ -102,14 +94,14 @@ def seed():
             "order_id": "order_381",
             "amount_minor": 149900,
             "currency": "INR",
-            "status": "succeeded"
+            "status": "succeeded",
         }
         event, _, _ = ingest_event(
             db=db,
             project_id=project.id,
             event_type="payment.succeeded",
             payload_data=sample_payload,
-            idempotency_key="seed-payment-init-001"
+            idempotency_key="seed-payment-init-001",
         )
 
         print("Seeding completed successfully!")
@@ -128,6 +120,7 @@ def seed():
         raise
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     seed()

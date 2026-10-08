@@ -1,4 +1,5 @@
 """Celery task definitions for background webhook execution and dispatching."""
+
 import logging
 
 from app.db.session import SessionLocal
@@ -34,8 +35,8 @@ def dispatch_due_deliveries_task(batch_size: int = 100) -> int:
             # Reclaim any crashed worker leases
             run_recovery_cycle(db)
 
-            # Enqueue due deliveries
-            due_ids = get_due_delivery_ids(db, batch_size=batch_size)
+            # Enqueue due deliveries (mark_dispatched=True prevents beat stampedes)
+            due_ids = get_due_delivery_ids(db, batch_size=batch_size, mark_dispatched=True)
             for dlv_id in due_ids:
                 deliver_webhook_task.delay(dlv_id)
 
@@ -58,6 +59,7 @@ def recover_abandoned_leases_task() -> int:
 def purge_expired_data_task() -> dict:
     """Periodic retention purge (see DATA_RETENTION_DAYS)."""
     from app.services.retention import purge_expired_data
+
     db = SessionLocal()
     try:
         with start_trace_span("retention.purge"):

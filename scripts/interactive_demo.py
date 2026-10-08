@@ -2,6 +2,7 @@
 Interactive End-to-End Interview Demonstration Runner
 Executes all key failure, retry, dead-letter, and replay scenarios live.
 """
+
 import os
 import time
 
@@ -11,10 +12,12 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8080")
 RECEIVER_URL = os.getenv("RECEIVER_URL", "http://127.0.0.1:8001")
 API_KEY = os.getenv("API_KEY", "wh_live_demo1234567890abcdef123456")
 
+
 def print_step(title: str):
     print("\n" + "=" * 70)
     print(f">> {title.upper()}")
     print("=" * 70)
+
 
 def main():
     print("""
@@ -57,10 +60,7 @@ This script demonstrates the end-to-end reliability mechanics:
 
         # Step 1: Configure Demo Receiver to fail 2 times then 200
         print_step("Step 1: Configure Demo Receiver Behavior")
-        cfg_resp = client.post(
-            f"{RECEIVER_URL}/config",
-            json={"mode": "fail_n_times", "fail_count": 2, "delay_ms": 0}
-        )
+        cfg_resp = client.post(f"{RECEIVER_URL}/config", json={"mode": "fail_n_times", "fail_count": 2, "delay_ms": 0})
         print(f"Demo receiver configured: {cfg_resp.json()}")
 
         # Step 2: Ingest Payment Succeeded Event
@@ -68,17 +68,12 @@ This script demonstrates the end-to-end reliability mechanics:
         idempotency_key = f"demo-pay-{int(time.time())}"
         payload = {
             "type": "payment.succeeded",
-            "data": {
-                "order_id": "ord_9901",
-                "amount": 49900,
-                "currency": "INR",
-                "customer": "rahul@example.com"
-            }
+            "data": {"order_id": "ord_9901", "amount": 49900, "currency": "INR", "customer": "rahul@example.com"},
         }
         headers = {
             "Authorization": f"Bearer {API_KEY}",
             "Idempotency-Key": idempotency_key,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
         ingest_resp = client.post(f"{API_BASE_URL}/api/v1/events", json=payload, headers=headers)
         print(f"Ingestion Response: HTTP {ingest_resp.status_code}")
@@ -119,7 +114,7 @@ This script demonstrates the end-to-end reliability mechanics:
         bad_headers = {
             "Authorization": f"Bearer {API_KEY}",
             "Idempotency-Key": bad_idempotency,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
         bad_resp = client.post(f"{API_BASE_URL}/api/v1/events", json=payload, headers=bad_headers)
         bad_event_id = bad_resp.json().get("event_id")
@@ -131,7 +126,9 @@ This script demonstrates the end-to-end reliability mechanics:
         bad_deliveries = bad_data if isinstance(bad_data, list) else bad_data.get("deliveries", [])
         if bad_deliveries:
             bad_dlv = bad_deliveries[0]
-            print(f"  -> Delivery status transitioned immediately to: {bad_dlv.get('status')} (Permanent error not retried)")
+            print(
+                f"  -> Delivery status transitioned immediately to: {bad_dlv.get('status')} (Permanent error not retried)"
+            )
 
         # Reset receiver to normal 200
         client.post(f"{RECEIVER_URL}/config", json={"mode": "status_code", "status_code": 200})
@@ -142,6 +139,7 @@ This script demonstrates the end-to-end reliability mechanics:
         print("All reliability, retry, idempotency, and dead-letter scenarios verified.")
         print(f"Open Developer Dashboard: {API_BASE_URL}/dashboard")
         print(f"Open Prometheus Metrics:   {API_BASE_URL}/metrics\n")
+
 
 if __name__ == "__main__":
     main()

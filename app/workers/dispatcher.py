@@ -3,6 +3,7 @@
 Finds due work in PostgreSQL according to the central architectural principle:
 PostgreSQL owns delivery state, Redis transports work.
 """
+
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,12 +24,14 @@ logger = logging.getLogger("webhook.dispatcher")
 DISPATCH_MAX_WORKERS = int(os.getenv("DISPATCH_MAX_WORKERS", "10"))
 
 
-def get_due_delivery_ids(db: Session, batch_size: int = 50) -> list[str]:
+def get_due_delivery_ids(db: Session, batch_size: int = 50, mark_dispatched: bool = False) -> list[str]:
     """Queries deliveries in PENDING or RETRY_SCHEDULED status whose next_attempt_at <= now.
 
     Uses SELECT ... FOR UPDATE SKIP LOCKED on PostgreSQL so concurrent
-    dispatchers do not fetch the same rows. SQLite ignores the lock hint
-    (no-op) and relies on atomic claim_delivery() as the arbiter.
+    dispatchers do not fetch the same rows.
+    When mark_dispatched=True (e.g. for Celery/Redis enqueuing), pushes
+    next_attempt_at forward by LEASE_DURATION_SECONDS within the transaction
+    to prevent duplicate enqueue stampedes while tasks wait in the queue.
     """
     now = utc_now()
     try:
@@ -56,7 +59,18 @@ def get_due_delivery_ids(db: Session, batch_size: int = 50) -> list[str]:
             .limit(batch_size)
             .all()
         )
-    return [r[0] for r in rows]
+
+    due_ids = [r[0] for r in rows]
+    if mark_dispatched and due_ids:
+        from datetime import timedelta
+
+        dispatch_lease = timedelta(seconds=settings.LEASE_DURATION_SECONDS)
+        db.query(Delivery).filter(Delivery.id.in_(due_ids)).update(
+            {"next_attempt_at": now + dispatch_lease}, synchronize_session=False
+        )
+        db.commit()
+
+    return due_ids
 
 
 def _execute_single(delivery_id: str) -> bool:
@@ -84,7 +98,7 @@ def dispatch_batch(batch_size: int = 50, max_workers: int | None = None) -> int:
         with start_trace_span("dispatch.recover"):
             run_recovery_cycle(db)
         with start_trace_span("dispatch.fetch_due", {"batch.size": batch_size}):
-            due_ids = get_due_delivery_ids(db, batch_size=batch_size)
+            due_ids = get_due_delivery_ids(db, batch_size=batch_size, mark_dispatched=settings.USE_CELERY)
     except Exception as e:
         logger.error(f"Error during dispatch batch: {e}", exc_info=True)
         try:
@@ -102,6 +116,7 @@ def dispatch_batch(batch_size: int = 50, max_workers: int | None = None) -> int:
 
     if settings.USE_CELERY:
         from app.workers.tasks import deliver_webhook_task
+
         enqueued_count = 0
         with start_trace_span("dispatch.celery_enqueue", {"batch.size": len(due_ids)}):
             for dlv_id in due_ids:

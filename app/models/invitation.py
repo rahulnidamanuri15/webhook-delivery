@@ -11,6 +11,7 @@ from app.models import generate_id, utc_now
 def generate_invitation_token() -> str:
     return secrets.token_urlsafe(32)
 
+
 class OrganizationInvitation(Base):
     __tablename__ = "organization_invitations"
 
@@ -36,6 +37,4 @@ class OrganizationInvitation(Base):
         now = now.replace(tzinfo=UTC) if now.tzinfo is None else now
         return exp > now
 
-    __table_args__ = (
-        Index("ix_invitations_org_status", "organization_id", "status"),
-    )
+    __table_args__ = (Index("ix_invitations_org_status", "organization_id", "status"),)

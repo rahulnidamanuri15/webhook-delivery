@@ -14,14 +14,11 @@ def test_signature_generation_and_verification():
 
     # Successful verification
     is_valid, reason = verify_webhook_signature(
-        secret=secret,
-        event_id=event_id,
-        timestamp_str=str(timestamp),
-        payload=payload,
-        received_signature=sig
+        secret=secret, event_id=event_id, timestamp_str=str(timestamp), payload=payload, received_signature=sig
     )
     assert is_valid is True
     assert reason == "Signature valid"
+
 
 def test_tampered_payload_fails_verification():
     secret = "whsec_test_secret_12345"
@@ -33,14 +30,11 @@ def test_tampered_payload_fails_verification():
     sig = compute_signature(secret, event_id, timestamp, original_payload)
 
     is_valid, reason = verify_webhook_signature(
-        secret=secret,
-        event_id=event_id,
-        timestamp_str=str(timestamp),
-        payload=tampered_payload,
-        received_signature=sig
+        secret=secret, event_id=event_id, timestamp_str=str(timestamp), payload=tampered_payload, received_signature=sig
     )
     assert is_valid is False
     assert "mismatch" in reason
+
 
 def test_expired_timestamp_fails_verification():
     secret = "whsec_test_secret_12345"
@@ -57,7 +51,7 @@ def test_expired_timestamp_fails_verification():
         timestamp_str=str(old_timestamp),
         payload=payload,
         received_signature=sig,
-        tolerance_seconds=300
+        tolerance_seconds=300,
     )
     assert is_valid is False
     assert "outside the 300s tolerance window" in reason

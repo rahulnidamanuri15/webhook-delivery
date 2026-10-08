@@ -9,11 +9,15 @@ from app.models import Delivery, Endpoint, EndpointSubscription, Event, generate
 
 class IdempotencyConflictError(Exception):
     """Raised when an idempotency key is reused with a different payload."""
+
     pass
+
 
 class ProjectEndpointLimitExceeded(Exception):
     """Raised when project endpoint capacity is exceeded."""
+
     pass
+
 
 def canonicalize_payload(arg1: str | dict, arg2: dict | None = None) -> tuple[str, str]:
     """
@@ -33,6 +37,7 @@ def canonicalize_payload(arg1: str | dict, arg2: dict | None = None) -> tuple[st
     req_hash = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
     return canonical_data, req_hash
 
+
 def _subscription_matches(pattern: str, event_type: str) -> bool:
     """Supports exact names, global ``*``, and prefix ``namespace.*``.
 
@@ -48,6 +53,7 @@ def _subscription_matches(pattern: str, event_type: str) -> bool:
         if prefix and event_type.startswith(prefix + "."):
             return True
     return False
+
 
 def get_matching_endpoints(db: Session, project_id: str, event_type: str) -> list[Endpoint]:
     """Finds all enabled endpoints for a project matching event_type.
@@ -70,6 +76,7 @@ def get_matching_endpoints(db: Session, project_id: str, event_type: str) -> lis
         return []
     # Map endpoint -> its subscription patterns in one extra query.
     from collections import defaultdict
+
     ep_ids = [e.id for e in candidates]
     subs = (
         db.query(EndpointSubscription.endpoint_id, EndpointSubscription.event_type)
@@ -81,16 +88,13 @@ def get_matching_endpoints(db: Session, project_id: str, event_type: str) -> lis
         patterns[eid].append(etype)
     return [e for e in candidates if any(_subscription_matches(p, event_type) for p in patterns.get(e.id, []))]
 
+
 def ingest_event(
-    db: Session,
-    project_id: str,
-    event_type: str,
-    payload_data: dict,
-    idempotency_key: str | None = None
+    db: Session, project_id: str, event_type: str, payload_data: dict, idempotency_key: str | None = None
 ) -> tuple[Event, bool, int]:
     """
     Atomically ingests an event and creates pending delivery records for matching endpoints.
-    
+
     Returns:
         (event: Event, is_duplicate: bool, delivery_count: int)
     """
@@ -143,12 +147,7 @@ def ingest_event(
     # 1. Check idempotency
     if idempotency_key:
         existing_event = (
-            db.query(Event)
-            .filter(
-                Event.project_id == project_id,
-                Event.idempotency_key == idempotency_key
-            )
-            .first()
+            db.query(Event).filter(Event.project_id == project_id, Event.idempotency_key == idempotency_key).first()
         )
         if existing_event:
             if existing_event.request_hash == request_hash:
@@ -182,7 +181,7 @@ def ingest_event(
             wire_payload=wire_payload,
             idempotency_key=idempotency_key,
             request_hash=request_hash,
-            created_at=now
+            created_at=now,
         )
         db.add(event)
         db.flush()
@@ -196,7 +195,7 @@ def ingest_event(
                 status="PENDING",
                 attempt_count=0,
                 next_attempt_at=now,
-                created_at=now
+                created_at=now,
             )
             db.add(delivery)
             created_deliveries.append(delivery)
@@ -210,12 +209,7 @@ def ingest_event(
         # Handle concurrent insertion of the same (project_id, idempotency_key)
         if idempotency_key:
             existing_event = (
-                db.query(Event)
-                .filter(
-                    Event.project_id == project_id,
-                    Event.idempotency_key == idempotency_key
-                )
-                .first()
+                db.query(Event).filter(Event.project_id == project_id, Event.idempotency_key == idempotency_key).first()
             )
             if existing_event:
                 if existing_event.request_hash == request_hash:

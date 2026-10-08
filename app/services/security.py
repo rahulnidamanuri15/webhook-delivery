@@ -3,19 +3,47 @@ import secrets
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from app.config import settings
+from app.config import get_configured_fernet_keys, settings
 
 ph = PasswordHasher()
-fernet = Fernet(settings.SIGNING_SECRET_ENCRYPTION_KEY.encode())
 serializer = URLSafeTimedSerializer(settings.SECRET_KEY, salt="wh_session_salt")
 csrf_serializer = URLSafeTimedSerializer(settings.SECRET_KEY, salt="wh_csrf_salt")
+
+
+class SecretDecryptionError(RuntimeError):
+    """Raised when an encrypted secret cannot be decrypted by any configured Fernet key."""
+
+    pass
+
+
+_cached_fernet_keys: tuple[str, ...] | None = None
+_cached_multi_fernet: MultiFernet | None = None
+
+
+def get_multi_fernet() -> MultiFernet:
+    """Returns a MultiFernet instance initialized with the primary key and all fallback keys."""
+    global _cached_fernet_keys, _cached_multi_fernet
+    keys = tuple(get_configured_fernet_keys(settings))
+    if not keys:
+        raise RuntimeError("No Fernet encryption keys configured.")
+    if _cached_multi_fernet is None or _cached_fernet_keys != keys:
+        _cached_multi_fernet = MultiFernet([Fernet(k.encode("utf-8")) for k in keys])
+        _cached_fernet_keys = keys
+    return _cached_multi_fernet
+
+
+# Backward-compatibility alias
+def get_fernet() -> MultiFernet:
+    return get_multi_fernet()
+
 
 # --- Password Management (Argon2id) ---
 def hash_password(password: str) -> str:
     return ph.hash(password)
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
@@ -23,16 +51,59 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except (VerifyMismatchError, Exception):
         return False
 
+
 # --- Endpoint Secret Encryption (Fernet / AES-128-CBC) ---
 def generate_signing_secret() -> str:
     """Generate a high-entropy secret for an endpoint (e.g. whsec_...)."""
     return f"whsec_{secrets.token_hex(24)}"
 
+
 def encrypt_secret(plain_secret: str) -> str:
-    return fernet.encrypt(plain_secret.encode("utf-8")).decode("utf-8")
+    """Always encrypts using the primary Fernet key."""
+    return get_multi_fernet().encrypt(plain_secret.encode("utf-8")).decode("utf-8")
+
 
 def decrypt_secret(encrypted_secret: str) -> str:
-    return fernet.decrypt(encrypted_secret.encode("utf-8")).decode("utf-8")
+    """Decrypts ciphertext using the primary key, falling back to secondary keys in order.
+
+    Raises SecretDecryptionError if no configured key can decrypt the ciphertext.
+    """
+    if not encrypted_secret:
+        raise SecretDecryptionError("Empty encrypted secret provided.")
+    try:
+        return get_multi_fernet().decrypt(encrypted_secret.encode("utf-8")).decode("utf-8")
+    except (InvalidToken, Exception) as e:
+        raise SecretDecryptionError(
+            f"Failed to decrypt signing secret: {type(e).__name__} (key mismatch or corrupted ciphertext). "
+            "Verify SIGNING_SECRET_ENCRYPTION_KEY or configure SIGNING_SECRET_ENCRYPTION_KEYS_FALLBACK."
+        ) from e
+
+
+def rotate_secret_ciphertext(encrypted_secret: str) -> tuple[str, bool]:
+    """Re-encrypts ciphertext with the primary key IF it was encrypted with a fallback key.
+
+    Returns:
+        (new_ciphertext, was_rotated)
+        If already encrypted with primary key or invalid, returns (encrypted_secret, False).
+    """
+    if not encrypted_secret:
+        return encrypted_secret, False
+    try:
+        mf = get_multi_fernet()
+        primary_fernet = mf._fernets[0]
+        # Fast-path: if primary key can decrypt, it's already using primary key
+        try:
+            primary_fernet.decrypt(encrypted_secret.encode("utf-8"))
+            return encrypted_secret, False
+        except (InvalidToken, Exception):
+            pass
+
+        # Decrypted with fallback key: rotate to primary key
+        rotated = mf.rotate(encrypted_secret.encode("utf-8")).decode("utf-8")
+        return rotated, True
+    except Exception:
+        return encrypted_secret, False
+
 
 # --- Project-Scoped API Keys ---
 def generate_api_key() -> tuple[str, str, str]:
@@ -49,9 +120,11 @@ def generate_api_key() -> tuple[str, str, str]:
     key_hash = hash_api_key(full_key)
     return full_key, key_prefix, key_hash
 
+
 def _pepper() -> str:
     try:
         from app.config import settings as _s
+
         return (_s.API_KEY_PEPPER or "").strip()
     except Exception:
         return ""
@@ -91,6 +164,18 @@ def hash_api_key_candidates(key: str) -> list[str]:
             uniq.append(h)
     return uniq
 
+
+def hash_invitation_token(raw_token: str) -> str:
+    """Returns SHA-256 hex digest of the raw invitation token for secure at-rest storage."""
+    return hashlib.sha256(raw_token.strip().encode("utf-8")).hexdigest()
+
+
+def hash_invitation_token_candidates(raw_token: str) -> list[str]:
+    """Returns candidate token representations (hashed first, legacy raw fallback)."""
+    clean = raw_token.strip()
+    return [hash_invitation_token(clean), clean]
+
+
 # --- Sessions & CSRF ---
 # Server-side logout invalidation via token denylist.
 # Stateless signed cookies cannot be revoked without server state, so logout
@@ -110,6 +195,7 @@ def _get_redis_client():
         import redis as _redis_mod
 
         from app.config import settings as _settings
+
         _r = _redis_mod.from_url(_settings.REDIS_URL, socket_connect_timeout=0.3, socket_timeout=0.3)
         _r.ping()
         _redis_denylist = _r
@@ -157,13 +243,11 @@ def is_session_token_denied(token: str) -> bool:
         return False
     return True
 
+
 def create_session_token(user_id: str, org_id: str | None = None, project_id: str | None = None) -> str:
-    data = {
-        "user_id": user_id,
-        "org_id": org_id,
-        "project_id": project_id
-    }
+    data = {"user_id": user_id, "org_id": org_id, "project_id": project_id}
     return serializer.dumps(data)
+
 
 def verify_session_token(token: str, max_age: int = 86400 * 7) -> dict | None:
     if not token or is_session_token_denied(token):
@@ -173,8 +257,10 @@ def verify_session_token(token: str, max_age: int = 86400 * 7) -> dict | None:
     except (BadSignature, SignatureExpired):
         return None
 
+
 def generate_csrf_token(session_id: str) -> str:
     return csrf_serializer.dumps({"session_id": session_id})
+
 
 def verify_csrf_token(csrf_token: str, session_id: str, max_age: int = 3600) -> bool:
     try:
@@ -183,7 +269,8 @@ def verify_csrf_token(csrf_token: str, session_id: str, max_age: int = 3600) -> 
     except (BadSignature, SignatureExpired, Exception):
         return False
 
-def get_csrf_token_for_request(request, response = None) -> tuple[str, str | None]:
+
+def get_csrf_token_for_request(request, response=None) -> tuple[str, str | None]:
     """
     Returns (csrf_token, new_cookie_id_to_set).
     Binds the CSRF token to wh_session if present, or to an anonymous wh_csrf_id cookie.
@@ -199,6 +286,7 @@ def get_csrf_token_for_request(request, response = None) -> tuple[str, str | Non
         new_cookie = csrf_id
     return generate_csrf_token(csrf_id), new_cookie
 
+
 def validate_request_csrf(request, form_csrf_token: str | None = None) -> bool:
     """Validates the CSRF token against the request's session or anonymous cookie."""
     if not form_csrf_token:
@@ -213,3 +301,19 @@ def validate_request_csrf(request, form_csrf_token: str | None = None) -> bool:
         return False
     return verify_csrf_token(form_csrf_token, session_id)
 
+
+def get_client_ip(request) -> str:
+    """Safely extracts client IP, honoring X-Forwarded-For and X-Real-IP when behind reverse proxies."""
+    if not request:
+        return "127.0.0.1"
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[0]
+    x_real = request.headers.get("x-real-ip")
+    if x_real and x_real.strip():
+        return x_real.strip()
+    if getattr(request, "client", None) and request.client.host:
+        return request.client.host
+    return "127.0.0.1"

@@ -3,6 +3,7 @@
 Handles detecting and reconciling deliveries whose leases expired while IN_FLIGHT,
 which indicates worker crashes, killed containers, or transient broker loss.
 """
+
 import logging
 
 from sqlalchemy.orm import Session
@@ -15,7 +16,7 @@ logger = logging.getLogger("webhook.recovery")
 
 def run_recovery_cycle(db: Session = None) -> int:
     """Scans and recovers abandoned leases in PostgreSQL.
-    
+
     Returns the count of deliveries reclaimed.
     """
     should_close = False

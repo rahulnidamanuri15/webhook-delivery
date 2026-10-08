@@ -13,17 +13,18 @@ from app.services.tracing import start_trace_span
 
 router = APIRouter(prefix="/api/v1", tags=["Events & Deliveries"])
 
+
 @router.post(
     "/events",
     response_model=EventIngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Publish an event for webhook delivery"
+    summary="Publish an event for webhook delivery",
 )
 def publish_event(
     payload: EventIngestRequest,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     auth: tuple[ApiKey, Project] = Depends(get_current_api_key),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Ingests an event atomically and queues background deliveries for subscribed endpoints.
@@ -33,11 +34,13 @@ def publish_event(
 
     # Enforce maximum event payload size on canonical data AND wire envelope
     # (envelope adds id/type/created_at overhead that must also be bounded).
-    raw_payload_bytes = json.dumps(payload.data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    raw_payload_bytes = json.dumps(payload.data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
     if len(raw_payload_bytes) > settings.MAX_PAYLOAD_SIZE_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Payload exceeds maximum allowed size of {settings.MAX_PAYLOAD_SIZE_BYTES} bytes."
+            detail=f"Payload exceeds maximum allowed size of {settings.MAX_PAYLOAD_SIZE_BYTES} bytes.",
         )
     # Idempotency-Key length bound (header can otherwise blow up unique index)
     if idempotency_key is not None and len(idempotency_key.strip()) > 255:
@@ -45,17 +48,16 @@ def publish_event(
 
     # Rate limiting per project
     from app.services.rate_limiter import check_ingestion_rate_limit
+
     allowed, wait_time = check_ingestion_rate_limit(
-        project.id,
-        max_per_second=float(settings.INGESTION_RATE_LIMIT_PER_SECOND)
+        project.id, max_per_second=float(settings.INGESTION_RATE_LIMIT_PER_SECOND)
     )
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Project event ingestion rate limit exceeded.",
-            headers={"Retry-After": str(max(1, int(wait_time)))}
+            headers={"Retry-After": str(max(1, int(wait_time)))},
         )
-
 
     try:
         with start_trace_span("ingest.event", {"project.id": project.id, "event.type": payload.type}):
@@ -64,38 +66,24 @@ def publish_event(
                 project_id=project.id,
                 event_type=payload.type.strip(),
                 payload_data=payload.data,
-                idempotency_key=idempotency_key.strip() if isinstance(idempotency_key, str) and idempotency_key.strip() else None,
+                idempotency_key=(
+                    idempotency_key.strip() if isinstance(idempotency_key, str) and idempotency_key.strip() else None
+                ),
             )
     except IdempotencyConflictError as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return EventIngestResponse(
-        event_id=event.id,
-        status="accepted",
-        delivery_count=delivery_count
-    )
+    return EventIngestResponse(event_id=event.id, status="accepted", delivery_count=delivery_count)
 
-@router.get(
-    "/events/{event_id}",
-    response_model=EventResponse,
-    summary="Get event details"
-)
+
+@router.get("/events/{event_id}", response_model=EventResponse, summary="Get event details")
 def get_event(
-    event_id: str,
-    auth: tuple[ApiKey, Project] = Depends(get_current_api_key),
-    db: Session = Depends(get_db)
+    event_id: str, auth: tuple[ApiKey, Project] = Depends(get_current_api_key), db: Session = Depends(get_db)
 ):
     _, project = auth
-    event = (
-        db.query(Event)
-        .filter(Event.id == event_id, Event.project_id == project.id)
-        .first()
-    )
+    event = db.query(Event).filter(Event.id == event_id, Event.project_id == project.id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
 
@@ -107,39 +95,29 @@ def get_event(
         payload=payload_dict,
         idempotency_key=event.idempotency_key,
         created_at=event.created_at,
-        deliveries=event.deliveries
+        deliveries=event.deliveries,
     )
 
+
 @router.get(
-    "/events/{event_id}/deliveries",
-    response_model=list[DeliveryResponse],
-    summary="List deliveries for an event"
+    "/events/{event_id}/deliveries", response_model=list[DeliveryResponse], summary="List deliveries for an event"
 )
 def get_event_deliveries(
-    event_id: str,
-    auth: tuple[ApiKey, Project] = Depends(get_current_api_key),
-    db: Session = Depends(get_db)
+    event_id: str, auth: tuple[ApiKey, Project] = Depends(get_current_api_key), db: Session = Depends(get_db)
 ):
     _, project = auth
-    event = (
-        db.query(Event)
-        .filter(Event.id == event_id, Event.project_id == project.id)
-        .first()
-    )
+    event = db.query(Event).filter(Event.id == event_id, Event.project_id == project.id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
 
     return event.deliveries
 
+
 @router.get(
-    "/deliveries/{delivery_id}",
-    response_model=DeliveryResponse,
-    summary="Get delivery details and attempt history"
+    "/deliveries/{delivery_id}", response_model=DeliveryResponse, summary="Get delivery details and attempt history"
 )
 def get_delivery(
-    delivery_id: str,
-    auth: tuple[ApiKey, Project] = Depends(get_current_api_key),
-    db: Session = Depends(get_db)
+    delivery_id: str, auth: tuple[ApiKey, Project] = Depends(get_current_api_key), db: Session = Depends(get_db)
 ):
     _, project = auth
     delivery = (

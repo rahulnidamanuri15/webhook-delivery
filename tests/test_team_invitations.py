@@ -1,4 +1,3 @@
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -30,15 +29,13 @@ def team_db():
     yield session, org, owner
     session.close()
 
+
 def test_invitation_creation_and_acceptance(team_db):
     session, org, owner = team_db
 
     # 1. Create invitation
     inv = OrganizationInvitation(
-        organization_id=org.id,
-        email="newuser@example.com",
-        role="admin",
-        invited_by_user_id=owner.id
+        organization_id=org.id, email="newuser@example.com", role="admin", invited_by_user_id=owner.id
     )
     session.add(inv)
     session.commit()
@@ -53,32 +50,27 @@ def test_invitation_creation_and_acceptance(team_db):
     session.add(new_user)
     session.flush()
 
-    new_mem = OrganizationMember(
-        organization_id=inv.organization_id,
-        user_id=new_user.id,
-        role=inv.role
-    )
+    new_mem = OrganizationMember(organization_id=inv.organization_id, user_id=new_user.id, role=inv.role)
     session.add(new_mem)
     inv.status = "ACCEPTED"
     session.commit()
 
     # Verify membership
-    mem = session.query(OrganizationMember).filter(
-        OrganizationMember.organization_id == org.id,
-        OrganizationMember.user_id == new_user.id
-    ).first()
+    mem = (
+        session.query(OrganizationMember)
+        .filter(OrganizationMember.organization_id == org.id, OrganizationMember.user_id == new_user.id)
+        .first()
+    )
     assert mem is not None
     assert mem.role == "admin"
     assert inv.is_valid is False  # No longer pending
+
 
 def test_invitation_revocation(team_db):
     session, org, owner = team_db
 
     inv = OrganizationInvitation(
-        organization_id=org.id,
-        email="revokeme@example.com",
-        role="member",
-        invited_by_user_id=owner.id
+        organization_id=org.id, email="revokeme@example.com", role="member", invited_by_user_id=owner.id
     )
     session.add(inv)
     session.commit()

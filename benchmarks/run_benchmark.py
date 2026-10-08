@@ -3,6 +3,7 @@ Automated Webhook Delivery Platform Benchmark & Load Testing Suite
 Measures event-ingestion throughput, latency percentiles (p50, p95, p99),
 and end-to-end delivery performance according to Section 17 specifications.
 """
+
 import asyncio
 import math
 import os
@@ -21,6 +22,7 @@ API_KEY = os.getenv("BENCHMARK_API_KEY", "wh_live_demo1234567890abcdef123456")
 TOTAL_EVENTS = int(os.getenv("BENCHMARK_TOTAL_EVENTS", "200"))
 CONCURRENCY = int(os.getenv("BENCHMARK_CONCURRENCY", "20"))
 
+
 def calculate_percentile(sorted_list: list[float], percentile: float) -> float:
     if not sorted_list:
         return 0.0
@@ -33,26 +35,19 @@ def calculate_percentile(sorted_list: list[float], percentile: float) -> float:
     d1 = sorted_list[int(c)] * (k - f)
     return d0 + d1
 
+
 async def send_single_event(
-    client: httpx.AsyncClient,
-    index: int,
-    semaphore: asyncio.Semaphore,
-    results: list[dict[str, Any]]
+    client: httpx.AsyncClient, index: int, semaphore: asyncio.Semaphore, results: list[dict[str, Any]]
 ):
     async with semaphore:
         headers = {
             "Authorization": f"Bearer {API_KEY}",
             "Idempotency-Key": f"bench-evt-{int(time.time())}-{index}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
         payload = {
             "type": "benchmark.test",
-            "data": {
-                "benchmark_id": index,
-                "amount_minor": 1000 + index,
-                "currency": "INR",
-                "timestamp": time.time()
-            }
+            "data": {"benchmark_id": index, "amount_minor": 1000 + index, "currency": "INR", "timestamp": time.time()},
         }
 
         start_time = time.perf_counter()
@@ -61,12 +56,7 @@ async def send_single_event(
         event_id = None
 
         try:
-            resp = await client.post(
-                f"{API_BASE_URL}/api/v1/events",
-                json=payload,
-                headers=headers,
-                timeout=10.0
-            )
+            resp = await client.post(f"{API_BASE_URL}/api/v1/events", json=payload, headers=headers, timeout=10.0)
             status_code = resp.status_code
             if resp.status_code == 202:
                 event_id = resp.json().get("event_id")
@@ -76,16 +66,20 @@ async def send_single_event(
             error_msg = str(e)
 
         latency_ms = (time.perf_counter() - start_time) * 1000
-        results.append({
-            "index": index,
-            "status_code": status_code,
-            "latency_ms": latency_ms,
-            "event_id": event_id,
-            "error": error_msg
-        })
+        results.append(
+            {
+                "index": index,
+                "status_code": status_code,
+                "latency_ms": latency_ms,
+                "event_id": event_id,
+                "error": error_msg,
+            }
+        )
+
 
 async def run_load_test(total_events: int = TOTAL_EVENTS, concurrency: int = CONCURRENCY, in_process: bool = False):
     import platform
+
     print("=" * 70)
     print("RELIABLE WEBHOOK DELIVERY PLATFORM - LOAD BENCHMARK")
     print("=" * 70)
@@ -95,10 +89,15 @@ async def run_load_test(total_events: int = TOTAL_EVENTS, concurrency: int = CON
     print("Payload Size:     ~180 bytes (JSON)")
     try:
         from app.config import settings as _s
-        print(f"Database:         {_s.DATABASE_URL.split('://')[0]} | Workers: {os.getenv('DISPATCH_MAX_WORKERS','10')} threads | Retry: {'demo' if _s.USE_DEMO_RETRY_POLICY else 'default'}")
+
+        print(
+            f"Database:         {_s.DATABASE_URL.split('://')[0]} | Workers: {os.getenv('DISPATCH_MAX_WORKERS','10')} threads | Retry: {'demo' if _s.USE_DEMO_RETRY_POLICY else 'default'}"
+        )
     except Exception:
         pass
-    print(f"Hardware:         {platform.machine()} {platform.processor() or ''} | {os.cpu_count()} CPUs | {platform.system()} {platform.release()} | Python {platform.python_version()}")
+    print(
+        f"Hardware:         {platform.machine()} {platform.processor() or ''} | {os.cpu_count()} CPUs | {platform.system()} {platform.release()} | Python {platform.python_version()}"
+    )
     print("-" * 70)
 
     semaphore = asyncio.Semaphore(concurrency)
@@ -119,6 +118,7 @@ async def run_load_test(total_events: int = TOTAL_EVENTS, concurrency: int = CON
 
     if use_asgi:
         from app.main import app
+
         transport = httpx.ASGITransport(app=app)
         client_context = httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8080")
     else:
@@ -128,10 +128,7 @@ async def run_load_test(total_events: int = TOTAL_EVENTS, concurrency: int = CON
         print("Starting ingestion load test run...")
         wall_clock_start = time.perf_counter()
 
-        tasks = [
-            send_single_event(client, i, semaphore, results)
-            for i in range(total_events)
-        ]
+        tasks = [send_single_event(client, i, semaphore, results) for i in range(total_events)]
         await asyncio.gather(*tasks)
 
         total_wall_time = time.perf_counter() - wall_clock_start
@@ -161,13 +158,20 @@ async def run_load_test(total_events: int = TOTAL_EVENTS, concurrency: int = CON
     try:
         from app.db.session import SessionLocal
         from app.models import Delivery, Endpoint, Event, utc_now
+
         _db = SessionLocal()
         try:
             from sqlalchemy import func as _func
-            backlog_total = _db.query(_func.count(Delivery.id)).filter(
-                Delivery.status.in_(["PENDING", "RETRY_SCHEDULED"])).scalar() or 0
-            oldest = _db.query(_func.min(Delivery.created_at)).filter(
-                Delivery.status.in_(["PENDING", "RETRY_SCHEDULED"])).scalar()
+
+            backlog_total = (
+                _db.query(_func.count(Delivery.id)).filter(Delivery.status.in_(["PENDING", "RETRY_SCHEDULED"])).scalar()
+                or 0
+            )
+            oldest = (
+                _db.query(_func.min(Delivery.created_at))
+                .filter(Delivery.status.in_(["PENDING", "RETRY_SCHEDULED"]))
+                .scalar()
+            )
             if oldest:
                 try:
                     _now = utc_now()
@@ -178,10 +182,14 @@ async def run_load_test(total_events: int = TOTAL_EVENTS, concurrency: int = CON
                     oldest_pending_age_s = str(oldest)
             endpoint_count = _db.query(_func.count(Endpoint.id)).scalar() or 0
             # Acceptance-to-success sample (last 20 succeeded)
-            succ = (_db.query(Delivery.completed_at, Event.created_at)
-                    .join(Event, Delivery.event_id == Event.id)
-                    .filter(Delivery.status == "SUCCEEDED", Delivery.completed_at.is_not(None))
-                    .order_by(Delivery.completed_at.desc()).limit(20).all())
+            succ = (
+                _db.query(Delivery.completed_at, Event.created_at)
+                .join(Event, Delivery.event_id == Event.id)
+                .filter(Delivery.status == "SUCCEEDED", Delivery.completed_at.is_not(None))
+                .order_by(Delivery.completed_at.desc())
+                .limit(20)
+                .all()
+            )
             if succ:
                 diffs = []
                 for c, a in succ:
@@ -230,12 +238,14 @@ async def run_load_test(total_events: int = TOTAL_EVENTS, concurrency: int = CON
     report_path = os.path.join(os.path.dirname(__file__), "..", "docs", "BENCHMARK_REPORT.md")
     try:
         from app.config import settings as _rep_settings
+
         _db_url_kind = _rep_settings.DATABASE_URL.split("://")[0]
         _retry_kind = "demo-short" if _rep_settings.USE_DEMO_RETRY_POLICY else "default"
         _max_attempts = _rep_settings.MAX_DELIVERY_ATTEMPTS
     except Exception:
         _db_url_kind, _retry_kind, _max_attempts = "unknown", "unknown", "unknown"
     import platform as _plat
+
     _hw = f"{_plat.machine()} {(_plat.processor() or '').strip()} | {os.cpu_count()} CPUs | {_plat.system()} {_plat.release()} | Python {_plat.python_version()}"
     failure_pct = (error_count / total_events * 100.0) if total_events else 0.0
     # Honest interpretation: in-process SQLite numbers are a lower bound.
@@ -325,8 +335,10 @@ The ingestion engine accepted **{accepted_count}/{total_events} requests** ({acc
     except Exception as e:
         print(f"Warning: Could not save report file ({e})")
 
+
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Reliable Webhook Delivery Benchmark")
     parser.add_argument("--events", type=int, default=TOTAL_EVENTS, help="Total events to send")
     parser.add_argument("--concurrency", type=int, default=CONCURRENCY, help="Number of concurrent workers")
@@ -334,4 +346,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     asyncio.run(run_load_test(total_events=args.events, concurrency=args.concurrency, in_process=args.in_process))
-

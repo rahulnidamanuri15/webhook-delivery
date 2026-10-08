@@ -26,7 +26,7 @@
       {% endif %}
 
       {% if current_user %}
-      <form action="/auth/invitations/{{ invitation.token }}/accept" method="POST" class="space-y-4">
+      <form action="/auth/invitations/{{ token or invitation.token }}/accept" method="POST" class="space-y-4">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <p class="text-sm text-slate-300">
           Signed in as <strong>{{ current_user.email }}</strong>.
@@ -37,7 +37,7 @@
         </button>
       </form>
       {% else %}
-      <form action="/auth/invitations/{{ invitation.token }}/accept" method="POST" class="space-y-4">
+      <form action="/auth/invitations/{{ token or invitation.token }}/accept" method="POST" class="space-y-4">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div>
           <label class="block text-sm font-medium text-slate-200">Email</label>
@@ -46,14 +46,19 @@
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-200">Set Account Password</label>
-          <input type="password" name="password" required minlength="8" placeholder="•••••••• (min 8 chars)"
+          <label class="block text-sm font-medium text-slate-200">
+            {% if existing_account %}Account Password{% else %}Set Account Password{% endif %}
+          </label>
+          <input type="password" name="password" required minlength="8" placeholder="••••••••"
                  class="mt-1 block w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+          {% if existing_account %}
+          <p class="mt-1 text-xs text-slate-400">An account with this email already exists. Enter your password to verify your identity.</p>
+          {% endif %}
         </div>
 
         <button type="submit"
                 class="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition">
-          Create Account & Accept Invitation
+          {% if existing_account %}Sign In & Accept Invitation{% else %}Create Account & Accept Invitation{% endif %}
         </button>
       </form>
       {% endif %}

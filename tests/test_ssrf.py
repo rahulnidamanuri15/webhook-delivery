@@ -20,15 +20,18 @@ def test_ip_prohibited_ranges():
     assert is_ip_prohibited("8.8.8.8") is False
     assert is_ip_prohibited("1.1.1.1") is False
 
+
 def test_url_validation_embedded_credentials():
     valid, err = validate_webhook_url("https://user:pass@example.com/webhook")
     assert valid is False
     assert "embedded credentials" in err
 
+
 def test_url_validation_disallowed_scheme():
     valid, err = validate_webhook_url("ftp://example.com/webhook")
     assert valid is False
     assert "scheme" in err
+
 
 def test_url_validation_localhost_with_dev_override():
     # With ALLOW_LOCAL_RECEIVERS = True
@@ -46,6 +49,7 @@ def test_url_validation_localhost_with_dev_override():
     # Restore setting
     settings.ALLOW_LOCAL_RECEIVERS = True
 
+
 def test_https_pinning_preserves_sni_and_url():
     from unittest.mock import patch
     from app.services.ssrf import resolve_and_pin_destination
@@ -57,4 +61,3 @@ def test_https_pinning_preserves_sni_and_url():
         assert res.url == "https://example.com/webhook"
         assert res.headers["Host"] == "example.com"
         assert res.pinned_ip == "93.184.216.34"
-

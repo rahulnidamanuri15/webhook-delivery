@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
@@ -10,8 +10,10 @@ from app.db.session import Base
 def generate_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
 
+
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
 
 class User(Base):
     __tablename__ = "users"
@@ -47,9 +49,7 @@ class OrganizationMember(Base):
     organization = relationship("Organization", back_populates="members")
     user = relationship("User", back_populates="memberships")
 
-    __table_args__ = (
-        UniqueConstraint("organization_id", "user_id", name="uq_org_member"),
-    )
+    __table_args__ = (UniqueConstraint("organization_id", "user_id", name="uq_org_member"),)
 
 
 class Project(Base):
@@ -110,9 +110,7 @@ class EndpointSubscription(Base):
 
     endpoint = relationship("Endpoint", back_populates="subscriptions")
 
-    __table_args__ = (
-        UniqueConstraint("endpoint_id", "event_type", name="uq_endpoint_event_type"),
-    )
+    __table_args__ = (UniqueConstraint("endpoint_id", "event_type", name="uq_endpoint_event_type"),)
 
 
 class Event(Base):
@@ -143,25 +141,30 @@ class Delivery(Base):
     event_id = Column(String(32), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
     endpoint_id = Column(String(32), ForeignKey("endpoints.id", ondelete="CASCADE"), nullable=False, index=True)
     target_url_snapshot = Column(String(2048), nullable=False)
-    
+
     # State machine: PENDING, IN_FLIGHT, SUCCEEDED, RETRY_SCHEDULED, DEAD
     status = Column(String(32), default="PENDING", nullable=False, index=True)
     attempt_count = Column(Integer, default=0, nullable=False)
     next_attempt_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
-    
+
     # Leases for distributed worker crash recovery
     lease_token = Column(String(64), nullable=True)
     lease_expires_at = Column(DateTime(timezone=True), nullable=True)
-    
+
     # Replay tracking
     replay_of_delivery_id = Column(String(32), ForeignKey("deliveries.id", ondelete="SET NULL"), nullable=True)
-    
+
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
     event = relationship("Event", back_populates="deliveries")
     endpoint = relationship("Endpoint", back_populates="deliveries")
-    attempts = relationship("DeliveryAttempt", back_populates="delivery", cascade="all, delete-orphan", order_by="DeliveryAttempt.attempt_number")
+    attempts = relationship(
+        "DeliveryAttempt",
+        back_populates="delivery",
+        cascade="all, delete-orphan",
+        order_by="DeliveryAttempt.attempt_number",
+    )
     replayed_from = relationship("Delivery", remote_side=[id])
 
     __table_args__ = (
@@ -191,6 +194,7 @@ class DeliveryAttempt(Base):
         Index("ix_attempts_delivery_started", "delivery_id", "started_at"),
     )
 
-# Import AuditLog and OrganizationInvitation
-from app.models.audit_log import AuditLog
-from app.models.invitation import OrganizationInvitation
+
+# Re-export AuditLog and OrganizationInvitation
+from app.models.audit_log import AuditLog as AuditLog
+from app.models.invitation import OrganizationInvitation as OrganizationInvitation

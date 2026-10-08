@@ -7,9 +7,11 @@ class UserRegister(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, description="Minimum 8 characters")
 
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
 
 class UserResponse(BaseModel):
     id: str
@@ -19,8 +21,10 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+
 
 class ProjectResponse(BaseModel):
     id: str
@@ -31,8 +35,10 @@ class ProjectResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class ApiKeyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+
 
 class ApiKeyResponse(BaseModel):
     id: str
@@ -45,6 +51,7 @@ class ApiKeyResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class ApiKeyCreatedResponse(ApiKeyResponse):
     full_key: str  # Only returned upon initial creation!

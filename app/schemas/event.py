@@ -13,10 +13,12 @@ class EventIngestRequest(BaseModel):
     )
     data: dict[str, Any] = Field(description="Arbitrary event payload data")
 
+
 class EventIngestResponse(BaseModel):
     event_id: str
     status: str = "accepted"
     delivery_count: int
+
 
 class DeliveryAttemptResponse(BaseModel):
     id: str
@@ -31,6 +33,7 @@ class DeliveryAttemptResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class DeliveryResponse(BaseModel):
     id: str
@@ -47,6 +50,7 @@ class DeliveryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class EventResponse(BaseModel):
     id: str

@@ -9,13 +9,12 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Delivery, DeliveryAttempt, utc_now
-from app.services.security import decrypt_secret
+from app.services.security import decrypt_secret, rotate_secret_ciphertext
 from app.services.signing import generate_webhook_headers
 from app.services.tracing import inject_trace_headers, start_trace_span
 
 logger = logging.getLogger("webhook.delivery")
 
-import httpcore
 import httpcore._backends.sync as sync_backend
 
 # Hard cap on bytes read from a receiver response body. Prevents a malicious
@@ -29,7 +28,9 @@ class PinnedSyncBackend(sync_backend.SyncBackend):
         super().__init__()
         self.pinned_host_map = pinned_host_map
 
-    def connect_tcp(self, host: str, port: int, timeout: float | None = None, local_address: str | None = None, socket_options = None):
+    def connect_tcp(
+        self, host: str, port: int, timeout: float | None = None, local_address: str | None = None, socket_options=None
+    ):
         connect_host = self.pinned_host_map.get(host, host)
         return super().connect_tcp(connect_host, port, timeout, local_address, socket_options)
 
@@ -41,6 +42,7 @@ class PinnedIPTransport(httpx.HTTPTransport):
     `pinning_active` stays False and callers must refuse to send (prevents
     DNS-rebinding TOCTOU). Never silently fall back to normal DNS.
     """
+
     def __init__(self, pinned_host_map: dict[str, str], **kwargs):
         self.pinning_active = False
         super().__init__(**kwargs)
@@ -113,6 +115,7 @@ def _read_bounded_excerpt(response: "httpx.Response", deadline: float | None = N
             text = text + " ... [wire-truncated]"
     return text
 
+
 def calculate_backoff_seconds(attempt_number: int, retry_after_header: str | None = None) -> int:
     """Calculates backoff delay in seconds with jitter or honors Retry-After header.
 
@@ -135,6 +138,7 @@ def calculate_backoff_seconds(attempt_number: int, retry_after_header: str | Non
         # 2) HTTP-date form (RFC 7231 §7.1.3)
         try:
             from email.utils import parsedate_to_datetime
+
             retry_dt = parsedate_to_datetime(raw)
             if retry_dt is not None:
                 now_dt = datetime.now(UTC)
@@ -147,36 +151,34 @@ def calculate_backoff_seconds(attempt_number: int, retry_after_header: str | Non
         except Exception:
             pass
 
-    intervals = (
-        settings.DEMO_RETRY_INTERVALS
-        if settings.USE_DEMO_RETRY_POLICY
-        else settings.DEFAULT_RETRY_INTERVALS
-    )
-    
+    intervals = settings.DEMO_RETRY_INTERVALS if settings.USE_DEMO_RETRY_POLICY else settings.DEFAULT_RETRY_INTERVALS
+
     idx = min(max(0, attempt_number - 1), len(intervals) - 1)
     base_interval = intervals[idx]
-    
+
     # Add +/- 15% jitter to prevent thundering herd
     jitter_factor = random.uniform(0.85, 1.15)
     return max(1, int(base_interval * jitter_factor))
 
+
 def is_retryable_http_status(status_code: int) -> bool:
     """HTTP 408 (Request Timeout), 429 (Too Many Requests), and 5xx are retryable."""
     return status_code in (408, 429) or (500 <= status_code <= 599)
+
 
 def claim_delivery(db: Session, delivery_id: str) -> tuple[Delivery, str] | None:
     """
     Attempts to atomically acquire an execution lease on a delivery row.
     Returns (delivery, lease_token) if claimed, or None if already claimed/completed.
     """
-    # Tolerate up to 1 second of clock skew between app node and database
-    now = utc_now() + timedelta(seconds=1)
+    # Tolerate clock skew and dispatch lease margin (from Celery pre-dispatch)
+    now = utc_now() + timedelta(seconds=settings.LEASE_DURATION_SECONDS + 2)
     delivery = (
         db.query(Delivery)
         .filter(
             Delivery.id == delivery_id,
             Delivery.status.in_(["PENDING", "RETRY_SCHEDULED"]),
-            Delivery.next_attempt_at <= now
+            Delivery.next_attempt_at <= now,
         )
         .with_for_update(skip_locked=True)
         .first()
@@ -186,14 +188,16 @@ def claim_delivery(db: Session, delivery_id: str) -> tuple[Delivery, str] | None
         return None
 
     lease_token = uuid.uuid4().hex
+    actual_now = utc_now()
     delivery.status = "IN_FLIGHT"
     delivery.lease_token = lease_token
-    delivery.lease_expires_at = now + timedelta(seconds=settings.LEASE_DURATION_SECONDS)
+    delivery.lease_expires_at = actual_now + timedelta(seconds=settings.LEASE_DURATION_SECONDS)
     delivery.attempt_count += 1
-    
+
     db.commit()
     db.refresh(delivery)
     return delivery, lease_token
+
 
 def execute_delivery(db: Session, delivery_id: str) -> bool:
     """
@@ -213,6 +217,7 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
     # 1. Endpoint Rate Limiting (Phase 6 requirement: defer without consuming attempt budget)
     if endpoint and endpoint.rate_limit_per_second:
         from app.services.rate_limiter import check_endpoint_rate_limit
+
         allowed, wait_seconds = check_endpoint_rate_limit(endpoint.id, endpoint.rate_limit_per_second)
         if not allowed:
             # Defer without consuming attempt budget
@@ -228,6 +233,7 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
 
     # 2. SSRF & DNS Rebinding Protection
     from app.services.ssrf import resolve_and_pin_destination
+
     pin_res = resolve_and_pin_destination(delivery.target_url_snapshot)
     if not pin_res.is_safe or not endpoint:
         reason = pin_res.error if not pin_res.is_safe else "Endpoint deleted"
@@ -250,17 +256,25 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
     # 3. Decrypt endpoint signing secret
     try:
         secret = decrypt_secret(endpoint.encrypted_signing_secret)
+        # Opportunistic rotation: if ciphertext was encrypted with a fallback key,
+        # upgrade it in the database to the current primary key
+        try:
+            rotated_ct, was_rotated = rotate_secret_ciphertext(endpoint.encrypted_signing_secret)
+            if was_rotated:
+                endpoint.encrypted_signing_secret = rotated_ct
+                db.commit()
+                logger.info(f"Opportunistically rotated secret ciphertext to primary key for endpoint {endpoint.id}")
+        except Exception:
+            pass
     except Exception as e:
-        logger.error(f"Failed to decrypt endpoint secret for {endpoint.id}: {e}")
-        _save_terminal_failure(db, delivery_id, claimed_lease_token, f"Secret decryption error: {e}")
+        err_msg = f"Secret decryption error: {e}"
+        logger.error(f"Failed to decrypt endpoint secret for {endpoint.id}: {err_msg}")
+        _save_terminal_failure(db, delivery_id, claimed_lease_token, err_msg)
         return False
 
     # 4. Generate headers with HMAC signature and fresh timestamp
     headers = generate_webhook_headers(
-        secret=secret,
-        event_id=event.id,
-        delivery_id=delivery.id,
-        payload=event.wire_payload
+        secret=secret, event_id=event.id, delivery_id=delivery.id, payload=event.wire_payload
     )
     headers.update(pin_res.headers)
     # Propagate W3C trace-context so receivers can correlate (no-op if OTel off).
@@ -275,6 +289,7 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
     # across network I/O (connection already returned to pool). Detach ORM
     # state before blocking calls to avoid holding session resources.
     from urllib.parse import urlparse
+
     parsed_target = urlparse(pin_res.url)
     client_kwargs: dict = {"timeout": _build_timeout(), "follow_redirects": False}
     transport = None
@@ -314,7 +329,9 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
                     headers=headers,
                 ) as resp:
                     if time.monotonic() > deadline:
-                        raise httpx.TimeoutException(f"Total HTTP request deadline exceeded ({settings.HTTP_TIMEOUT_SECONDS}s)")
+                        raise httpx.TimeoutException(
+                            f"Total HTTP request deadline exceeded ({settings.HTTP_TIMEOUT_SECONDS}s)"
+                        )
                     http_status = resp.status_code
                     retry_after = resp.headers.get("retry-after")
                     # Bounded streaming read (never loads unbounded bodies)
@@ -367,8 +384,9 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
         error_code=error_code,
         response_excerpt=response_excerpt,
         outcome=outcome,
-        retry_after=retry_after
+        retry_after=retry_after,
     )
+
 
 def _record_attempt_and_update_state(
     db: Session,
@@ -382,15 +400,10 @@ def _record_attempt_and_update_state(
     error_code: str | None,
     response_excerpt: str | None,
     outcome: str,
-    retry_after: str | None = None
+    retry_after: str | None = None,
 ) -> bool:
     """Verifies lease ownership and updates the delivery and attempt records."""
-    delivery = (
-        db.query(Delivery)
-        .filter(Delivery.id == delivery_id)
-        .with_for_update()
-        .first()
-    )
+    delivery = db.query(Delivery).filter(Delivery.id == delivery_id).with_for_update().first()
 
     if not delivery or delivery.lease_token != lease_token:
         logger.warning(f"Delivery {delivery_id} lease token mismatch or expired. Dropping stale update.")
@@ -407,7 +420,7 @@ def _record_attempt_and_update_state(
         duration_ms=duration_ms,
         error_code=error_code,
         response_excerpt=response_excerpt,
-        outcome=outcome
+        outcome=outcome,
     )
     db.add(attempt)
 
@@ -434,6 +447,7 @@ def _record_attempt_and_update_state(
     db.commit()
     return True
 
+
 def _save_terminal_failure(db: Session, delivery_id: str, lease_token: str, error_reason: str):
     """Terminates delivery due to SSRF restriction or disabled endpoint."""
     delivery = db.query(Delivery).filter(Delivery.id == delivery_id).with_for_update().first()
@@ -450,8 +464,8 @@ def _save_terminal_failure(db: Session, delivery_id: str, lease_token: str, erro
         http_status=None,
         duration_ms=0,
         error_code="SSRF_OR_CONFIG_ERROR",
-        response_excerpt=error_reason[:settings.RESPONSE_EXCERPT_MAX_BYTES],
-        outcome="PERMANENT_ERROR"
+        response_excerpt=error_reason[: settings.RESPONSE_EXCERPT_MAX_BYTES],
+        outcome="PERMANENT_ERROR",
     )
     db.add(attempt)
     delivery.status = "DEAD"
@@ -459,6 +473,7 @@ def _save_terminal_failure(db: Session, delivery_id: str, lease_token: str, erro
     delivery.lease_token = None
     delivery.lease_expires_at = None
     db.commit()
+
 
 def recover_abandoned_leases(db: Session, batch_size: int | None = None) -> int:
     """
@@ -483,10 +498,7 @@ def recover_abandoned_leases(db: Session, batch_size: int | None = None) -> int:
     try:
         abandoned = (
             db.query(Delivery)
-            .filter(
-                Delivery.status == "IN_FLIGHT",
-                Delivery.lease_expires_at <= now
-            )
+            .filter(Delivery.status == "IN_FLIGHT", Delivery.lease_expires_at <= now)
             .order_by(Delivery.lease_expires_at.asc())
             .limit(batch_size)
             .with_for_update(skip_locked=True)
@@ -496,10 +508,7 @@ def recover_abandoned_leases(db: Session, batch_size: int | None = None) -> int:
         db.rollback()
         abandoned = (
             db.query(Delivery)
-            .filter(
-                Delivery.status == "IN_FLIGHT",
-                Delivery.lease_expires_at <= now
-            )
+            .filter(Delivery.status == "IN_FLIGHT", Delivery.lease_expires_at <= now)
             .order_by(Delivery.lease_expires_at.asc())
             .limit(batch_size)
             .all()
@@ -524,7 +533,11 @@ def recover_abandoned_leases(db: Session, batch_size: int | None = None) -> int:
                 attempt = DeliveryAttempt(
                     delivery_id=dlv.id,
                     attempt_number=att_num,
-                    started_at=dlv.lease_expires_at - timedelta(seconds=settings.LEASE_DURATION_SECONDS) if dlv.lease_expires_at else now,
+                    started_at=(
+                        dlv.lease_expires_at - timedelta(seconds=settings.LEASE_DURATION_SECONDS)
+                        if dlv.lease_expires_at
+                        else now
+                    ),
                     finished_at=now,
                     http_status=None,
                     duration_ms=0,
@@ -550,6 +563,7 @@ def recover_abandoned_leases(db: Session, batch_size: int | None = None) -> int:
         logger.info(f"Recovered {recovered_count} abandoned delivery leases.")
     return recovered_count
 
+
 def replay_delivery(db: Session, delivery_id: str) -> Delivery | None:
     """
     Creates a new delivery for the same event and endpoint, linking it to the previous delivery.
@@ -562,12 +576,7 @@ def replay_delivery(db: Session, delivery_id: str) -> Delivery | None:
     deleted. Security checks (SSRF, enabled) are still enforced at send time.
     """
     try:
-        old_delivery = (
-            db.query(Delivery)
-            .filter(Delivery.id == delivery_id)
-            .with_for_update()
-            .first()
-        )
+        old_delivery = db.query(Delivery).filter(Delivery.id == delivery_id).with_for_update().first()
     except Exception:
         old_delivery = db.query(Delivery).filter(Delivery.id == delivery_id).first()
     if not old_delivery:
@@ -600,7 +609,7 @@ def replay_delivery(db: Session, delivery_id: str) -> Delivery | None:
         attempt_count=0,
         next_attempt_at=now,
         replay_of_delivery_id=old_delivery.id,
-        created_at=now
+        created_at=now,
     )
     db.add(new_delivery)
     db.commit()

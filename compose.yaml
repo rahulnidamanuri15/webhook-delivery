@@ -1,8 +1,8 @@
-# Base compose: local development defaults (insecure placeholders allowed).
+# Base Docker Compose specification.
 # Production: use `docker compose -f compose.yaml -f compose.prod.yaml up`
-# with real secrets in environment / Vault. compose.prod.yaml enforces
-# ENV=production, strong secrets, no demo seed, no demo_receiver.
-# app/config.py also fail-fasts in ENV=production on placeholders.
+# All secrets must be provided via environment variables, .env file, or Docker Secrets.
+# No fallback secrets are committed in this configuration.
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be provided via .env or environment}
       POSTGRES_DB: ${POSTGRES_DB:-webhook_platform}
     ports:
       - "127.0.0.1:5432:5432"
@@ -47,13 +47,13 @@ services:
     ports:
       - "${WEB_PORT_BINDING:-127.0.0.1:8080}:8080"
     environment:
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-webhook_platform}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - USE_CELERY=True
       - ENABLE_INPROCESS_DISPATCHER=False
       - ENV=${ENV:-development}
-      - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
-      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:-yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be provided via .env or environment}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY must be provided via .env or environment}
       - API_KEY_PEPPER=${API_KEY_PEPPER:-}
       - METRICS_API_KEY=${METRICS_API_KEY:-}
       - ALLOW_LOCAL_RECEIVERS=${ALLOW_LOCAL_RECEIVERS:-False}
@@ -71,26 +71,22 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/live', timeout=5)\""]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
-    # NOTE: migrations only. Seeding is an explicit one-shot service below
-    # (`docker compose --profile seed run seed`) — never auto-run in prod.
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8080"
+             uvicorn app.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*'"
 
-  # One-shot demo seed (dev only). Never started automatically.
-  # Usage: docker compose --profile seed run --rm seed
   seed:
     image: webhook-delivery:latest
     profiles: ["seed"]
     environment:
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
-      - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
-      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:-yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-webhook_platform}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY required}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY required}
       - API_KEY_PEPPER=${API_KEY_PEPPER:-}
       - ENV=${ENV:-development}
       - SEED_API_KEY=${SEED_API_KEY:-}
@@ -100,22 +96,19 @@ services:
         condition: service_healthy
     command: python scripts/seed.py
 
-  # Standalone dispatcher loop (non-Celery mode only).
-  # Prod with USE_CELERY=True uses celery_beat for dispatch — do NOT run
-  # this alongside beat (duplicate enqueue). Enabled via profile.
   dispatcher:
     image: webhook-delivery:latest
     container_name: webhook_dispatcher
     profiles: ["standalone-dispatcher"]
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-webhook_platform}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - USE_CELERY=False
       - ENABLE_INPROCESS_DISPATCHER=False
       - ENV=${ENV:-development}
-      - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
-      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:-yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY required}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY required}
       - API_KEY_PEPPER=${API_KEY_PEPPER:-}
       - ALLOW_LOCAL_RECEIVERS=${ALLOW_LOCAL_RECEIVERS:-False}
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:-}
@@ -136,12 +129,12 @@ services:
     container_name: webhook_worker
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-webhook_platform}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - USE_CELERY=True
       - ENV=${ENV:-development}
-      - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
-      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:-yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY required}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY required}
       - API_KEY_PEPPER=${API_KEY_PEPPER:-}
       - ALLOW_LOCAL_RECEIVERS=${ALLOW_LOCAL_RECEIVERS:-False}
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:-}
@@ -161,12 +154,12 @@ services:
     container_name: webhook_beat
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-webhook_platform}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - USE_CELERY=True
       - ENV=${ENV:-development}
-      - SECRET_KEY=${SECRET_KEY:-wh_dev_insecure_secret_key_change_in_production_1234567890}
-      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:-yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY required}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY required}
       - API_KEY_PEPPER=${API_KEY_PEPPER:-}
     depends_on:
       postgres:
@@ -180,21 +173,15 @@ services:
     container_name: webhook_demo_receiver
     profiles: ["demo"]
     restart: unless-stopped
-    # Demo-only service: do not expose publicly without DEMO_RECEIVER_ADMIN_TOKEN.
-    # Excluded from prod (compose.prod.yaml) — start explicitly for demos:
-    #   docker compose --profile demo up demo_receiver
     ports:
       - "127.0.0.1:8001:8001"
     environment:
       - PORT=8001
       - DEMO_RECEIVER_ADMIN_TOKEN=${DEMO_RECEIVER_ADMIN_TOKEN:-}
-      - DEMO_RECEIVER_ENDPOINT_SECRET=${DEMO_RECEIVER_ENDPOINT_SECRET:-whsec_demosecret_dev_only}
+      - DEMO_RECEIVER_ENDPOINT_SECRET=${DEMO_RECEIVER_ENDPOINT_SECRET:-}
       - DEMO_RECEIVER_DB_FILE=/tmp/demo_receiver.db
-    # No host bind-mount in prod (was ./demo_receiver:/app/demo_receiver).
-    command: uvicorn demo_receiver.app:app --host 0.0.0.0 --port 8001
+    command: uvicorn demo_receiver.app:app --host 127.0.0.1 --port 8001
 
-  # Single-host entrypoint: dev uses plain-HTTP proxy (nginx.dev.conf).
-  # Prod overlay (compose.prod.yaml) swaps in deploy/nginx.conf with TLS.
   reverse_proxy:
     image: nginx:1.27-alpine
     container_name: webhook_proxy

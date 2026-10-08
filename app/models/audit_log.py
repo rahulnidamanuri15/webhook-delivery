@@ -21,6 +21,4 @@ class AuditLog(Base):
     organization = relationship("Organization")
     user = relationship("User")
 
-    __table_args__ = (
-        Index("ix_audit_org_created", "organization_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_audit_org_created", "organization_id", "created_at"),)

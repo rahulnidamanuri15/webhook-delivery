@@ -13,10 +13,15 @@ from app.services.signing import verify_webhook_signature
 
 app = FastAPI(title="Controllable Webhook Demo Receiver")
 
+if os.getenv("ENV", "").strip().lower() == "production":
+    raise RuntimeError("demo_receiver is disabled and forbidden in production environments (ENV=production).")
+
 ADMIN_TOKEN = os.getenv("DEMO_RECEIVER_ADMIN_TOKEN", "")
 
-# Default shared secret seeded by platform for demo receiver
-DEFAULT_ENDPOINT_SECRET = os.getenv("DEMO_RECEIVER_ENDPOINT_SECRET", "whsec_demosecret1234567890abcdef")
+# Default shared secret seeded by platform for demo receiver (dynamic random fallback if unset)
+import secrets as _secrets
+
+DEFAULT_ENDPOINT_SECRET = os.getenv("DEMO_RECEIVER_ENDPOINT_SECRET") or _secrets.token_urlsafe(24)
 
 # Ensure SQLite DB file lives in demo_receiver directory for persistence across reloads/restarts
 _DEFAULT_DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo_receiver.db")
@@ -52,6 +57,7 @@ def _check_admin(request: Request, token_field: str | None = None) -> bool:
 
     if provided:
         import hmac as _hmac
+
         if _hmac.compare_digest(provided, ADMIN_TOKEN):
             return True
 
@@ -71,25 +77,22 @@ def _require_admin(request: Request, token_field: str | None = None):
     if not ADMIN_TOKEN:
         raise HTTPException(
             status_code=403,
-            detail="Admin token is not configured on demo receiver. Remote non-loopback access is forbidden."
+            detail="Admin token is not configured on demo receiver. Remote non-loopback access is forbidden.",
         )
 
-    raise HTTPException(
-        status_code=403,
-        detail="Invalid or missing admin token for demo-receiver controls."
-    )
+    raise HTTPException(status_code=403, detail="Invalid or missing admin token for demo-receiver controls.")
 
 
 # Receiver state and configurations
 config = {
-    "mode": "success",          # "success", "fail_n", "rate_limit", "slow"
-    "fail_count": 3,            # For "fail_n": fail this many times then succeed
-    "failure_status_code": 500, # Status code to return when failing
-    "current_failures": 0,      # Counter of consecutive failures
+    "mode": "success",  # "success", "fail_n", "rate_limit", "slow"
+    "fail_count": 3,  # For "fail_n": fail this many times then succeed
+    "failure_status_code": 500,  # Status code to return when failing
+    "current_failures": 0,  # Counter of consecutive failures
     "rate_limit_delay_sec": 3,  # Retry-After value for 429
-    "slow_delay_sec": 5,        # Sleep duration for slow response
+    "slow_delay_sec": 5,  # Sleep duration for slow response
     "endpoint_secret": DEFAULT_ENDPOINT_SECRET,  # Pre-populated with default demo secret
-    "enforce_signatures": False, # When True, reject webhooks if signature verification fails
+    "enforce_signatures": False,  # When True, reject webhooks if signature verification fails
 }
 
 received_events: list[dict[str, Any]] = []
@@ -136,15 +139,17 @@ def _init_db() -> None:
             """).fetchall()
             received_events.clear()
             for r in reversed(webhook_rows):
-                received_events.append({
-                    "received_at": r[0],
-                    "event_id": r[1],
-                    "delivery_id": r[2],
-                    "returned_status": r[3],
-                    "sig_valid": True if r[4] == 1 else (False if r[4] == 0 else None),
-                    "is_duplicate": bool(r[5]),
-                    "payload": r[6],
-                })
+                received_events.append(
+                    {
+                        "received_at": r[0],
+                        "event_id": r[1],
+                        "delivery_id": r[2],
+                        "returned_status": r[3],
+                        "sig_valid": True if r[4] == 1 else (False if r[4] == 0 else None),
+                        "is_duplicate": bool(r[5]),
+                        "payload": r[6],
+                    }
+                )
     except Exception as e:
         print(f"Warning: could not initialize demo receiver SQLite db: {e}")
 
@@ -167,18 +172,21 @@ def _persist_webhook_delivery(item: dict[str, Any]) -> None:
     try:
         with sqlite3.connect(_DEDUP_DB_FILE, timeout=10.0) as conn:
             sig_val = 1 if item["sig_valid"] is True else (0 if item["sig_valid"] is False else None)
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO received_webhooks (received_at, event_id, delivery_id, returned_status, sig_valid, is_duplicate, payload)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                item["received_at"],
-                item["event_id"],
-                item["delivery_id"],
-                item["returned_status"],
-                sig_val,
-                1 if item["is_duplicate"] else 0,
-                item["payload"]
-            ))
+            """,
+                (
+                    item["received_at"],
+                    item["event_id"],
+                    item["delivery_id"],
+                    item["returned_status"],
+                    sig_val,
+                    1 if item["is_duplicate"] else 0,
+                    item["payload"],
+                ),
+            )
             conn.commit()
     except Exception as e:
         print(f"Warning: could not persist received webhook to SQLite: {e}")
@@ -209,6 +217,7 @@ def dashboard_redirect():
 @app.post("/auth")
 def auth(admin_token: str = Form("")):
     import hmac as _hmac
+
     if ADMIN_TOKEN and _hmac.compare_digest(admin_token.strip(), ADMIN_TOKEN):
         response = RedirectResponse(url="/", status_code=303)
         response.set_cookie(key="demo_admin_token", value=admin_token.strip(), httponly=True, samesite="lax")
@@ -223,6 +232,7 @@ def index(request: Request):
     token_param = (request.query_params.get("admin_token") or "").strip()
     if token_param and ADMIN_TOKEN:
         import hmac as _hmac
+
         if _hmac.compare_digest(token_param, ADMIN_TOKEN):
             resp = RedirectResponse(url="/", status_code=303)
             resp.set_cookie(key="demo_admin_token", value=token_param, httponly=True, samesite="lax")
@@ -236,7 +246,7 @@ def index(request: Request):
                 <p>The demo receiver is running in loopback-only mode because <code>DEMO_RECEIVER_ADMIN_TOKEN</code> is not configured.</p>
                 <p style="color:#6b7280;font-size:14px;">Remote access is blocked to prevent exposing webhook secrets and payloads.</p>
                 </body></html>""",
-                status_code=403
+                status_code=403,
             )
         return HTMLResponse(
             """<!DOCTYPE html><html><head><title>Demo Receiver - Unlock</title></head>
@@ -250,7 +260,7 @@ def index(request: Request):
                 </form>
             </div>
             </body></html>""",
-            status_code=403
+            status_code=403,
         )
 
     # Reload from DB in case another process/thread recorded events
@@ -263,15 +273,17 @@ def index(request: Request):
             """).fetchall()
             received_events.clear()
             for r in reversed(webhook_rows):
-                received_events.append({
-                    "received_at": r[0],
-                    "event_id": r[1],
-                    "delivery_id": r[2],
-                    "returned_status": r[3],
-                    "sig_valid": True if r[4] == 1 else (False if r[4] == 0 else None),
-                    "is_duplicate": bool(r[5]),
-                    "payload": r[6],
-                })
+                received_events.append(
+                    {
+                        "received_at": r[0],
+                        "event_id": r[1],
+                        "delivery_id": r[2],
+                        "returned_status": r[3],
+                        "sig_valid": True if r[4] == 1 else (False if r[4] == 0 else None),
+                        "is_duplicate": bool(r[5]),
+                        "payload": r[6],
+                    }
+                )
     except Exception:
         pass
 
@@ -280,9 +292,11 @@ def index(request: Request):
         sig_badge = (
             '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600;">Valid</span>'
             if item["sig_valid"] is True
-            else '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600;">Invalid</span>'
-            if item["sig_valid"] is False
-            else '<span style="background:#f3f4f6;color:#374151;padding:2px 8px;border-radius:9999px;font-size:12px;">Unverified</span>'
+            else (
+                '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600;">Invalid</span>'
+                if item["sig_valid"] is False
+                else '<span style="background:#f3f4f6;color:#374151;padding:2px 8px;border-radius:9999px;font-size:12px;">Unverified</span>'
+            )
         )
         dedup_badge = (
             '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600;">Duplicate</span>'
@@ -569,19 +583,19 @@ async def receive_webhook(
         if not (webhook_signature and webhook_event_id and webhook_timestamp):
             sig_valid = False
             if config["enforce_signatures"]:
-                _persist_webhook_delivery({
-                    "received_at": now_str,
-                    "event_id": webhook_event_id or "unknown",
-                    "delivery_id": webhook_delivery_id or "unknown",
-                    "returned_status": 401,
-                    "sig_valid": False,
-                    "is_duplicate": False,
-                    "payload": raw_body_str
-                })
+                _persist_webhook_delivery(
+                    {
+                        "received_at": now_str,
+                        "event_id": webhook_event_id or "unknown",
+                        "delivery_id": webhook_delivery_id or "unknown",
+                        "returned_status": 401,
+                        "sig_valid": False,
+                        "is_duplicate": False,
+                        "payload": raw_body_str,
+                    }
+                )
                 return Response(
-                    content='{"error": "Missing signature headers"}',
-                    status_code=401,
-                    media_type="application/json"
+                    content='{"error": "Missing signature headers"}', status_code=401, media_type="application/json"
                 )
         else:
             valid, msg = verify_webhook_signature(
@@ -590,56 +604,60 @@ async def receive_webhook(
                 timestamp_str=webhook_timestamp,
                 payload=raw_body_str,
                 received_signature=webhook_signature,
-                tolerance_seconds=300
+                tolerance_seconds=300,
             )
             sig_valid = valid
             if not valid and config["enforce_signatures"]:
-                _persist_webhook_delivery({
-                    "received_at": now_str,
-                    "event_id": webhook_event_id or "unknown",
-                    "delivery_id": webhook_delivery_id or "unknown",
-                    "returned_status": 401,
-                    "sig_valid": False,
-                    "is_duplicate": False,
-                    "payload": raw_body_str
-                })
+                _persist_webhook_delivery(
+                    {
+                        "received_at": now_str,
+                        "event_id": webhook_event_id or "unknown",
+                        "delivery_id": webhook_delivery_id or "unknown",
+                        "returned_status": 401,
+                        "sig_valid": False,
+                        "is_duplicate": False,
+                        "payload": raw_body_str,
+                    }
+                )
                 return Response(
-                    content=f'{{"error": "Invalid signature: {msg}"}}',
-                    status_code=401,
-                    media_type="application/json"
+                    content=f'{{"error": "Invalid signature: {msg}"}}', status_code=401, media_type="application/json"
                 )
     elif config["enforce_signatures"]:
         # Enforce signatures requested, but no secret configured on receiver
-        _persist_webhook_delivery({
-            "received_at": now_str,
-            "event_id": webhook_event_id or "unknown",
-            "delivery_id": webhook_delivery_id or "unknown",
-            "returned_status": 401,
-            "sig_valid": None,
-            "is_duplicate": False,
-            "payload": raw_body_str
-        })
+        _persist_webhook_delivery(
+            {
+                "received_at": now_str,
+                "event_id": webhook_event_id or "unknown",
+                "delivery_id": webhook_delivery_id or "unknown",
+                "returned_status": 401,
+                "sig_valid": None,
+                "is_duplicate": False,
+                "payload": raw_body_str,
+            }
+        )
         return Response(
             content='{"error": "Signature enforcement enabled but no endpoint_secret configured. Set a secret via POST /configure."}',
             status_code=401,
-            media_type="application/json"
+            media_type="application/json",
         )
 
     # 2. Event ID Deduplication check: return success idempotently if already processed
     if webhook_event_id and webhook_event_id in seen_event_ids:
-        _persist_webhook_delivery({
-            "received_at": now_str,
-            "event_id": webhook_event_id,
-            "delivery_id": webhook_delivery_id or "unknown",
-            "returned_status": 200,
-            "sig_valid": sig_valid,
-            "is_duplicate": True,
-            "payload": raw_body_str
-        })
+        _persist_webhook_delivery(
+            {
+                "received_at": now_str,
+                "event_id": webhook_event_id,
+                "delivery_id": webhook_delivery_id or "unknown",
+                "returned_status": 200,
+                "sig_valid": sig_valid,
+                "is_duplicate": True,
+                "payload": raw_body_str,
+            }
+        )
         return Response(
             content='{"status": "already_processed", "is_duplicate": true}',
             status_code=200,
-            media_type="application/json"
+            media_type="application/json",
         )
 
     # 3. Simulate configured receiver behavior
@@ -654,7 +672,7 @@ async def receive_webhook(
             returned_status = config["failure_status_code"]
             response_body = {
                 "error": f"Simulated failure {config['current_failures']}/{config['fail_count']}",
-                "event_id": webhook_event_id
+                "event_id": webhook_event_id,
             }
         else:
             returned_status = 200
@@ -676,19 +694,18 @@ async def receive_webhook(
         _record_processed_event(webhook_event_id)
 
     # 5. Persist delivery in SQLite and memory
-    _persist_webhook_delivery({
-        "received_at": now_str,
-        "event_id": webhook_event_id or "unknown",
-        "delivery_id": webhook_delivery_id or "unknown",
-        "returned_status": returned_status,
-        "sig_valid": sig_valid,
-        "is_duplicate": False,
-        "payload": raw_body_str
-    })
+    _persist_webhook_delivery(
+        {
+            "received_at": now_str,
+            "event_id": webhook_event_id or "unknown",
+            "delivery_id": webhook_delivery_id or "unknown",
+            "returned_status": returned_status,
+            "sig_valid": sig_valid,
+            "is_duplicate": False,
+            "payload": raw_body_str,
+        }
+    )
 
     return Response(
-        content=_json.dumps(response_body),
-        status_code=returned_status,
-        media_type="application/json",
-        headers=headers
+        content=_json.dumps(response_body), status_code=returned_status, media_type="application/json", headers=headers
     )

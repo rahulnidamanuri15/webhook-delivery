@@ -36,7 +36,9 @@ def _mock_stream_response(status_code: int = 200, text: str = "", headers: dict 
     mock_resp.status_code = status_code
     mock_resp.headers = headers or {}
     body = (text or "").encode("utf-8")
-    mock_resp.iter_bytes.return_value = [body[i:i+4096] for i in range(0, max(1, len(body)), 4096)] if body else [b""]
+    mock_resp.iter_bytes.return_value = (
+        [body[i : i + 4096] for i in range(0, max(1, len(body)), 4096)] if body else [b""]
+    )
     mock_resp.close.return_value = None
     mock_stream_ctx = MagicMock()
     mock_stream_ctx.__enter__.return_value = mock_resp
@@ -46,6 +48,7 @@ def _mock_stream_response(status_code: int = 200, text: str = "", headers: dict 
     mock_client.__exit__.return_value = False
     mock_client.stream.return_value = mock_stream_ctx
     return patch("httpx.Client", return_value=mock_client)
+
 
 client = TestClient(app)
 
@@ -129,9 +132,7 @@ def test_cross_tenant_isolation_on_replay_and_api(test_setup):
     db = SessionLocal()
     try:
         # Create an event and dead delivery in Project Alpha
-        event_a, is_dup, count = ingest_event(
-            db, test_setup["proj_a_id"], "payment.succeeded", {"invoice": "inv_001"}
-        )
+        event_a, is_dup, count = ingest_event(db, test_setup["proj_a_id"], "payment.succeeded", {"invoice": "inv_001"})
         assert count >= 1
         dlv_a = event_a.deliveries[0]
         dlv_a.status = "DEAD"
@@ -168,11 +169,7 @@ def test_cross_tenant_isolation_on_replay_and_api(test_setup):
             assert replay_resp.status_code in (403, 404)
 
         # Confirm in DB that no replayed delivery exists for Project Beta
-        beta_deliveries = (
-            db.query(Delivery)
-            .filter(Delivery.replay_of_delivery_id == delivery_id)
-            .all()
-        )
+        beta_deliveries = db.query(Delivery).filter(Delivery.replay_of_delivery_id == delivery_id).all()
         assert len(beta_deliveries) == 0
 
     finally:
@@ -222,9 +219,7 @@ def test_concurrent_ingestion_race_condition(test_setup):
 
     # Verify database has exactly 1 event record
     matching_events = (
-        db.query(Event)
-        .filter(Event.project_id == proj_id, Event.idempotency_key == idempotency_key)
-        .all()
+        db.query(Event).filter(Event.project_id == proj_id, Event.idempotency_key == idempotency_key).all()
     )
     assert len(matching_events) == 1
     db.close()
@@ -234,9 +229,7 @@ def test_bounded_response_excerpt_truncation(test_setup):
     """Verifies that large receiver response bodies are bounded to RESPONSE_EXCERPT_MAX_BYTES."""
     db = SessionLocal()
     try:
-        event, is_dup, count = ingest_event(
-            db, test_setup["proj_a_id"], "test.large_response", {"test": True}
-        )
+        event, is_dup, count = ingest_event(db, test_setup["proj_a_id"], "test.large_response", {"test": True})
         delivery = event.deliveries[0]
 
         # Generate a 50,000 character response body

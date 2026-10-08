@@ -8,6 +8,7 @@ from app.config import settings
 
 class MemoryTokenBucket:
     """Thread-safe in-memory token bucket implementation for rate limiting."""
+
     def __init__(self):
         self._buckets = {}
         self._lock = threading.Lock()
@@ -24,10 +25,7 @@ class MemoryTokenBucket:
         now = time.monotonic()
         with self._lock:
             if key not in self._buckets:
-                self._buckets[key] = {
-                    "tokens": float(capacity),
-                    "last_updated": now
-                }
+                self._buckets[key] = {"tokens": float(capacity), "last_updated": now}
 
             bucket = self._buckets[key]
             elapsed = now - bucket["last_updated"]
@@ -44,8 +42,10 @@ class MemoryTokenBucket:
                 wait_time = missing_tokens / rate_per_second
                 return False, wait_time
 
+
 class RedisTokenBucket:
     """Redis-backed token bucket using an atomic Lua script."""
+
     LUA_SCRIPT = """
     local key = KEYS[1]
     local rate = tonumber(ARGV[1])
@@ -88,13 +88,11 @@ class RedisTokenBucket:
         if capacity is None:
             capacity = float(rate_per_second)
         now = time.time()
-        result = self._script(
-            keys=[f"ratelimit:{key}"],
-            args=[rate_per_second, capacity, now]
-        )
+        result = self._script(keys=[f"ratelimit:{key}"], args=[rate_per_second, capacity, now])
         allowed = bool(result[0] == 1)
         wait_time = float(result[1]) if not allowed else 0.0
         return allowed, wait_time
+
 
 # Initialize Rate Limiter with graceful fallback.
 # Documented behavior when Redis is unavailable (see docs/SECURITY.md):
@@ -111,11 +109,13 @@ try:
     redis_bucket = RedisTokenBucket(r)
 except Exception as _e:
     import logging as _logging
+
     _logging.getLogger("webhook.rate_limiter").warning(
         "Redis unavailable at startup, using in-memory rate limiter (per-process only): %s",
         _e,
     )
     redis_bucket = None
+
 
 def check_endpoint_rate_limit(endpoint_id: str, rate_per_second: int) -> tuple[bool, float]:
     """
@@ -130,6 +130,7 @@ def check_endpoint_rate_limit(endpoint_id: str, rate_per_second: int) -> tuple[b
             pass
     return memory_bucket.acquire(f"endpoint:{endpoint_id}", rate)
 
+
 def check_ingestion_rate_limit(project_id: str, max_per_second: float = 30.0) -> tuple[bool, float]:
     """
     Checks project event ingestion rate limit.
@@ -141,6 +142,7 @@ def check_ingestion_rate_limit(project_id: str, max_per_second: float = 30.0) ->
         except Exception:
             pass
     return memory_bucket.acquire(f"ingest:{project_id}", max_per_second)
+
 
 def _acquire_both(key: str, rate_per_sec: float, capacity: float) -> tuple[bool, float]:
     """Try Redis first, fall back to in-memory. Single bucket helper."""
@@ -196,3 +198,8 @@ def check_api_auth_rate_limit(client_ip: str) -> tuple[bool, float]:
     ip = (client_ip or "unknown").strip() or "unknown"
     return _acquire_both(f"api-auth:ip:{ip}", 60.0 / 60.0, 60.0)
 
+
+def check_invitation_accept_rate_limit(client_ip: str) -> tuple[bool, float]:
+    """Invitation accept throttle: 10 attempts / min per IP to prevent token brute-force guessing."""
+    ip = (client_ip or "unknown").strip() or "unknown"
+    return _acquire_both(f"inv-accept:ip:{ip}", 10.0 / 60.0, 10.0)

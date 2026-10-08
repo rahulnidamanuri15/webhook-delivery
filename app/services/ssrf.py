@@ -1,7 +1,7 @@
 import concurrent.futures as _futures
 import ipaddress
 import socket
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 from app.config import settings
 
@@ -29,6 +29,7 @@ def is_ip_prohibited(ip_str: str) -> bool:
     except ValueError:
         return True
 
+
 def get_domain_allowlist() -> list[str]:
     """Parses ALLOWED_RECEIVER_DOMAINS (comma-separated) into lowercase domains."""
     raw = (settings.ALLOWED_RECEIVER_DOMAINS or "").strip()
@@ -50,10 +51,8 @@ def is_domain_allowed(hostname: str) -> tuple[bool, str | None]:
     for allowed in allowlist:
         if host == allowed or host.endswith("." + allowed):
             return True, None
-    return False, (
-        f"Domain '{hostname}' is not in the configured receiver allowlist "
-        f"({', '.join(allowlist)})."
-    )
+    return False, (f"Domain '{hostname}' is not in the configured receiver allowlist " f"({', '.join(allowlist)}).")
+
 
 def _validate_url_syntax_and_domain(url: str):
     """Performs URL syntax, scheme, credential, length, and domain checks without DNS."""
@@ -121,6 +120,7 @@ def validate_webhook_url(url: str) -> tuple[bool, str | None]:
 
     return True, None
 
+
 class PinnedResolutionResult(tuple):
     """Result tuple supporting 4-tuple unpacking (is_safe, error, url, headers)
     for backward-compatibility, while also exposing pinned_ip."""
@@ -128,7 +128,9 @@ class PinnedResolutionResult(tuple):
     def __new__(cls, is_safe: bool, error: str | None, url: str, headers: dict[str, str], pinned_ip: str | None = None):
         return super().__new__(cls, (is_safe, error, url, headers))
 
-    def __init__(self, is_safe: bool, error: str | None, url: str, headers: dict[str, str], pinned_ip: str | None = None):
+    def __init__(
+        self, is_safe: bool, error: str | None, url: str, headers: dict[str, str], pinned_ip: str | None = None
+    ):
         self.is_safe = is_safe
         self.error = error
         self.url = url
@@ -166,10 +168,7 @@ def resolve_and_pin_destination(url: str) -> PinnedResolutionResult:
             ip_str = sockaddr[0]
             if is_ip_prohibited(ip_str):
                 return PinnedResolutionResult(
-                    False,
-                    f"Destination IP {ip_str} is within a restricted or private network range.",
-                    url,
-                    {}
+                    False, f"Destination IP {ip_str} is within a restricted or private network range.", url, {}
                 )
 
         # Pin to the first verified IP

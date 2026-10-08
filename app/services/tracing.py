@@ -19,6 +19,7 @@ try:
         if otlp_endpoint:
             try:
                 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
                 provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=otlp_endpoint)))
                 logger.info("otel_exporter_configured", extra={"endpoint": otlp_endpoint})
             except Exception as e:
@@ -28,6 +29,7 @@ try:
 except Exception as e:
     logger.debug(f"OpenTelemetry unavailable, tracing will no-op: {e}")
     tracer = None
+
 
 @contextmanager
 def start_trace_span(name: str, attributes: dict[str, Any] | None = None):
@@ -53,6 +55,7 @@ def inject_trace_headers(headers: dict[str, str]) -> dict[str, str]:
     """
     try:
         from opentelemetry import propagate
+
         # propagate.inject mutates the carrier dict in place.
         propagate.inject(headers)
     except Exception as e:

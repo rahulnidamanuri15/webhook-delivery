@@ -22,11 +22,7 @@ def test_prometheus_metrics_generation():
     session.flush()
 
     event = Event(
-        project_id=project.id,
-        event_type="test.metrics",
-        payload_json='{}',
-        wire_payload='{}',
-        request_hash="hash123"
+        project_id=project.id, event_type="test.metrics", payload_json="{}", wire_payload="{}", request_hash="hash123"
     )
     session.add(event)
     session.commit()
@@ -38,7 +34,8 @@ def test_prometheus_metrics_generation():
     assert "webhook_backlog_total" in output
     assert "webhook_delivery_duration_ms" in output
 
+
 def test_tracing_context_manager():
     # Context manager shouldn't raise errors
     with start_trace_span("test.span", {"key": "value"}) as span:
-        pass
+        assert span is not None

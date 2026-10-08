@@ -68,8 +68,32 @@ jobs:
       - name: Lint (ruff + black check)
         run: |
           ruff check app demo_receiver tests scripts benchmarks
-          # black is advisory only (51 pre-existing format drifts); ruff is blocking.
-          black --check app demo_receiver tests scripts benchmarks || echo "::warning::black formatting drift (non-blocking)"
+          black --check app demo_receiver tests scripts benchmarks
+
+      - name: Secret scan check
+        run: |
+          python -c '
+          import os, sys, re
+          patterns = [
+              r"-----BEGIN (RSA|EC|OPENSSH|PRIVATE) KEY-----",
+          ]
+          violations = []
+          for root, dirs, files in os.walk("."):
+              dirs[:] = [d for d in dirs if d not in (".git", ".venv", "node_modules", "__pycache__", ".pytest_cache")]
+              for f in files:
+                  if f.endswith((".py", ".yaml", ".yml")):
+                      p = os.path.join(root, f)
+                      with open(p, "r", encoding="utf-8", errors="ignore") as fh:
+                          for i, line in enumerate(fh, 1):
+                              for pat in patterns:
+                                  if re.search(pat, line):
+                                      violations.append(f"{p}:{i}")
+          if violations:
+              print("Committed private key violations found:\n" + "\n".join(violations))
+              sys.exit(1)
+          print("Secret scanning passed.")
+          '
+
 
       - name: Run database migrations (PostgreSQL)
         run: |

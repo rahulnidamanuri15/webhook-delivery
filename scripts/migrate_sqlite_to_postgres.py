@@ -158,10 +158,7 @@ def migrate(sqlite_path: str, pg_url: str, clean: bool = False, dry_run: bool = 
             placeholders = ", ".join(["%s"] * len(col_names))
 
             # Conflict handling: ON CONFLICT DO NOTHING if table has a primary key
-            insert_sql = (
-                f'INSERT INTO "{table}" ({cols_clause}) VALUES ({placeholders}) '
-                f'ON CONFLICT DO NOTHING'
-            )
+            insert_sql = f'INSERT INTO "{table}" ({cols_clause}) VALUES ({placeholders}) ' f"ON CONFLICT DO NOTHING"
 
             # Coerce rows
             batch_params = []
@@ -187,12 +184,13 @@ def migrate(sqlite_path: str, pg_url: str, clean: bool = False, dry_run: bool = 
         print("\n" + "=" * 65)
         print("          DATABASE MIGRATION VERIFICATION REPORT")
         print("=" * 65)
-        print(f"{'Table Name':<28} | {'SQLite Rows':<14} | {'PostgreSQL Rows':<16}")
-        print("-" * 65)
+        print(f"{'Table Name':<28} | {'SQLite Rows':<14} | {'PostgreSQL Rows':<16} | {'Status':<8}")
+        print("-" * 75)
         for tbl, s_cnt, p_cnt in summary:
             status = "MATCH" if (s_cnt == p_cnt or dry_run) else "CHECK"
-            print(f"{tbl:<28} | {s_cnt:<14} | {p_cnt:<16}")
-        print("=" * 65)
+            print(f"{tbl:<28} | {s_cnt:<14} | {p_cnt:<16} | {status:<8}")
+        print("=" * 75)
+
         if dry_run:
             print(" DRY RUN COMPLETED. No data was written to PostgreSQL.")
         else:

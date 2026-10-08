@@ -1,4 +1,5 @@
 """Generate self-signed TLS certificates for local testing of production compose setup."""
+
 import datetime
 import os
 from cryptography import x509
@@ -24,10 +25,12 @@ def generate_self_signed_cert(output_dir: str = "deploy/tls"):
     )
 
     # Generate self-signed certificate
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Webhook Platform Dev"),
-    ])
+    subject = issuer = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Webhook Platform Dev"),
+        ]
+    )
 
     cert = (
         x509.CertificateBuilder()

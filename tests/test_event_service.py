@@ -15,7 +15,7 @@ def db_session():
     Base.metadata.create_all(bind=engine)
     TestingSession = sessionmaker(bind=engine)
     session = TestingSession()
-    
+
     # Seed org and project
     org = Organization(name="Test Org")
     session.add(org)
@@ -31,7 +31,7 @@ def db_session():
         project_id=project.id,
         url="http://127.0.0.1:8001/webhook1",
         encrypted_signing_secret=encrypt_secret(generate_signing_secret()),
-        enabled=True
+        enabled=True,
     )
     session.add(ep1)
     session.flush()
@@ -43,7 +43,7 @@ def db_session():
         project_id=project.id,
         url="http://127.0.0.1:8001/webhook2",
         encrypted_signing_secret=encrypt_secret(generate_signing_secret()),
-        enabled=True
+        enabled=True,
     )
     session.add(ep2)
     session.flush()
@@ -55,7 +55,7 @@ def db_session():
         project_id=project.id,
         url="http://127.0.0.1:8001/webhook3",
         encrypted_signing_secret=encrypt_secret(generate_signing_secret()),
-        enabled=True
+        enabled=True,
     )
     session.add(ep3)
     session.flush()
@@ -67,7 +67,7 @@ def db_session():
         project_id=project.id,
         url="http://127.0.0.1:8001/webhook4",
         encrypted_signing_secret=encrypt_secret(generate_signing_secret()),
-        enabled=False
+        enabled=False,
     )
     session.add(ep4)
     session.flush()
@@ -78,6 +78,7 @@ def db_session():
     yield session
     session.close()
 
+
 def test_atomic_event_ingestion_and_delivery_matching(db_session):
     project = db_session.query(Project).first()
     payload = {"payment_id": "pay_1", "amount": 500}
@@ -87,7 +88,7 @@ def test_atomic_event_ingestion_and_delivery_matching(db_session):
         project_id=project.id,
         event_type="payment.succeeded",
         payload_data=payload,
-        idempotency_key="key-001"
+        idempotency_key="key-001",
     )
 
     assert is_duplicate is False
@@ -99,6 +100,7 @@ def test_atomic_event_ingestion_and_delivery_matching(db_session):
         assert dlv.status == "PENDING"
         assert dlv.attempt_count == 0
 
+
 def test_idempotent_event_deduplication(db_session):
     project = db_session.query(Project).first()
     payload = {"payment_id": "pay_2", "amount": 1000}
@@ -108,7 +110,7 @@ def test_idempotent_event_deduplication(db_session):
         project_id=project.id,
         event_type="payment.succeeded",
         payload_data=payload,
-        idempotency_key="idempotent-key-002"
+        idempotency_key="idempotent-key-002",
     )
     assert is_dup1 is False
 
@@ -118,11 +120,12 @@ def test_idempotent_event_deduplication(db_session):
         project_id=project.id,
         event_type="payment.succeeded",
         payload_data=payload,
-        idempotency_key="idempotent-key-002"
+        idempotency_key="idempotent-key-002",
     )
     assert is_dup2 is True
     assert event1.id == event2.id
     assert count1 == count2
+
 
 def test_idempotency_conflict_raises_error(db_session):
     project = db_session.query(Project).first()
@@ -134,7 +137,7 @@ def test_idempotency_conflict_raises_error(db_session):
         project_id=project.id,
         event_type="payment.succeeded",
         payload_data=payload1,
-        idempotency_key="conflict-key-003"
+        idempotency_key="conflict-key-003",
     )
 
     # Reusing same idempotency key with differing payload must raise IdempotencyConflictError
@@ -144,7 +147,7 @@ def test_idempotency_conflict_raises_error(db_session):
             project_id=project.id,
             event_type="payment.succeeded",
             payload_data=payload2,
-            idempotency_key="conflict-key-003"
+            idempotency_key="conflict-key-003",
         )
 
 
@@ -157,7 +160,7 @@ def test_idempotency_conflict_on_event_type_mismatch(db_session):
         project_id=project.id,
         event_type="payment.succeeded",
         payload_data=payload,
-        idempotency_key="conflict-type-key"
+        idempotency_key="conflict-type-key",
     )
 
     # Reusing same key with SAME data but DIFFERENT event_type must raise IdempotencyConflictError
@@ -167,12 +170,13 @@ def test_idempotency_conflict_on_event_type_mismatch(db_session):
             project_id=project.id,
             event_type="order.refunded",
             payload_data=payload,
-            idempotency_key="conflict-type-key"
+            idempotency_key="conflict-type-key",
         )
 
 
 def test_wire_payload_contains_envelope(db_session):
     import json
+
     project = db_session.query(Project).first()
     payload = {"order_id": "ord_99", "status": "paid"}
 
@@ -181,7 +185,7 @@ def test_wire_payload_contains_envelope(db_session):
         project_id=project.id,
         event_type="payment.succeeded",
         payload_data=payload,
-        idempotency_key="envelope-test-key"
+        idempotency_key="envelope-test-key",
     )
 
     # Verify wire_payload envelope
@@ -194,4 +198,3 @@ def test_wire_payload_contains_envelope(db_session):
     # Verify payload_json stores the raw data
     data_json = json.loads(event.payload_json)
     assert data_json == payload
-

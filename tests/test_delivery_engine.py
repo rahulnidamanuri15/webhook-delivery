@@ -20,7 +20,9 @@ def _mock_stream_response(status_code: int = 200, text: str = "", headers: dict 
     mock_resp.headers = headers or {}
     body = (text or "").encode("utf-8")
     # Yield in 4096-byte chunks like the real streaming reader
-    mock_resp.iter_bytes.return_value = [body[i:i+4096] for i in range(0, max(1, len(body)), 4096)] if body else [b""]
+    mock_resp.iter_bytes.return_value = (
+        [body[i : i + 4096] for i in range(0, max(1, len(body)), 4096)] if body else [b""]
+    )
     mock_resp.close.return_value = None
     mock_stream_ctx = MagicMock()
     mock_stream_ctx.__enter__.return_value = mock_resp
@@ -36,6 +38,7 @@ def _mock_stream_response(status_code: int = 200, text: str = "", headers: dict 
     mock_post_resp.headers = headers or {}
     mock_client.post.return_value = mock_post_resp
     return patch("httpx.Client", return_value=mock_client)
+
 
 @pytest.fixture
 def delivery_db():
@@ -56,7 +59,7 @@ def delivery_db():
         project_id=project.id,
         url="http://127.0.0.1:8001/webhook",
         encrypted_signing_secret=encrypt_secret(generate_signing_secret()),
-        enabled=True
+        enabled=True,
     )
     session.add(endpoint)
     session.flush()
@@ -67,6 +70,7 @@ def delivery_db():
 
     yield session
     session.close()
+
 
 def test_successful_delivery(delivery_db):
     project = delivery_db.query(Project).first()
@@ -86,12 +90,13 @@ def test_successful_delivery(delivery_db):
     assert delivery.attempts[0].http_status == 200
     assert delivery.completed_at is not None
 
+
 def test_retryable_error_schedules_backoff(delivery_db):
     project = delivery_db.query(Project).first()
     event, _, _ = ingest_event(delivery_db, project.id, "order.created", {"order_id": "ord_102"})
     delivery = event.deliveries[0]
 
-    with _mock_stream_response(500, 'Internal Server Error'):
+    with _mock_stream_response(500, "Internal Server Error"):
         success = execute_delivery(delivery_db, delivery.id)
         assert success is True
 
@@ -101,19 +106,21 @@ def test_retryable_error_schedules_backoff(delivery_db):
     assert delivery.attempts[0].outcome == "RETRYABLE_ERROR"
     assert delivery.next_attempt_at > delivery.created_at
 
+
 def test_permanent_error_marks_delivery_dead(delivery_db):
     project = delivery_db.query(Project).first()
     event, _, _ = ingest_event(delivery_db, project.id, "order.created", {"order_id": "ord_103"})
     delivery = event.deliveries[0]
 
     # 400 Bad Request is permanent client error
-    with _mock_stream_response(400, 'Bad Request: invalid format'):
+    with _mock_stream_response(400, "Bad Request: invalid format"):
         execute_delivery(delivery_db, delivery.id)
 
     delivery_db.refresh(delivery)
     assert delivery.status == "DEAD"
     assert delivery.attempts[0].outcome == "PERMANENT_ERROR"
     assert delivery.completed_at is not None
+
 
 def test_exhausted_retry_budget_marks_delivery_dead(delivery_db):
     project = delivery_db.query(Project).first()
@@ -124,12 +131,13 @@ def test_exhausted_retry_budget_marks_delivery_dead(delivery_db):
     delivery.attempt_count = settings.MAX_DELIVERY_ATTEMPTS - 1
     delivery_db.commit()
 
-    with _mock_stream_response(503, 'Service Unavailable'):
+    with _mock_stream_response(503, "Service Unavailable"):
         execute_delivery(delivery_db, delivery.id)
 
     delivery_db.refresh(delivery)
     assert delivery.attempt_count == settings.MAX_DELIVERY_ATTEMPTS
     assert delivery.status == "DEAD"
+
 
 def test_crash_recovery_for_abandoned_lease(delivery_db):
     project = delivery_db.query(Project).first()
@@ -151,6 +159,7 @@ def test_crash_recovery_for_abandoned_lease(delivery_db):
     assert delivery.status == "RETRY_SCHEDULED"
     assert delivery.lease_token is None
     assert delivery.lease_expires_at is None
+
 
 def test_manual_replay_creates_linked_delivery(delivery_db):
     project = delivery_db.query(Project).first()
@@ -174,6 +183,7 @@ def test_manual_replay_creates_linked_delivery(delivery_db):
 
 def test_wall_clock_timeout_marks_delivery_retryable(delivery_db):
     import httpx
+
     project = delivery_db.query(Project).first()
     event, _, _ = ingest_event(delivery_db, project.id, "order.created", {"order_id": "ord_107"})
     delivery = event.deliveries[0]
@@ -208,9 +218,11 @@ def test_wall_clock_timeout_marks_delivery_retryable(delivery_db):
 
 def test_dispatcher_enqueues_to_celery_when_enabled(delivery_db):
     from app.workers.dispatcher import dispatch_batch
+
     project = delivery_db.query(Project).first()
     event, _, _ = ingest_event(delivery_db, project.id, "order.created", {"order_id": "ord_celery"})
     delivery = event.deliveries[0]
+    delivery_id = delivery.id
     assert delivery.status == "PENDING"
 
     settings.USE_CELERY = True
@@ -219,8 +231,6 @@ def test_dispatcher_enqueues_to_celery_when_enabled(delivery_db):
             with patch("app.workers.dispatcher.SessionLocal", return_value=delivery_db):
                 count = dispatch_batch()
                 assert count >= 1
-                mock_delay.assert_any_call(delivery.id)
+                mock_delay.assert_any_call(delivery_id)
     finally:
         settings.USE_CELERY = False
-
-

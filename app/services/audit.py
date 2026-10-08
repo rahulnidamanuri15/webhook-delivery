@@ -16,7 +16,7 @@ def log_audit_event(
     user_id: str | None = None,
     ip_address: str | None = None,
     details: dict[str, Any] | None = None,
-    commit: bool = True
+    commit: bool = True,
 ) -> AuditLog:
     """Creates an audit log entry for security and compliance tracking.
 
@@ -31,7 +31,7 @@ def log_audit_event(
         resource_id=resource_id,
         ip_address=ip_address,
         details_json=details_str,
-        created_at=utc_now()
+        created_at=utc_now(),
     )
     db.add(entry)
     if commit:

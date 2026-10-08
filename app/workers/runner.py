@@ -1,4 +1,5 @@
 """Background runner loop for in-process or containerized dispatching."""
+
 import signal
 import threading
 import time
@@ -39,6 +40,7 @@ def _maybe_run_retention() -> None:
         from app.db.session import SessionLocal
         from app.services.retention import purge_expired_data
         from app.services.tracing import start_trace_span as _span
+
         db = SessionLocal()
         try:
             with _span("retention.purge"):
@@ -53,6 +55,7 @@ def _maybe_run_retention() -> None:
 def run_dispatcher_loop(poll_interval: float = 1.0):
     """Continuous polling loop for dispatching webhook deliveries."""
     from app.services.tracing import start_trace_span
+
     logger.info("Starting reliable webhook delivery dispatcher loop...", extra={"poll_interval": poll_interval})
     try:
         if threading.current_thread() is threading.main_thread():

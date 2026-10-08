@@ -39,6 +39,7 @@ def setup_test_db():
     _s.DEBUG = True
     _s.ALLOWED_RECEIVER_DOMAINS = ""
     from app.db.session import engine, Base
+
     Base.metadata.create_all(bind=engine)
     yield
 
@@ -64,4 +65,3 @@ def test_session(test_engine):
         yield s
     finally:
         s.close()
-

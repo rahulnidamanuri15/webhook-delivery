@@ -10,6 +10,7 @@ def test_resolve_and_pin_public_domain():
     assert err is None
     assert "8001" in pinned_url
 
+
 def test_resolve_and_pin_blocks_forbidden():
     settings.ALLOW_LOCAL_RECEIVERS = False
     is_safe, err, pinned_url, headers = resolve_and_pin_destination("http://10.0.0.1:8000/webhook")

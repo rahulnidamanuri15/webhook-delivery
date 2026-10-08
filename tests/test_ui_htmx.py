@@ -238,4 +238,3 @@ def test_favicon_endpoint():
     """Verify favicon endpoint exists and returns 204 No Content."""
     response = client.get("/favicon.ico")
     assert response.status_code == 204
-

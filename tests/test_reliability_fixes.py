@@ -1,5 +1,6 @@
 """Regression tests for audit fixes: Retry-After HTTP-date, prefix wildcards,
 recovery history, replay guards, metrics histogram, tracing propagation."""
+
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 
@@ -25,12 +26,19 @@ def _mem_db():
 def _seed(ep_patterns):
     eng, db = _mem_db()
     org = Organization(name="o")
-    db.add(org); db.flush()
+    db.add(org)
+    db.flush()
     proj = Project(organization_id=org.id, name="p")
-    db.add(proj); db.flush()
-    ep = Endpoint(project_id=proj.id, url="http://127.0.0.1:8001/webhook",
-                   encrypted_signing_secret=encrypt_secret(generate_signing_secret()), enabled=True)
-    db.add(ep); db.flush()
+    db.add(proj)
+    db.flush()
+    ep = Endpoint(
+        project_id=proj.id,
+        url="http://127.0.0.1:8001/webhook",
+        encrypted_signing_secret=encrypt_secret(generate_signing_secret()),
+        enabled=True,
+    )
+    db.add(ep)
+    db.flush()
     for pat in ep_patterns:
         db.add(EndpointSubscription(endpoint_id=ep.id, event_type=pat))
     db.commit()
@@ -73,7 +81,8 @@ def test_prefix_wildcard_end_to_end():
         assert len(matched) == 1
         assert get_matching_endpoints(db, proj.id, "payment.succeeded") == []
     finally:
-        db.close(); eng.dispose()
+        db.close()
+        eng.dispose()
 
 
 def test_recovery_writes_attempt_history():
@@ -93,7 +102,8 @@ def test_recovery_writes_attempt_history():
         assert len(dlv.attempts) == 1
         assert dlv.attempts[0].error_code == "LEASE_EXPIRED"
     finally:
-        db.close(); eng.dispose()
+        db.close()
+        eng.dispose()
 
 
 def test_replay_only_dead():
@@ -103,14 +113,17 @@ def test_replay_only_dead():
         dlv = evt.deliveries[0]
         # PENDING cannot be replayed
         assert replay_delivery(db, dlv.id) is None
-        dlv.status = "RETRY_SCHEDULED"; db.commit()
+        dlv.status = "RETRY_SCHEDULED"
+        db.commit()
         assert replay_delivery(db, dlv.id) is None
-        dlv.status = "DEAD"; db.commit()
+        dlv.status = "DEAD"
+        db.commit()
         nd = replay_delivery(db, dlv.id)
         assert nd is not None and nd.replay_of_delivery_id == dlv.id
         assert nd.status == "PENDING" and nd.attempt_count == 0
     finally:
-        db.close(); eng.dispose()
+        db.close()
+        eng.dispose()
 
 
 def test_metrics_histogram_and_per_endpoint():
@@ -122,7 +135,8 @@ def test_metrics_histogram_and_per_endpoint():
         assert 'le="+Inf"' in out
         assert "webhook_deliveries_by_endpoint" in out
     finally:
-        db.close(); eng.dispose()
+        db.close()
+        eng.dispose()
 
 
 def test_trace_propagation_injects():
@@ -142,6 +156,7 @@ def test_retry_after_capped_at_max():
 
 def test_ssrf_pinning_and_prohibited_ips():
     from app.services.ssrf import resolve_and_pin_destination
+
     # Private IP should be rejected
     res = resolve_and_pin_destination("https://10.0.0.1:8080/webhook")
     assert not res.is_safe
@@ -150,6 +165,7 @@ def test_ssrf_pinning_and_prohibited_ips():
 
 def test_disabled_endpoint_defers_without_dead_status():
     from app.services.delivery_service import execute_delivery
+
     eng, db, proj, ep = _seed(["*"])
     try:
         evt, _, _ = ingest_event(db, proj.id, "t.defer", {"test": True})
@@ -165,13 +181,14 @@ def test_disabled_endpoint_defers_without_dead_status():
         assert dlv.status == "RETRY_SCHEDULED"
         assert dlv.attempt_count == 0  # Attempt budget preserved
     finally:
-        db.close(); eng.dispose()
+        db.close()
+        eng.dispose()
 
 
 def test_session_token_denylist():
     from app.services.security import create_session_token, invalidate_session_token, is_session_token_denied
+
     tok = create_session_token("user123")
     assert not is_session_token_denied(tok)
     invalidate_session_token(tok)
     assert is_session_token_denied(tok)
-

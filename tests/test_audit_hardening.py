@@ -1,4 +1,5 @@
 """Tests for deployment hardening, RBAC masking, input bounds, and fail-fast validation."""
+
 from unittest.mock import MagicMock
 import uuid
 import pytest
@@ -31,8 +32,8 @@ def test_config_production_failfast():
             ENV="production",
             DEBUG=False,
             DATABASE_URL="sqlite:///test.db",
-            SECRET_KEY="A"*64,
-            SIGNING_SECRET_ENCRYPTION_KEY="B"*43 + "=",
+            SECRET_KEY="A" * 64,
+            SIGNING_SECRET_ENCRYPTION_KEY="B" * 43 + "=",
             API_KEY_PEPPER="pepper_is_long_enough",
             METRICS_API_KEY="metrics_key_is_long_enough",
             ALLOW_LOCAL_RECEIVERS=False,
@@ -45,8 +46,8 @@ def test_config_production_failfast():
             ENV="Production",  # Case-insensitive
             DEBUG=True,
             DATABASE_URL="postgresql+psycopg://user:strongpass@host/db",
-            SECRET_KEY="A"*64,
-            SIGNING_SECRET_ENCRYPTION_KEY="B"*43 + "=",
+            SECRET_KEY="A" * 64,
+            SIGNING_SECRET_ENCRYPTION_KEY="B" * 43 + "=",
             API_KEY_PEPPER="pepper_is_long_enough",
             METRICS_API_KEY="metrics_key_is_long_enough",
             ALLOW_LOCAL_RECEIVERS=False,
@@ -83,7 +84,7 @@ def test_rbac_endpoint_secret_masking():
             project_id=proj.id,
             url="https://example.com/webhook",
             encrypted_signing_secret=encrypt_secret(raw_secret),
-            enabled=True
+            enabled=True,
         )
         db.add(ep)
         db.commit()
@@ -91,8 +92,7 @@ def test_rbac_endpoint_secret_masking():
         # 1. Owner can view decrypted secret
         owner_token = create_session_token(user_owner.id, org_id=org.id, project_id=proj.id)
         res_owner = client.get(
-            f"/dashboard/endpoints/{ep.id}",
-            cookies={"wh_session": owner_token, "wh_active_project_id": proj.id}
+            f"/dashboard/endpoints/{ep.id}", cookies={"wh_session": owner_token, "wh_active_project_id": proj.id}
         )
         assert res_owner.status_code == 200
         assert raw_secret in res_owner.text
@@ -100,8 +100,7 @@ def test_rbac_endpoint_secret_masking():
         # 2. Member cannot view decrypted secret (masked)
         member_token = create_session_token(user_member.id, org_id=org.id, project_id=proj.id)
         res_member = client.get(
-            f"/dashboard/endpoints/{ep.id}",
-            cookies={"wh_session": member_token, "wh_active_project_id": proj.id}
+            f"/dashboard/endpoints/{ep.id}", cookies={"wh_session": member_token, "wh_active_project_id": proj.id}
         )
         assert res_member.status_code == 200
         assert raw_secret not in res_member.text
@@ -112,6 +111,7 @@ def test_rbac_endpoint_secret_masking():
 
 def test_invite_token_masked_for_members():
     from app.models.invitation import OrganizationInvitation
+
     db = SessionLocal()
     client = TestClient(app)
     uid = uuid.uuid4().hex[:6]
@@ -136,16 +136,13 @@ def test_invite_token_masked_for_members():
             organization_id=org.id,
             email=f"pending_{uid}@example.com",
             role="member",
-            token=f"super_secret_invite_token_{uid}"
+            token=f"super_secret_invite_token_{uid}",
         )
         db.add(inv)
         db.commit()
 
         member_token = create_session_token(user_member.id, org_id=org.id, project_id=proj.id)
-        res = client.get(
-            "/dashboard/team",
-            cookies={"wh_session": member_token, "wh_active_project_id": proj.id}
-        )
+        res = client.get("/dashboard/team", cookies={"wh_session": member_token, "wh_active_project_id": proj.id})
         assert res.status_code == 200
         # Token must not leak to read-only members
         assert f"super_secret_invite_token_{uid}" not in res.text
@@ -173,19 +170,11 @@ def test_project_name_bounds():
         cookies = {"wh_session": token, "wh_active_project_id": proj.id}
 
         # Empty name rejected
-        res_empty = client.post(
-            "/dashboard/projects",
-            data={"name": "   ", "csrf_token": csrf},
-            cookies=cookies
-        )
+        res_empty = client.post("/dashboard/projects", data={"name": "   ", "csrf_token": csrf}, cookies=cookies)
         assert res_empty.status_code == 400
 
         # Overly long name (>100 chars) rejected
-        res_long = client.post(
-            "/dashboard/projects",
-            data={"name": "x" * 101, "csrf_token": csrf},
-            cookies=cookies
-        )
+        res_long = client.post("/dashboard/projects", data={"name": "x" * 101, "csrf_token": csrf}, cookies=cookies)
         assert res_long.status_code == 400
 
         # Valid name accepted
@@ -193,7 +182,7 @@ def test_project_name_bounds():
             "/dashboard/projects",
             data={"name": f"Valid {uid}", "csrf_token": csrf},
             cookies=cookies,
-            follow_redirects=False
+            follow_redirects=False,
         )
         assert res_ok.status_code in (200, 302, 303)
     finally:
@@ -220,11 +209,7 @@ def test_api_key_name_bounds():
         cookies = {"wh_session": token, "wh_active_project_id": proj.id}
 
         # Name >100 chars rejected with 400
-        res_long = client.post(
-            "/dashboard/api-keys",
-            data={"name": "k" * 101, "csrf_token": csrf},
-            cookies=cookies
-        )
+        res_long = client.post("/dashboard/api-keys", data={"name": "k" * 101, "csrf_token": csrf}, cookies=cookies)
         assert res_long.status_code == 400
         assert "between 1 and 100 characters" in res_long.text
     finally:
@@ -242,7 +227,7 @@ def test_email_validation():
     res = client.post(
         "/auth/register",
         data={"email": "not-an-email", "password": "Password123!", "csrf_token": csrf_tok},
-        cookies={"wh_csrf_id": anon_csrf_id}
+        cookies={"wh_csrf_id": anon_csrf_id},
     )
     assert res.status_code == 400
     assert "Invalid email address format" in res.text
@@ -250,6 +235,7 @@ def test_email_validation():
 
 def test_demo_receiver_config_validation():
     from demo_receiver.app import app as demo_app
+
     demo_client = TestClient(demo_app)
 
     # Invalid mode

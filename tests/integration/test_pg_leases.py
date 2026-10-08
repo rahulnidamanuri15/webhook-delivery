@@ -1,4 +1,5 @@
 """PG locking test: runs against real PostgreSQL in CI, skips locally on SQLite."""
+
 import os
 
 import pytest
@@ -28,17 +29,30 @@ def test_pg_dispatcher_finds_due():
     db = S()
     try:
         org = Organization(name="pg-org")
-        db.add(org); db.flush()
+        db.add(org)
+        db.flush()
         proj = Project(organization_id=org.id, name="pg-proj")
-        db.add(proj); db.flush()
-        ep = Endpoint(project_id=proj.id, url="http://127.0.0.1:8001/webhook",
-                       encrypted_signing_secret=encrypt_secret(generate_signing_secret()), enabled=True)
-        db.add(ep); db.flush()
+        db.add(proj)
+        db.flush()
+        ep = Endpoint(
+            project_id=proj.id,
+            url="http://127.0.0.1:8001/webhook",
+            encrypted_signing_secret=encrypt_secret(generate_signing_secret()),
+            enabled=True,
+        )
+        db.add(ep)
+        db.flush()
         db.add(EndpointSubscription(endpoint_id=ep.id, event_type="*"))
         db.commit()
         evt, _, _ = ingest_event(db, proj.id, "pg.test", {"n": 1})
-        ids = get_due_delivery_ids(db, batch_size=10)
+        ids = get_due_delivery_ids(db, batch_size=100)
         assert evt.deliveries[0].id in ids
     finally:
+        try:
+            db.delete(proj)
+            db.delete(org)
+            db.commit()
+        except Exception:
+            pass
         db.close()
         eng.dispose()

@@ -37,8 +37,6 @@ from app.workers.dispatcher import dispatch_batch
 from app.workers.recovery import run_recovery_cycle
 
 
-from sqlalchemy.pool import StaticPool
-
 @pytest.fixture
 def scenario_db(tmp_path):
     db_file = tmp_path / "scenario.db"
@@ -95,6 +93,7 @@ def scenario_db(tmp_path):
 
 def _mock_fast_and_slow_stream():
     """Mock for httpx.Client that simulates fast vs slow responses based on URL."""
+
     def client_factory(*args, **kwargs):
         client = MagicMock()
         client.__enter__.return_value = client
@@ -257,17 +256,13 @@ def test_stale_worker_cannot_overwrite_state_under_concurrency(scenario_db):
 def test_dashboard_escapes_xss_payloads(scenario_db):
     """Dashboard HTML templates safely escape malicious script payloads."""
     from app.db.session import get_db
+
     project = scenario_db.query(Project).first()
     user = scenario_db.query(User).first()
     org = scenario_db.query(Organization).first()
 
     xss_content = "<script>alert('xss_attack')</script>"
-    event, _, _ = ingest_event(
-        scenario_db,
-        project.id,
-        "xss.event",
-        {"malicious": xss_content}
-    )
+    event, _, _ = ingest_event(scenario_db, project.id, "xss.event", {"malicious": xss_content})
 
     app.dependency_overrides[get_db] = lambda: scenario_db
     try:
