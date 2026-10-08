@@ -62,6 +62,7 @@ def test_prefix_wildcard_matching():
     assert _subscription_matches("order.*", "order.created")
     assert not _subscription_matches("order.*", "orders.shipped")
     assert not _subscription_matches("order.*", "payment.succeeded")
+    assert not _subscription_matches("order.*", "order")
     assert not _subscription_matches("payment.*", "order.shipped")
 
 
@@ -130,3 +131,47 @@ def test_trace_propagation_injects():
     # No-op still returns dict; when OTel present, traceparent appears.
     assert isinstance(out, dict)
     assert "Content-Type" in out
+
+
+def test_retry_after_capped_at_max():
+    # Large Retry-After should be capped at MAX_RETRY_AFTER_CAP (300 seconds)
+    assert calculate_backoff_seconds(1, "1000") == 300
+    assert calculate_backoff_seconds(1, "300") == 300
+    assert calculate_backoff_seconds(1, "60") == 60
+
+
+def test_ssrf_pinning_and_prohibited_ips():
+    from app.services.ssrf import resolve_and_pin_destination
+    # Private IP should be rejected
+    res = resolve_and_pin_destination("https://10.0.0.1:8080/webhook")
+    assert not res.is_safe
+    assert "restricted or private network range" in (res.error or "")
+
+
+def test_disabled_endpoint_defers_without_dead_status():
+    from app.services.delivery_service import execute_delivery
+    eng, db, proj, ep = _seed(["*"])
+    try:
+        evt, _, _ = ingest_event(db, proj.id, "t.defer", {"test": True})
+        dlv = evt.deliveries[0]
+        # Disable endpoint while delivery is pending
+        ep.enabled = False
+        db.commit()
+        # Attempt delivery to disabled endpoint
+        success = execute_delivery(db, dlv.id)
+        assert not success
+        db.refresh(dlv)
+        # Should be deferred (RETRY_SCHEDULED), NOT marked DEAD
+        assert dlv.status == "RETRY_SCHEDULED"
+        assert dlv.attempt_count == 0  # Attempt budget preserved
+    finally:
+        db.close(); eng.dispose()
+
+
+def test_session_token_denylist():
+    from app.services.security import create_session_token, invalidate_session_token, is_session_token_denied
+    tok = create_session_token("user123")
+    assert not is_session_token_denied(tok)
+    invalidate_session_token(tok)
+    assert is_session_token_denied(tok)
+

@@ -13,3 +13,6 @@ __pycache__/
 node_modules/
 *.egg-info/
 *.bak
+*.pem
+deploy/tls/*.pem
+!deploy/tls/.gitkeep

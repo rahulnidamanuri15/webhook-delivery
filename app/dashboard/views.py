@@ -1,10 +1,13 @@
 import json
+import re
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+
+_EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
 
 from app.api.deps import get_optional_user
 from app.config import settings
@@ -45,7 +48,9 @@ _DUMMY_LOGIN_HASH: str | None = None
 def is_cookie_secure() -> bool:
     if settings.COOKIE_SECURE is not None:
         return settings.COOKIE_SECURE
-    return settings.ENV == "production" or not settings.DEBUG
+    if str(settings.ENV or "").strip().lower() == "production":
+        return True
+    return not settings.DEBUG
 
 def assert_csrf(request: Request, csrf_token: str | None = None):
     """Enforces CSRF protection on state-changing dashboard requests."""
@@ -293,6 +298,12 @@ def register_post(
             status_code=429
         )
     email = email.strip().lower()
+    if not _EMAIL_REGEX.match(email):
+        return templates.TemplateResponse(
+            "auth/register.html",
+            {"request": request, "error": "Invalid email address format.", "current_user": None},
+            status_code=400
+        )
     existing = db.query(User).filter(User.email == email).first()
     if existing:
         return templates.TemplateResponse(
@@ -368,7 +379,8 @@ def register_post(
 
 
 @router.post("/auth/logout")
-def logout(request: Request):
+def logout(request: Request, csrf_token: str | None = Form(None)):
+    assert_csrf(request, csrf_token)
     from app.services.security import invalidate_session_token
     token = request.cookies.get("wh_session")
     if token:
@@ -449,6 +461,7 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
 
     recent_deliveries = (
         delivery_base
+        .options(joinedload(Delivery.event), joinedload(Delivery.endpoint))
         .order_by(Delivery.created_at.desc())
         .limit(15)
         .all()
@@ -739,6 +752,13 @@ def list_projects(request: Request, db: Session = Depends(get_db)):
     user, org, project = get_user_and_project(request, db)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
+    if not org:
+        return templates.TemplateResponse("projects/index.html", {
+            "request": request,
+            "current_user": user,
+            "current_project": None,
+            "projects": []
+        })
 
     projects = db.query(Project).filter(Project.organization_id == org.id).order_by(Project.created_at.desc()).all()
     return templates.TemplateResponse("projects/index.html", {
@@ -759,8 +779,15 @@ def create_project(
     user, org, _ = get_user_and_project(request, db)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
+    if not org:
+        raise HTTPException(status_code=400, detail="No active organization")
+    require_manager(db, org, user)
 
-    new_project = Project(organization_id=org.id, name=name.strip())
+    clean_name = (name or "").strip()
+    if not (1 <= len(clean_name) <= 100):
+        raise HTTPException(status_code=400, detail="Project name must be between 1 and 100 characters")
+
+    new_project = Project(organization_id=org.id, name=clean_name)
     db.add(new_project)
     db.commit()
 
@@ -961,9 +988,13 @@ def endpoint_detail(endpoint_id: str, request: Request, db: Session = Depends(ge
     if not endpoint:
         raise HTTPException(status_code=404, detail="Endpoint not found")
 
-    decrypted_secret = decrypt_secret(endpoint.encrypted_signing_secret)
+    membership = get_membership(db, org.id, user.id)
+    is_mgr = bool(membership and membership.role in ("owner", "admin"))
+    decrypted_secret = decrypt_secret(endpoint.encrypted_signing_secret) if is_mgr else None
+
     recent_deliveries = (
         db.query(Delivery)
+        .options(joinedload(Delivery.event))
         .filter(Delivery.endpoint_id == endpoint.id)
         .order_by(Delivery.created_at.desc())
         .limit(20)
@@ -1186,10 +1217,19 @@ def ping_endpoint(
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
+    require_manager(db, org, user)
 
     endpoint = db.query(Endpoint).filter(Endpoint.id == endpoint_id, Endpoint.project_id == project.id).first()
     if not endpoint:
         raise HTTPException(status_code=404, detail="Endpoint not found")
+
+    # Throttle dashboard ingest the same as the public API (prevents member/CSRF fan-out).
+    from app.services.rate_limiter import check_ingestion_rate_limit
+    _allowed, _wait = check_ingestion_rate_limit(
+        project.id, max_per_second=float(settings.INGESTION_RATE_LIMIT_PER_SECOND)
+    )
+    if not _allowed:
+        raise HTTPException(status_code=429, detail="Ingestion rate limit exceeded. Try again shortly.")
 
     # Ingest a ping event
     ping_payload = {
@@ -1261,17 +1301,39 @@ def send_test_event_post(
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
+    require_manager(db, org, user)
+
+    # Same throttle as public ingest + idempotency-key bound (DB column is 255).
+    _idem = idempotency_key.strip() if idempotency_key and idempotency_key.strip() else None
+    if _idem and len(_idem) > 255:
+        return templates.TemplateResponse("events/send_test.html", {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "message": "Idempotency-Key must be \u2264255 characters.",
+            "message_type": "error"
+        }, status_code=400)
+    from app.services.rate_limiter import check_ingestion_rate_limit as _check_ingest
+    _ok, _wait = _check_ingest(project.id, max_per_second=float(settings.INGESTION_RATE_LIMIT_PER_SECOND))
+    if not _ok:
+        return templates.TemplateResponse("events/send_test.html", {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "message": "Ingestion rate limit exceeded. Try again shortly.",
+            "message_type": "error"
+        }, status_code=429)
 
     try:
         parsed_data = json.loads(payload_data)
         if not isinstance(parsed_data, dict):
             raise ValueError("Payload must be a JSON object.")
-    except Exception as e:
+    except Exception:
         return templates.TemplateResponse("events/send_test.html", {
             "request": request,
             "current_user": user,
             "current_project": project,
-            "message": f"Invalid JSON payload: {e}",
+            "message": "Invalid JSON payload: please provide a valid JSON object.",
             "message_type": "error"
         }, status_code=400)
 
@@ -1291,14 +1353,25 @@ def send_test_event_post(
             project_id=project.id,
             event_type=event_type.strip(),
             payload_data=parsed_data,
-            idempotency_key=idempotency_key.strip() if idempotency_key else None
+            idempotency_key=_idem
         )
-    except Exception as e:
+    except ValueError as e:
+        safe_msg = str(e) if str(e).startswith(("Event type", "Payload", "Idempotency-Key")) else "Invalid event data."
         return templates.TemplateResponse("events/send_test.html", {
             "request": request,
             "current_user": user,
             "current_project": project,
-            "message": f"Event ingestion error: {e}",
+            "message": f"Event ingestion error: {safe_msg}",
+            "message_type": "error"
+        }, status_code=400)
+    except Exception:
+        import logging as _logging
+        _logging.getLogger("webhook.dashboard").exception("send-test ingest failed")
+        return templates.TemplateResponse("events/send_test.html", {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "message": "Event ingestion failed. Please check your payload and try again.",
             "message_type": "error"
         }, status_code=400)
 
@@ -1328,7 +1401,7 @@ def event_detail_view(event_id: str, request: Request, page: int = 1, db: Sessio
     _total_pages = max(1, (_total + per_page - 1) // per_page)
     if page > _total_pages:
         page = _total_pages
-    _deliveries = _dq.offset((page - 1) * per_page).limit(per_page).all()
+    _deliveries = _dq.options(joinedload(Delivery.endpoint)).offset((page - 1) * per_page).limit(per_page).all()
 
     return templates.TemplateResponse("events/detail.html", {
         "request": request,
@@ -1359,7 +1432,13 @@ def list_deliveries(request: Request, status: str | None = None, page: int = 1, 
     per_page = 20
     total_count = query.count()
     total_pages = max(1, (total_count + per_page - 1) // per_page)
-    deliveries = query.order_by(Delivery.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+    deliveries = (
+        query.options(joinedload(Delivery.event), joinedload(Delivery.endpoint))
+        .order_by(Delivery.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
     dead_count = db.query(Delivery).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id, Delivery.status == "DEAD").count()
 
     return templates.TemplateResponse("deliveries/index.html", {
@@ -1531,11 +1610,23 @@ def create_api_key_post(
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
     require_manager(db, org, user)
+    clean_name = (name or "").strip()
+    if not (1 <= len(clean_name) <= 100):
+        keys = db.query(ApiKey).filter(ApiKey.project_id == project.id).order_by(ApiKey.created_at.desc()).all()
+        return templates.TemplateResponse("api_keys/index.html", {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "api_keys": keys,
+            "new_key": None,
+            "message": "API key name must be between 1 and 100 characters.",
+            "message_type": "error"
+        }, status_code=400)
 
     full_key, key_prefix, key_hash = generate_api_key()
     api_key_obj = ApiKey(
         project_id=project.id,
-        name=name.strip(),
+        name=clean_name,
         key_prefix=key_prefix,
         key_hash=key_hash
     )
@@ -1630,9 +1721,26 @@ def list_team(request: Request, db: Session = Depends(get_db)):
     if not user or not org:
         return RedirectResponse(url="/auth/login", status_code=302)
 
+    membership = get_membership(db, org.id, user.id)
+    is_mgr = bool(membership and membership.role in ("owner", "admin"))
+
     from app.models.invitation import OrganizationInvitation
-    members = db.query(OrganizationMember).filter(OrganizationMember.organization_id == org.id).all()
-    invitations = db.query(OrganizationInvitation).filter(OrganizationInvitation.organization_id == org.id).order_by(OrganizationInvitation.created_at.desc()).all()
+    members = (
+        db.query(OrganizationMember)
+        .options(joinedload(OrganizationMember.user))
+        .filter(OrganizationMember.organization_id == org.id)
+        .all()
+    )
+    invitations = (
+        db.query(OrganizationInvitation)
+        .filter(OrganizationInvitation.organization_id == org.id)
+        .order_by(OrganizationInvitation.created_at.desc())
+        .all()
+    )
+
+    if not is_mgr:
+        for inv in invitations:
+            inv.token = None
 
     return templates.TemplateResponse("team/index.html", {
         "request": request,
@@ -1640,7 +1748,8 @@ def list_team(request: Request, db: Session = Depends(get_db)):
         "current_project": project,
         "current_org": org,
         "members": members,
-        "invitations": invitations
+        "invitations": invitations,
+        "is_manager": is_mgr,
     })
 
 @router.post("/dashboard/team/invite")
@@ -1666,6 +1775,8 @@ def invite_team_member(
         raise HTTPException(status_code=403, detail="Only organization owners and admins can invite team members.")
 
     email_clean = email.strip().lower()
+    if not _EMAIL_REGEX.match(email_clean) or len(email_clean) > 255:
+        raise HTTPException(status_code=400, detail="Invalid email address.")
     # Invite throttle + dedup: prevent spam / mass-invite DoS
     from app.services.rate_limiter import check_invite_rate_limit
     _inv_allowed, _inv_wait = check_invite_rate_limit(org.id)
@@ -1887,7 +1998,7 @@ def accept_invitation_post(
                     "current_user": None,
                     "error": "Password must be 8..128 chars with 3 of: uppercase, lowercase, digit, symbol."
                 }, status_code=400)
-            user = User(email=invitation.email.lower(), password_hash=hash_password(password))
+            user = User(email=invitation.email.lower(), password_hash=hash_password(_pw))
             db.add(user)
             db.flush()
 

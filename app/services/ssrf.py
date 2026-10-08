@@ -55,45 +55,54 @@ def is_domain_allowed(hostname: str) -> tuple[bool, str | None]:
         f"({', '.join(allowlist)})."
     )
 
-def validate_webhook_url(url: str) -> tuple[bool, str | None]:
-    """
-    Validates a destination URL against SSRF attacks (scheme, credentials, and DNS resolution).
-    Returns:
-        (is_valid: bool, error_message: Optional[str])
-    """
+def _validate_url_syntax_and_domain(url: str):
+    """Performs URL syntax, scheme, credential, length, and domain checks without DNS."""
     if not url or not isinstance(url, str):
-        return False, "URL cannot be empty."
+        return False, "URL cannot be empty.", None
 
     try:
         parsed = urlparse(url.strip())
     except Exception:
-        return False, "Malformed URL."
+        return False, "Malformed URL.", None
 
     allowed_schemes = ("http", "https") if (settings.DEBUG or settings.ALLOW_LOCAL_RECEIVERS) else ("https",)
     if parsed.scheme.lower() not in allowed_schemes:
-        return False, f"URL scheme must be one of: {', '.join(allowed_schemes)}."
+        return False, f"URL scheme must be one of: {', '.join(allowed_schemes)}.", parsed
 
     if parsed.username or parsed.password:
-        return False, "URLs with embedded credentials are not allowed."
+        return False, "URLs with embedded credentials are not allowed.", parsed
 
     hostname = parsed.hostname
     if not hostname:
-        return False, "URL must contain a valid hostname."
+        return False, "URL must contain a valid hostname.", parsed
 
-    # Public-demo domain allowlist (checked before localhost exception so that
-    # a configured allowlist also restricts even local names unless listed).
+    # Public-demo domain allowlist (checked before localhost exception)
     allowed, allow_err = is_domain_allowed(hostname)
     if not allowed:
-        return False, allow_err
+        return False, allow_err, parsed
 
-    # Allow localhost / 127.0.0.1 and Docker container hosts for local demo receiver in development
+    # Length + label guards (avoid tiny DoS via 2KB hostnames / deep labels)
+    if len(hostname) > 253 or len(url) > 2048:
+        return False, "URL or hostname too long.", parsed
+
+    return True, None, parsed
+
+
+def validate_webhook_url(url: str) -> tuple[bool, str | None]:
+    """Validates a destination URL against SSRF attacks (scheme, credentials, and DNS resolution).
+
+    Returns:
+        (is_valid: bool, error_message: Optional[str])
+    """
+    ok, err, parsed = _validate_url_syntax_and_domain(url)
+    if not ok:
+        return False, err
+
+    hostname = parsed.hostname
     local_hosts = ("localhost", "127.0.0.1", "::1", "demo_receiver", "webhook_demo_receiver", "host.docker.internal")
     if settings.ALLOW_LOCAL_RECEIVERS and hostname.lower() in local_hosts:
         return True, None
 
-    # Length + label guards (avoidtiny DoS via 2KB hostnames / deep labels)
-    if len(hostname) > 253 or len(url) > 2048:
-        return False, "URL or hostname too long."
     # Resolve hostname to IP addresses and verify against restricted ranges
     try:
         addr_info = _getaddrinfo_timeout(hostname, None)
@@ -128,41 +137,37 @@ class PinnedResolutionResult(tuple):
 
 
 def resolve_and_pin_destination(url: str) -> PinnedResolutionResult:
-    """
-    DNS Rebinding Protection:
-    Resolves the hostname, validates every resolved IP address against restricted non-global ranges,
-    and returns a PinnedResolutionResult with verified pinned IP while preserving original URL scheme/host
-    so TLS SNI and server certificate validation succeed for real HTTPS endpoints.
+    """DNS Rebinding Protection:
+    Resolves the hostname once, validates every resolved IP address against restricted
+    non-global ranges, and returns a PinnedResolutionResult with verified pinned IP.
+    Single resolution eliminates double-DNS TOCTOU rebinding vulnerability.
 
     Returns:
         PinnedResolutionResult(is_safe, error, connection_url, pinned_headers, pinned_ip)
     """
     url = url.strip()
-    is_valid, err = validate_webhook_url(url)
-    if not is_valid:
+    ok, err, parsed = _validate_url_syntax_and_domain(url)
+    if not ok:
         return PinnedResolutionResult(False, err, url, {})
 
-    parsed = urlparse(url)
     hostname = parsed.hostname
-
-    # If already an IP or in dev demo mode allowing localhost / Docker hosts
     local_hosts = ("localhost", "127.0.0.1", "::1", "demo_receiver", "webhook_demo_receiver", "host.docker.internal")
     if settings.ALLOW_LOCAL_RECEIVERS and hostname and hostname.lower() in local_hosts:
         return PinnedResolutionResult(True, None, url, {"Host": parsed.netloc}, None)
 
     try:
-        # Resolve addresses right before outbound request (bounded timeout)
+        # Resolve addresses ONCE right before outbound request (bounded timeout)
         addr_info = _getaddrinfo_timeout(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
         if not addr_info:
             return PinnedResolutionResult(False, "Could not resolve destination IP.", url, {})
 
-        # Validate all addresses
+        # Validate all addresses from this single resolution
         for family, _, _, _, sockaddr in addr_info:
             ip_str = sockaddr[0]
             if is_ip_prohibited(ip_str):
                 return PinnedResolutionResult(
                     False,
-                    f"DNS rebinding attack prevented: resolved IP {ip_str} is restricted.",
+                    f"Destination IP {ip_str} is within a restricted or private network range.",
                     url,
                     {}
                 )
@@ -173,5 +178,7 @@ def resolve_and_pin_destination(url: str) -> PinnedResolutionResult:
         headers = {"Host": parsed.netloc}
         return PinnedResolutionResult(True, None, url, headers, pinned_ip=first_ip)
 
+    except socket.gaierror:
+        return PinnedResolutionResult(False, f"Hostname '{hostname}' could not be resolved.", url, {})
     except Exception as e:
         return PinnedResolutionResult(False, f"DNS resolution failed: {e}", url, {})

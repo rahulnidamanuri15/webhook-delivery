@@ -218,3 +218,24 @@ def test_htmx_inspector_drawer_cross_tenant_isolation(htmx_test_data):
         cookies={"wh_session": htmx_test_data["session_b"]},
     )
     assert response.status_code == 404
+
+
+def test_csp_allows_htmx_eval_and_chartjs(htmx_test_data):
+    """Verify CSP headers allow 'unsafe-eval' for HTMX and Chart.js."""
+    response = client.get(
+        "/dashboard",
+        cookies={"wh_session": htmx_test_data["session_a"]},
+    )
+    assert response.status_code == 200
+    csp = response.headers.get("Content-Security-Policy", "")
+    assert "'unsafe-eval'" in csp
+    assert "'unsafe-inline'" in csp
+    # Script tag for chart.js must not have defer (to ensure it is ready before inline body scripts execute)
+    assert '<script src="/static/js/chart.umd.min.js"></script>' in response.text
+
+
+def test_favicon_endpoint():
+    """Verify favicon endpoint exists and returns 204 No Content."""
+    response = client.get("/favicon.ico")
+    assert response.status_code == 204
+

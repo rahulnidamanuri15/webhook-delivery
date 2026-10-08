@@ -75,6 +75,7 @@
         <p class="text-xs text-slate-500">
           This secret is encrypted in PostgreSQL and used to generate HMAC-SHA256 signatures for every outgoing request.
         </p>
+        {% if decrypted_secret %}
         <div class="flex items-center space-x-2">
           <div class="flex-1 bg-slate-900 px-3 py-2 rounded-lg font-mono text-xs text-indigo-300 select-all truncate border border-slate-800" id="signing-secret-text">
             {{ decrypted_secret }}
@@ -91,6 +92,11 @@
             </button>
           </form>
         </div>
+        {% else %}
+        <div class="bg-slate-100 px-3 py-2 rounded-lg font-mono text-xs text-slate-500 border border-slate-200">
+          whsec_•••••••••••••••• (visible to owners and admins only)
+        </div>
+        {% endif %}
 
         <div class="pt-2">
           <span class="text-xs font-bold text-slate-700 uppercase tracking-wider">Subscribed Events:</span>

@@ -45,7 +45,7 @@ services:
     container_name: webhook_web
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${WEB_PORT_BINDING:-127.0.0.1:8080}:8080"
     environment:
       - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword_dev_only_change_in_prod}@postgres:5432/${POSTGRES_DB:-webhook_platform}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
@@ -98,7 +98,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -c "alembic upgrade head && python scripts/seed.py"
+    command: python scripts/seed.py
 
   # Standalone dispatcher loop (non-Celery mode only).
   # Prod with USE_CELERY=True uses celery_beat for dispatch — do NOT run

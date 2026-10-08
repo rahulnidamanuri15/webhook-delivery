@@ -14,15 +14,38 @@ name: webhook-delivery-prod
 services:
   postgres:
     ports: []  # never expose DB publicly in prod; app network only
+    mem_limit: 1g
+    cpus: 2.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production}
 
   redis:
     ports: []
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is required in production}
 
   web:
+    # Never expose :8080 directly in prod — traffic must go via reverse_proxy (:80/:443).
+    ports: []
+    mem_limit: 512m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       - ENV=production
       - DEBUG=False
@@ -35,10 +58,58 @@ services:
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:?ALLOWED_RECEIVER_DOMAINS is required in production}
       - USE_CELERY=True
       - ENABLE_INPROCESS_DISPATCHER=False
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
 
   celery_worker:
+    mem_limit: 1g
+    cpus: 2.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       - ENV=production
+      - DEBUG=False
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required in production}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY is required in production}
+      - API_KEY_PEPPER=${API_KEY_PEPPER:?API_KEY_PEPPER is required in production}
+      - METRICS_API_KEY=${METRICS_API_KEY:?METRICS_API_KEY is required in production}
+      - REDIS_URL=${REDIS_URL:?REDIS_URL with password is required}
+      - ALLOW_LOCAL_RECEIVERS=False
+      - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:?ALLOWED_RECEIVER_DOMAINS is required in production}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+  celery_beat:
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    environment:
+      - ENV=production
+      - DEBUG=False
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required in production}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY is required in production}
+      - API_KEY_PEPPER=${API_KEY_PEPPER:?API_KEY_PEPPER is required in production}
+      - REDIS_URL=${REDIS_URL:?REDIS_URL with password is required}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+  # Fail-closed if accidentally enabled in prod: force production env + secrets
+  # so placeholder defaults can never run against the prod DB.
+  dispatcher:
+    mem_limit: 512m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    environment:
+      - ENV=production
+      - DEBUG=False
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required in production}
       - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY is required in production}
       - API_KEY_PEPPER=${API_KEY_PEPPER:?API_KEY_PEPPER is required in production}
@@ -46,13 +117,9 @@ services:
       - ALLOW_LOCAL_RECEIVERS=False
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:?ALLOWED_RECEIVER_DOMAINS is required in production}
 
-  celery_beat:
+  seed:
     environment:
-      - ENV=production
-      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required in production}
-      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY is required in production}
-      - API_KEY_PEPPER=${API_KEY_PEPPER:?API_KEY_PEPPER is required in production}
-      - REDIS_URL=${REDIS_URL:?REDIS_URL with password is required}
+      - ENV=${ENV:?ENV must be explicitly set to run seed (refuses production in scripts/seed.py)}
 
   reverse_proxy:
     ports:

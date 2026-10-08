@@ -41,7 +41,7 @@ class OrganizationMember(Base):
     id = Column(String(32), primary_key=True, default=lambda: generate_id("mem"))
     organization_id = Column(String(32), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(String(32), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    role = Column(String(32), nullable=False, default="owner")  # 'owner', 'member'
+    role = Column(String(32), nullable=False, default="member")  # 'owner', 'admin', 'member'
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     organization = relationship("Organization", back_populates="members")

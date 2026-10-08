@@ -15,9 +15,13 @@ def log_audit_event(
     resource_id: str | None = None,
     user_id: str | None = None,
     ip_address: str | None = None,
-    details: dict[str, Any] | None = None
+    details: dict[str, Any] | None = None,
+    commit: bool = True
 ) -> AuditLog:
-    """Creates an audit log entry for security and compliance tracking."""
+    """Creates an audit log entry for security and compliance tracking.
+
+    Supports commit=False for committing atomically alongside the primary business action.
+    """
     details_str = json.dumps(details) if details else None
     entry = AuditLog(
         organization_id=organization_id,
@@ -30,6 +34,11 @@ def log_audit_event(
         created_at=utc_now()
     )
     db.add(entry)
-    db.commit()
-    db.refresh(entry)
+    if commit:
+        try:
+            db.commit()
+            db.refresh(entry)
+        except Exception:
+            db.rollback()
+            raise
     return entry

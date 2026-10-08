@@ -45,7 +45,7 @@ def _subscription_matches(pattern: str, event_type: str) -> bool:
         return True
     if p.endswith(".*"):
         prefix = p[:-2].strip()
-        if prefix and (event_type == prefix or event_type.startswith(prefix + ".")):
+        if prefix and event_type.startswith(prefix + "."):
             return True
     return False
 

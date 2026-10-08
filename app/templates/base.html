@@ -9,16 +9,13 @@
        Do not use the browser CDN in production. Rebuild with:
          npm install && npm run build:css -->
   <link rel="stylesheet" href="/static/css/dist.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
   
-  <!-- HTMX for partial page updates: vendored locally preferred.
-       To vendor: curl -sSL https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js -o app/static/js/htmx.min.js
-       then use /static/js/htmx.min.js. CDN kept without SRI (unpkg dynamic);
-       prefer jsdelivr pinned file with SRI or local vendor for strict CSP. -->
-  <script src="https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js" crossorigin="anonymous" defer></script>
+  <!-- HTMX for partial page updates -->
+  <script src="https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js" crossorigin="anonymous"></script>
 
-  <!-- Chart.js vendored locally (no CDN fallback to avoid supply-chain + document.write XSS).
-       If local file missing, charts degrade gracefully instead of loading remote JS. -->
-  <script src="/static/js/chart.umd.min.js" defer></script>
+  <!-- Chart.js vendored locally -->
+  <script src="/static/js/chart.umd.min.js"></script>
   
   <!-- Local App CSS (legacy variables / overrides) -->
   <link rel="stylesheet" href="/static/css/app.css">

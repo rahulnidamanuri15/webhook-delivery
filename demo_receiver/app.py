@@ -465,11 +465,17 @@ def health():
 @app.post("/config")
 async def update_config_json(request: Request):
     data = await request.json()
-    _require_admin(request, str(data.get("admin_token", "")) if isinstance(data, dict) else None)
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object.")
+    _require_admin(request, str(data.get("admin_token", "")))
     if "mode" in data:
-        mode_val = data["mode"]
+        mode_val = str(data["mode"]).strip()
+        if mode_val not in ("success", "fail_n", "rate_limit", "slow", "status_code"):
+            raise HTTPException(status_code=400, detail="Invalid mode.")
         if mode_val == "status_code":
             sc = int(data.get("status_code", 200))
+            if not (100 <= sc <= 599):
+                raise HTTPException(status_code=400, detail="Invalid status code.")
             if sc < 300:
                 config["mode"] = "success"
             else:
@@ -479,11 +485,17 @@ async def update_config_json(request: Request):
         else:
             config["mode"] = mode_val
     if "fail_count" in data:
-        config["fail_count"] = int(data["fail_count"])
+        config["fail_count"] = max(1, int(data["fail_count"]))
     if "failure_status_code" in data:
-        config["failure_status_code"] = int(data["failure_status_code"])
+        fsc = int(data["failure_status_code"])
+        if not (100 <= fsc <= 599):
+            raise HTTPException(status_code=400, detail="Invalid failure_status_code.")
+        config["failure_status_code"] = fsc
     elif "status_code" in data and int(data["status_code"]) >= 300:
-        config["failure_status_code"] = int(data["status_code"])
+        sc = int(data["status_code"])
+        if not (100 <= sc <= 599):
+            raise HTTPException(status_code=400, detail="Invalid status_code.")
+        config["failure_status_code"] = sc
     if "endpoint_secret" in data:
         config["endpoint_secret"] = str(data["endpoint_secret"]).strip()
     if "enforce_signatures" in data:
@@ -503,7 +515,12 @@ def configure(
     admin_token: str = Form(""),
 ):
     _require_admin(request, admin_token)
-    config["mode"] = mode
+    mode_clean = mode.strip()
+    if mode_clean not in ("success", "fail_n", "rate_limit", "slow"):
+        raise HTTPException(status_code=400, detail="Invalid mode.")
+    if not (100 <= failure_status_code <= 599):
+        raise HTTPException(status_code=400, detail="Invalid failure_status_code.")
+    config["mode"] = mode_clean
     config["fail_count"] = max(1, fail_count)
     config["failure_status_code"] = failure_status_code
     config["endpoint_secret"] = endpoint_secret.strip()
@@ -543,7 +560,7 @@ async def receive_webhook(
     webhook_signature: str = Header(None, alias="Webhook-Signature"),
 ):
     raw_body_bytes = await request.body()
-    raw_body_str = raw_body_bytes.decode("utf-8")
+    raw_body_str = raw_body_bytes.decode("utf-8", errors="replace")
     now_str = time.strftime("%H:%M:%S")
 
     # 1. Signature Verification

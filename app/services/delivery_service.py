@@ -120,13 +120,16 @@ def calculate_backoff_seconds(attempt_number: int, retry_after_header: str | Non
     e.g. ``Wed, 21 Oct 2015 07:28:00 GMT``) forms, clamped to [1, 3600]s.
     Falls back to the configured retry intervals with +/-15% jitter.
     """
+    MAX_RETRY_AFTER_CAP = 300  # Cap at 5m max to prevent receiver scheduling starvation
     if retry_after_header:
         raw = retry_after_header.strip()
         # 1) delay-seconds form
         try:
             delay = int(raw)
-            if 1 <= delay <= 3600:
+            if 1 <= delay <= MAX_RETRY_AFTER_CAP:
                 return delay
+            if delay > MAX_RETRY_AFTER_CAP:
+                return MAX_RETRY_AFTER_CAP
         except (ValueError, TypeError):
             pass
         # 2) HTTP-date form (RFC 7231 §7.1.3)
@@ -140,7 +143,7 @@ def calculate_backoff_seconds(attempt_number: int, retry_after_header: str | Non
                 delay_s = int((retry_dt - now_dt).total_seconds())
                 if delay_s < 1:
                     delay_s = 1
-                return max(1, min(3600, delay_s))
+                return max(1, min(MAX_RETRY_AFTER_CAP, delay_s))
         except Exception:
             pass
 
@@ -166,7 +169,8 @@ def claim_delivery(db: Session, delivery_id: str) -> tuple[Delivery, str] | None
     Attempts to atomically acquire an execution lease on a delivery row.
     Returns (delivery, lease_token) if claimed, or None if already claimed/completed.
     """
-    now = utc_now()
+    # Tolerate up to 1 second of clock skew between app node and database
+    now = utc_now() + timedelta(seconds=1)
     delivery = (
         db.query(Delivery)
         .filter(
@@ -225,9 +229,22 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
     # 2. SSRF & DNS Rebinding Protection
     from app.services.ssrf import resolve_and_pin_destination
     pin_res = resolve_and_pin_destination(delivery.target_url_snapshot)
-    if not pin_res.is_safe or not endpoint or not endpoint.enabled:
-        reason = pin_res.error if not pin_res.is_safe else "Endpoint disabled or deleted"
+    if not pin_res.is_safe or not endpoint:
+        reason = pin_res.error if not pin_res.is_safe else "Endpoint deleted"
         _save_terminal_failure(db, delivery_id, claimed_lease_token, reason)
+        return False
+
+    if not endpoint.enabled:
+        now = utc_now()
+        dlv = db.query(Delivery).filter(Delivery.id == delivery_id).with_for_update().first()
+        if dlv and dlv.lease_token == claimed_lease_token:
+            dlv.status = "RETRY_SCHEDULED"
+            dlv.attempt_count = max(0, dlv.attempt_count - 1)
+            dlv.next_attempt_at = now + timedelta(seconds=60)
+            dlv.lease_token = None
+            dlv.lease_expires_at = None
+            db.commit()
+            logger.info(f"Delivery {delivery_id} deferred: endpoint {endpoint.id} is temporarily disabled.")
         return False
 
     # 3. Decrypt endpoint signing secret
@@ -493,18 +510,29 @@ def recover_abandoned_leases(db: Session, batch_size: int | None = None) -> int:
         # Close the history gap left by the crashed worker before it could record.
         try:
             terminal = dlv.attempt_count >= settings.MAX_DELIVERY_ATTEMPTS
-            attempt = DeliveryAttempt(
-                delivery_id=dlv.id,
-                attempt_number=max(1, dlv.attempt_count),
-                started_at=dlv.lease_expires_at - timedelta(seconds=settings.LEASE_DURATION_SECONDS) if dlv.lease_expires_at else now,
-                finished_at=now,
-                http_status=None,
-                duration_ms=0,
-                error_code="LEASE_EXPIRED",
-                response_excerpt="Worker lease expired before result was recorded (crash or hang); rescheduled.",
-                outcome="PERMANENT_ERROR" if terminal else "RETRYABLE_ERROR",
+            att_num = max(1, dlv.attempt_count)
+            # Guard against duplicate attempt_number if worker already committed before crash
+            existing_att = (
+                db.query(DeliveryAttempt.id)
+                .filter(
+                    DeliveryAttempt.delivery_id == dlv.id,
+                    DeliveryAttempt.attempt_number == att_num,
+                )
+                .first()
             )
-            db.add(attempt)
+            if not existing_att:
+                attempt = DeliveryAttempt(
+                    delivery_id=dlv.id,
+                    attempt_number=att_num,
+                    started_at=dlv.lease_expires_at - timedelta(seconds=settings.LEASE_DURATION_SECONDS) if dlv.lease_expires_at else now,
+                    finished_at=now,
+                    http_status=None,
+                    duration_ms=0,
+                    error_code="LEASE_EXPIRED",
+                    response_excerpt="Worker lease expired before result was recorded (crash or hang); rescheduled.",
+                    outcome="PERMANENT_ERROR" if terminal else "RETRYABLE_ERROR",
+                )
+                db.add(attempt)
         except Exception:
             pass
         dlv.lease_token = None
@@ -533,7 +561,15 @@ def replay_delivery(db: Session, delivery_id: str) -> Delivery | None:
     fixed a typo), falling back to the original snapshot when the endpoint was
     deleted. Security checks (SSRF, enabled) are still enforced at send time.
     """
-    old_delivery = db.query(Delivery).filter(Delivery.id == delivery_id).first()
+    try:
+        old_delivery = (
+            db.query(Delivery)
+            .filter(Delivery.id == delivery_id)
+            .with_for_update()
+            .first()
+        )
+    except Exception:
+        old_delivery = db.query(Delivery).filter(Delivery.id == delivery_id).first()
     if not old_delivery:
         return None
     if old_delivery.status != "DEAD":

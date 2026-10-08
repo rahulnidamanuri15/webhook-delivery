@@ -41,16 +41,25 @@ class JsonFormatter(logging.Formatter):
 _configured = False
 
 
-def setup_structured_logging(level: int = logging.INFO) -> None:
+def setup_structured_logging(level: int | str | None = None) -> None:
     global _configured
     if _configured:
         return
+    # LOG_LEVEL env wins when no explicit level is passed (prod needs WARNING+).
+    if level is None:
+        try:
+            from app.config import settings as _settings
+
+            level = str(getattr(_settings, "LOG_LEVEL", "INFO") or "INFO").upper()
+        except Exception:
+            level = "INFO"
+    if isinstance(level, str):
+        level = getattr(logging, level.upper(), logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(level)
-    # Quiet noisy third-party loggers slightly
-    for noisy in ("uvicorn.access",):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    # Keep access logs (do not mute entirely); reduce verbosity only.
+    # Operators need an access trail — uvicorn.access stays at INFO.
     _configured = True

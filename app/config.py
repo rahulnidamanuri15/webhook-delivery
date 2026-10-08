@@ -40,6 +40,8 @@ class Settings(BaseSettings):
         default="",
         description="Comma-separated allowlist of webhook receiver domains (empty disables)"
     )
+    # Observability
+    LOG_LEVEL: str = Field(default="INFO", description="Root log level (DEBUG, INFO, WARNING, ERROR)")
     # Cookie security
     COOKIE_SECURE: bool | None = Field(default=None, description="Force secure cookie flag (None = auto based on ENV and DEBUG)")
     # Outbound HTTP timeouts (total must stay < lease duration with margin)
@@ -95,33 +97,54 @@ _INSECURE_FERNET_DEFAULTS = {
     "yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=",
 }
 _INSECURE_DB_SUBSTRINGS = ("postgrespassword", "postgres:postgres@")
-if settings.ENV == "production":
-    if settings.SECRET_KEY in _INSECURE_SECRET_DEFAULTS or len(settings.SECRET_KEY) < 32:
+
+
+def validate_production_settings(s: Settings) -> None:
+    # Normalized prod check (ENV is case-insensitive; "Production" must not bypass).
+    is_prod = str(s.ENV or "").strip().lower() == "production"
+    if not is_prod:
+        return
+    if s.SECRET_KEY in _INSECURE_SECRET_DEFAULTS or len(s.SECRET_KEY) < 32:
         raise RuntimeError(
             "SECRET_KEY must be set to a strong random value (>=32 chars) in production. "
             "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
         )
-    if settings.SIGNING_SECRET_ENCRYPTION_KEY in _INSECURE_FERNET_DEFAULTS:
+    if s.SIGNING_SECRET_ENCRYPTION_KEY in _INSECURE_FERNET_DEFAULTS:
         raise RuntimeError(
             "SIGNING_SECRET_ENCRYPTION_KEY uses the public dev default. "
             "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
         )
-    if not settings.API_KEY_PEPPER or len(settings.API_KEY_PEPPER) < 16:
+    if not s.API_KEY_PEPPER or len(s.API_KEY_PEPPER) < 16:
         raise RuntimeError(
             "API_KEY_PEPPER must be set to a strong random value (>=16 chars) in production. "
             "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
         )
-    if any(s in settings.DATABASE_URL for s in _INSECURE_DB_SUBSTRINGS):
+    if any(substr in s.DATABASE_URL for substr in _INSECURE_DB_SUBSTRINGS):
         raise RuntimeError(
             "DATABASE_URL uses dev default credentials in production. Set a strong POSTGRES_PASSWORD."
         )
-    if not settings.METRICS_API_KEY or len(settings.METRICS_API_KEY) < 16:
+    # SQLite and other non-PostgreSQL backends are never valid in production
+    # (no concurrency, no SKIP LOCKED, data loss on ephemeral disk).
+    _db_url_lower = str(s.DATABASE_URL or "").strip().lower()
+    if _db_url_lower.startswith("sqlite"):
+        raise RuntimeError(
+            "DATABASE_URL must be PostgreSQL in production (SQLite is dev/test only)."
+        )
+    if not _db_url_lower.startswith("postgresql"):
+        raise RuntimeError(
+            "DATABASE_URL must be a postgresql+psycopg URL in production."
+        )
+    # DEBUG must never be enabled in production (enables http receivers,
+    # suppresses HSTS, weakens cookie flags).
+    if s.DEBUG:
+        raise RuntimeError(
+            "DEBUG must be False in production. Unset DEBUG or set DEBUG=False."
+        )
+    if not s.METRICS_API_KEY or len(s.METRICS_API_KEY) < 16:
         raise RuntimeError(
             "METRICS_API_KEY must be set (>=16 chars) in production to protect /metrics."
         )
-    if settings.ALLOW_LOCAL_RECEIVERS:
-        # Local receivers (loopback) must never be reachable in a public deployment
-        # unless explicitly intended; fail closed and require operator opt-in.
+    if s.ALLOW_LOCAL_RECEIVERS:
         import os as _os
         if _os.getenv("I_UNDERSTAND_ALLOW_LOCAL_RISK", "").lower() not in ("1", "true", "yes"):
             raise RuntimeError(
@@ -129,6 +152,10 @@ if settings.ENV == "production":
                 "Set ALLOW_LOCAL_RECEIVERS=False and configure ALLOWED_RECEIVER_DOMAINS, "
                 "or set I_UNDERSTAND_ALLOW_LOCAL_RISK=1 for a closed demo."
             )
+
+
+_IS_PRODUCTION = str(settings.ENV or "").strip().lower() == "production"
+validate_production_settings(settings)
 
 # Ensure signing secret key is valid Fernet key — fail fast, never silently rotate
 # (silent rotation would make all stored endpoint secrets undecryptable).

@@ -100,15 +100,22 @@ import time as _time
 
 _denied_session_hashes: dict[str, float] = {}
 _redis_denylist = None
-try:
-    import redis as _redis_mod
 
-    from app.config import settings as _settings
-    _r = _redis_mod.from_url(_settings.REDIS_URL, socket_connect_timeout=0.2)
-    _r.ping()
-    _redis_denylist = _r
-except Exception:
-    _redis_denylist = None
+
+def _get_redis_client():
+    global _redis_denylist
+    if _redis_denylist is not None:
+        return _redis_denylist
+    try:
+        import redis as _redis_mod
+
+        from app.config import settings as _settings
+        _r = _redis_mod.from_url(_settings.REDIS_URL, socket_connect_timeout=0.3, socket_timeout=0.3)
+        _r.ping()
+        _redis_denylist = _r
+        return _redis_denylist
+    except Exception:
+        return None
 
 
 def _hash_token(token: str) -> str:
@@ -121,9 +128,10 @@ def invalidate_session_token(token: str) -> None:
         return
     h = _hash_token(token)
     expiry = int(_time.time()) + 86400 * 7
-    if _redis_denylist is not None:
+    r = _get_redis_client()
+    if r is not None:
         try:
-            _redis_denylist.setex(f"session_denylist:{h}", 86400 * 7, "1")
+            r.setex(f"session_denylist:{h}", 86400 * 7, "1")
             return
         except Exception:
             pass
@@ -134,9 +142,10 @@ def is_session_token_denied(token: str) -> bool:
     if not token:
         return False
     h = _hash_token(token)
-    if _redis_denylist is not None:
+    r = _get_redis_client()
+    if r is not None:
         try:
-            if _redis_denylist.exists(f"session_denylist:{h}"):
+            if r.exists(f"session_denylist:{h}"):
                 return True
         except Exception:
             pass

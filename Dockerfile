@@ -1,8 +1,8 @@
 # ---- Frontend build stage (Tailwind -> static/dist.css) ----
 FROM node:22-slim AS frontend
 WORKDIR /frontend
-COPY package.json ./
-RUN npm install --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY app/static/css/input.css ./app/static/css/input.css
 COPY app/templates ./app/templates
 # Build production CSS; output is copied into the final image.

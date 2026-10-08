@@ -334,19 +334,48 @@ window.renderDashboardCharts = function() {
   };
 };
 
-if (typeof window.renderDashboardCharts === 'function') {
-  window.renderDashboardCharts();
+function safeRenderDashboardCharts() {
+  if (typeof Chart !== 'undefined') {
+    try {
+      if (typeof window.renderDashboardCharts === 'function') {
+        window.renderDashboardCharts();
+      }
+    } catch (e) {
+      console.error("Error rendering charts:", e);
+    }
+  } else {
+    var checkCount = 0;
+    var timer = setInterval(function() {
+      checkCount++;
+      if (typeof Chart !== 'undefined') {
+        clearInterval(timer);
+        try {
+          if (typeof window.renderDashboardCharts === 'function') {
+            window.renderDashboardCharts();
+          }
+        } catch (e) {
+          console.error("Error rendering charts:", e);
+        }
+      } else if (checkCount > 50) {
+        clearInterval(timer);
+        console.warn("Chart.js failed to load within 5 seconds.");
+      }
+    }, 100);
+  }
 }
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', safeRenderDashboardCharts);
+} else {
+  safeRenderDashboardCharts();
+}
+window.addEventListener('load', safeRenderDashboardCharts);
 
 if (!window._chartsHtmxListenerAttached) {
   window._chartsHtmxListenerAttached = true;
   document.addEventListener('htmx:afterSwap', function(evt) {
     if (evt.detail && evt.detail.target && (evt.detail.target.id === 'dashboard-charts-container' || evt.detail.target.id === 'dashboard-charts-wrapper')) {
-      setTimeout(function() {
-        if (typeof window.renderDashboardCharts === 'function') {
-          window.renderDashboardCharts();
-        }
-      }, 20);
+      setTimeout(safeRenderDashboardCharts, 30);
     }
   });
 }
