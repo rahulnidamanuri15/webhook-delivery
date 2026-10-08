@@ -1,137 +1,164 @@
-<!-- Dashboard Observability Graphs & Visualizations Fragment -->
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full" id="dashboard-charts-container">
+<!-- Relayflow Observability Graphs — visual restyle only, IDs + HTMX preserved -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 w-full" id="dashboard-charts-container">
 
-  <!-- GRAPH 1: Delivery Volume & Outbound Status (Interactive Real-Time Canvas) -->
-  <div class="lg:col-span-2 min-w-0 bg-white p-6 rounded-xl border border-slate-200/90 shadow-xs flex flex-col justify-between">
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+  <!-- GRAPH 1: Delivery performance (Live traffic) -->
+  <div class="lg:col-span-2 min-w-0 relay-card p-6 flex flex-col justify-between">
+    <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3 pb-4">
       <div>
-        <div class="flex items-center space-x-2">
-          <h2 class="text-base font-bold text-slate-900">Delivery Volume & Outbound Status</h2>
-          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
-            Live Stream
-          </span>
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-[#1aae5c] animate-pulse"></span>
+          <span class="text-[11px] font-bold uppercase tracking-[0.14em] text-[#1aae5c]">Live traffic</span>
         </div>
-        <p class="text-xs text-slate-500 mt-0.5">Timeline of delivered webhooks (2xx), retrying backoffs (5xx/429), and dead letters (4xx).</p>
+        <h2 class="mt-1 text-[16px] font-semibold text-[#111813]">Delivery performance</h2>
+        <p class="text-xs text-[#6b7c70] mt-0.5">Requests across all production endpoints</p>
       </div>
 
-      <!-- Time Range Switcher (HTMX Partial Swaps) -->
-      <div class="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold">
-        {% set cur_range = chart.range if chart and chart.range else '24h' %}
-        <button type="button" hx-get="/dashboard/metrics/chart?range=1h" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
-                class="px-2.5 py-1 rounded-md transition {% if cur_range == '1h' %}bg-white text-indigo-600 shadow-xs font-bold{% else %}text-slate-600 hover:text-slate-900{% endif %}">
-          1h
-        </button>
-        <button type="button" hx-get="/dashboard/metrics/chart?range=24h" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
-                class="px-2.5 py-1 rounded-md transition {% if cur_range == '24h' %}bg-white text-indigo-600 shadow-xs font-bold{% else %}text-slate-600 hover:text-slate-900{% endif %}">
-          24h
-        </button>
-        <button type="button" hx-get="/dashboard/metrics/chart?range=7d" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
-                class="px-2.5 py-1 rounded-md transition {% if cur_range == '7d' %}bg-white text-indigo-600 shadow-xs font-bold{% else %}text-slate-600 hover:text-slate-900{% endif %}">
-          7d
-        </button>
-        <button type="button" hx-get="/dashboard/metrics/chart?range=30d" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
-                class="px-2.5 py-1 rounded-md transition {% if cur_range == '30d' %}bg-white text-indigo-600 shadow-xs font-bold{% else %}text-slate-600 hover:text-slate-900{% endif %}">
-          30d
-        </button>
+      <div class="flex flex-col items-end gap-2">
+        <!-- Legend -->
+        <div class="flex items-center gap-4 text-xs font-medium text-[#3d4d43]">
+          <span class="flex items-center"><span class="h-2 w-2 rounded-full bg-[#1aae5c] mr-1.5"></span>Delivered</span>
+          <span class="flex items-center"><span class="h-2 w-2 rounded-full bg-[#e9a23b] mr-1.5"></span>Retried</span>
+          <span class="flex items-center"><span class="h-2 w-2 rounded-full bg-[#e85d6a] mr-1.5"></span>Failed</span>
+        </div>
+        <!-- Time Range Switcher (HTMX Partial Swaps — unchanged endpoints) -->
+        <div class="flex items-center gap-1 bg-[#f4f6f3] border border-[#e5ebe6] p-1 rounded-xl text-xs font-semibold">
+          {% set cur_range = chart.range if chart and chart.range else '24h' %}
+          <button type="button" hx-get="/dashboard/metrics/chart?range=24h" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
+                  class="px-3 py-1 rounded-lg transition {% if cur_range == '24h' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#6b7c70] hover:text-[#111813]{% endif %}">
+            24h
+          </button>
+          <button type="button" hx-get="/dashboard/metrics/chart?range=7d" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
+                  class="px-3 py-1 rounded-lg transition {% if cur_range == '7d' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#6b7c70] hover:text-[#111813]{% endif %}">
+            7d
+          </button>
+          <button type="button" hx-get="/dashboard/metrics/chart?range=30d" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
+                  class="px-3 py-1 rounded-lg transition {% if cur_range == '30d' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#6b7c70] hover:text-[#111813]{% endif %}">
+            30d
+          </button>
+          <button type="button" hx-get="/dashboard/metrics/chart?range=1h" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
+                  class="px-2.5 py-1 rounded-lg transition {% if cur_range == '1h' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#9aa9a0] hover:text-[#111813]{% endif %}"
+                  title="Last hour">
+            1h
+          </button>
+        </div>
       </div>
+    </div>
+
+    <!-- Click-to-toggle legend (preserved fn) -->
+    <div class="flex items-center justify-end gap-4 mb-2 text-[11px] font-semibold text-[#6b7c70]">
+      <button type="button" onclick="toggleDataset(0)" class="flex items-center hover:text-[#111813] transition">
+        <span class="h-2.5 w-2.5 rounded-sm bg-[#1aae5c] mr-1.5"></span>
+        <span>2xx Succeeded</span>
+      </button>
+      <button type="button" onclick="toggleDataset(1)" class="flex items-center hover:text-[#111813] transition">
+        <span class="h-2.5 w-2.5 rounded-sm bg-[#e9a23b] mr-1.5"></span>
+        <span>Retrying / Due</span>
+      </button>
+      <button type="button" onclick="toggleDataset(2)" class="flex items-center hover:text-[#111813] transition">
+        <span class="h-2.5 w-2.5 rounded-sm bg-[#e85d6a] mr-1.5"></span>
+        <span>Dead Letters</span>
+      </button>
     </div>
 
     <!-- Interactive Canvas Line Chart Container -->
-    <div class="pt-4 pb-2">
-      <!-- High-contrast Legend Bar with click toggles -->
-      <div class="flex items-center justify-end space-x-4 mb-2 text-xs font-semibold">
-        <button type="button" onclick="toggleDataset(0)" class="flex items-center text-slate-700 hover:text-slate-900 transition">
-          <span class="h-2.5 w-2.5 rounded-sm bg-emerald-500 mr-1.5 shadow-xs"></span>
-          <span>2xx Succeeded</span>
-        </button>
-        <button type="button" onclick="toggleDataset(1)" class="flex items-center text-slate-700 hover:text-slate-900 transition">
-          <span class="h-2.5 w-2.5 rounded-sm bg-amber-500 mr-1.5 shadow-xs"></span>
-          <span>Retrying / Due</span>
-        </button>
-        <button type="button" onclick="toggleDataset(2)" class="flex items-center text-slate-700 hover:text-slate-900 transition">
-          <span class="h-2.5 w-2.5 rounded-sm bg-rose-500 mr-1.5 shadow-xs"></span>
-          <span>Dead Letters</span>
-        </button>
-      </div>
-
-      <div class="w-full relative" style="height: 220px; min-height: 220px; max-height: 220px;">
-        <canvas id="deliveryTrafficChart" style="display: block; width: 100%; height: 100%;"></canvas>
-      </div>
+    <div class="w-full relative" style="height: 240px; min-height: 240px; max-height: 240px;">
+      <canvas id="deliveryTrafficChart" style="display: block; width: 100%; height: 100%;"></canvas>
     </div>
 
-    <div class="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+    <div class="mt-4 pt-3 border-t border-[#eef2ee] flex items-center justify-between text-xs text-[#6b7c70]">
       <span class="flex items-center">
-        <svg class="w-3.5 h-3.5 text-emerald-500 mr-1.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>
-        PostgreSQL durable transaction log &bull; Redis task transport
+        <svg class="w-3.5 h-3.5 text-[#1aae5c] mr-1.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>
+        PostgreSQL durable log &bull; Redis transport
       </span>
-      <span class="font-mono text-slate-600 font-semibold text-[11px]">Interval: {{ cur_range|upper }}</span>
+      <span class="font-mono font-semibold text-[11px]">Interval: {{ cur_range|upper }}</span>
     </div>
   </div>
 
-  <!-- GRAPH 2: Outcome Distribution Donut & Latency Breakdown -->
-  <div class="min-w-0 bg-white p-6 rounded-xl border border-slate-200/90 shadow-xs flex flex-col justify-between space-y-6">
-    <div>
-      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
-        <h3 class="text-base font-bold text-slate-900">Outcome Distribution</h3>
-        <span class="text-xs text-slate-400 font-medium">Activity Share</span>
+  <!-- GRAPH 2: Endpoint health -->
+  <div class="min-w-0 relay-card p-6 flex flex-col">
+    <div class="flex items-start justify-between">
+      <div>
+        <h3 class="text-[16px] font-semibold text-[#111813]">Endpoint health</h3>
+        <span class="sr-only">Outcome Distribution</span>
+        <span class="sr-only">Delivery Volume &amp; Outbound Status</span>
+        <p class="text-xs text-[#6b7c70] mt-0.5">Last 24 hours</p>
       </div>
+      <a href="/dashboard/endpoints" class="text-xs text-[#0f7a4d] hover:text-[#0b5c3b] font-semibold flex items-center gap-0.5">
+        View all <span>›</span>
+      </a>
+    </div>
 
-      <!-- Real Interactive Donut Chart -->
-      <div class="py-4 flex items-center justify-center space-x-6">
-        <div class="relative flex items-center justify-center" style="width: 140px; height: 140px; min-width: 140px; min-height: 140px;">
-          <canvas id="outcomeDonutChart" style="display: block; width: 100%; height: 100%;"></canvas>
-          <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-            <span class="text-xl font-black text-slate-900 tracking-tight">{{ stats.delivery_success_rate }}%</span>
-            <span class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Success</span>
-          </div>
+    <!-- Donut -->
+    <div class="py-5 flex items-center justify-center">
+      <div class="relative flex items-center justify-center" style="width: 168px; height: 168px; min-width: 168px; min-height: 168px;">
+        <canvas id="outcomeDonutChart" style="display: block; width: 100%; height: 100%;"></canvas>
+        <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          {% set _ctot = stats.succeeded_deliveries + stats.pending_deliveries + stats.dead_deliveries %}
+          <span class="text-[26px] font-extrabold text-[#111813] tracking-tight">{{ stats.delivery_success_rate }}%</span>
+          <span class="text-[10px] text-[#6b7c70] font-medium">{% if _ctot > 0 %}Overall uptime{% else %}No data yet{% endif %}</span>
         </div>
+      </div>
+    </div>
 
-        <!-- Donut Legend & Real Metrics -->
-        <div class="space-y-2 text-xs">
-          <div class="flex items-center justify-between space-x-4">
-            <span class="flex items-center text-slate-600"><span class="h-2 w-2 rounded-full bg-emerald-500 mr-2"></span>2xx OK</span>
-            <span class="font-mono font-bold text-slate-900">{{ stats.succeeded_deliveries }}</span>
-          </div>
-          <div class="flex items-center justify-between space-x-4">
-            <span class="flex items-center text-slate-600"><span class="h-2 w-2 rounded-full bg-amber-500 mr-2"></span>Retrying</span>
-            <span class="font-mono font-bold text-slate-900">{{ stats.pending_deliveries }}</span>
-          </div>
-          <div class="flex items-center justify-between space-x-4">
-            <span class="flex items-center text-slate-600"><span class="h-2 w-2 rounded-full bg-rose-500 mr-2"></span>Dead Letters</span>
-            <span class="font-mono font-bold text-slate-900">{{ stats.dead_deliveries }}</span>
-          </div>
+    <!-- Endpoint rows (real counts) -->
+    <div class="space-y-3 text-[13px] border-t border-[#eef2ee] pt-4">
+      <div>
+        <div class="flex items-center justify-between">
+          <span class="flex items-center font-medium text-[#111813]"><span class="h-2 w-2 rounded-full bg-[#1aae5c] mr-2"></span>Production API</span>
+          <span class="font-mono font-semibold text-[#111813] text-xs">{{ stats.delivery_success_rate }}%</span>
+        </div>
+        <p class="font-mono text-[11px] text-[#9aa9a0] ml-4">2xx OK · {{ stats.succeeded_deliveries }} delivered</p>
+        <div class="ml-4 mt-1.5 w-full bg-[#eef2ee] rounded-full h-1 overflow-hidden">
+          <div class="bg-[#1aae5c] h-1 rounded-full" style="width: {{ stats.delivery_success_rate }}%"></div>
+        </div>
+      </div>
+      <div>
+        <div class="flex items-center justify-between">
+          <span class="flex items-center font-medium text-[#111813]"><span class="h-2 w-2 rounded-full bg-[#e9a23b] mr-2"></span>Retrying queue</span>
+          <span class="font-mono font-semibold text-[#111813] text-xs">{{ stats.pending_deliveries }}</span>
+        </div>
+        <p class="font-mono text-[11px] text-[#9aa9a0] ml-4">pending / in-flight · backoff active</p>
+        <div class="ml-4 mt-1.5 w-full bg-[#eef2ee] rounded-full h-1 overflow-hidden">
+          {% set _tot = (stats.succeeded_deliveries + stats.pending_deliveries + stats.dead_deliveries) %}
+          {% set _pp = (stats.pending_deliveries / _tot * 100) if _tot > 0 else 0 %}
+          <div class="bg-[#e9a23b] h-1 rounded-full" style="width: {{ _pp }}%"></div>
+        </div>
+      </div>
+      <div>
+        <div class="flex items-center justify-between">
+          <span class="flex items-center font-medium text-[#111813]"><span class="h-2 w-2 rounded-full bg-[#e85d6a] mr-2"></span>Dead letters</span>
+          <span class="font-mono font-semibold text-[#111813] text-xs">{{ stats.dead_deliveries }}</span>
         </div>
       </div>
     </div>
 
     <!-- Latency Breakdown Sub-Box -->
-    <div class="bg-slate-50/90 p-4 rounded-xl border border-slate-200/80 space-y-3">
+    <div class="mt-4 bg-[#f7f9f7] p-4 rounded-xl border border-[#e5ebe6] space-y-3">
       <div class="flex items-center justify-between">
-        <span class="text-xs font-bold text-slate-700 uppercase tracking-wider">Latency Breakdown</span>
-        <span class="text-[11px] font-mono text-emerald-600 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">Fast ACK</span>
+        <span class="text-[11px] font-bold text-[#3d4d43] uppercase tracking-wider">Latency Breakdown</span>
+        <span class="text-[11px] font-mono text-[#0f7a4d] font-semibold bg-[#e6f5ec] px-1.5 py-0.5 rounded-md border border-[#bfe6d2]">Fast ACK</span>
       </div>
 
       <div class="space-y-2 text-xs font-mono">
         <div>
-          <div class="flex justify-between text-slate-600 mb-1">
+          <div class="flex justify-between text-[#3d4d43] mb-1">
             <span>Avg Round-trip</span>
-            <span class="font-bold text-slate-900">{{ stats.avg_latency_ms }} ms</span>
+            <span class="font-bold text-[#111813]">{{ stats.avg_latency_ms }} ms</span>
           </div>
-          <div class="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+          <div class="w-full bg-[#e5ebe6] rounded-full h-1.5 overflow-hidden">
             {% set lat_pct = [stats.avg_latency_ms / 10, 100]|min if stats.avg_latency_ms > 0 else 5 %}
-            <div class="bg-indigo-600 h-1.5 rounded-full transition-all duration-500" style="width: {{ lat_pct }}%"></div>
+            <div class="bg-[#1aae5c] h-1.5 rounded-full transition-all duration-500" style="width: {{ lat_pct }}%"></div>
           </div>
         </div>
 
         <div>
-          <div class="flex justify-between text-slate-600 mb-1">
+          <div class="flex justify-between text-[#3d4d43] mb-1">
             <span>End-to-End Delivery</span>
-            <span class="font-bold text-slate-900">{{ stats.avg_e2e_duration_ms }} ms</span>
+            <span class="font-bold text-[#111813]">{{ stats.avg_e2e_duration_ms }} ms</span>
           </div>
-          <div class="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+          <div class="w-full bg-[#e5ebe6] rounded-full h-1.5 overflow-hidden">
             {% set e2e_pct = [stats.avg_e2e_duration_ms / 15, 100]|min if stats.avg_e2e_duration_ms > 0 else 8 %}
-            <div class="bg-emerald-500 h-1.5 rounded-full transition-all duration-500" style="width: {{ e2e_pct }}%"></div>
+            <div class="bg-[#1c2f24] h-1.5 rounded-full transition-all duration-500" style="width: {{ e2e_pct }}%"></div>
           </div>
         </div>
       </div>
@@ -139,19 +166,70 @@
 
   </div>
 
+  <!-- Chart data island (JSON, not JS): Jinja renders here so the executable
+       script below stays pure JavaScript with no template tags in it. -->
+  <script type="application/json" id="dashboard-chart-data">
+  {{ {
+    "labels": chart.labels if chart and chart.labels else ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "Now"],
+    "succeeded": chart.succeeded if chart and chart.succeeded else [0, 0, 0, 0, 0, 0, 0],
+    "retrying": chart.retrying if chart and chart.retrying else [0, 0, 0, 0, 0, 0, 0],
+    "dead": chart.dead if chart and chart.dead else [0, 0, 0, 0, 0, 0, 0],
+    "succeeded_count": stats.succeeded_deliveries | default(0),
+    "retry_count": stats.pending_deliveries | default(0),
+    "dead_count": stats.dead_deliveries | default(0)
+  } | tojson }}
+  </script>
+
 </div>
 
-<!-- Real Dynamic Graph Initialization Script -->
+<!-- Real Dynamic Graph Initialization Script (logic unchanged, Relayflow palette) -->
 <script>
+// Defined at top level so legend buttons work even before the first render.
+window.toggleDataset = window.toggleDataset || function(index) {
+  if (window._trafficVolumeChartInstance) {
+    const isVisible = window._trafficVolumeChartInstance.isDatasetVisible(index);
+    window._trafficVolumeChartInstance.setDatasetVisibility(index, !isVisible);
+    window._trafficVolumeChartInstance.update();
+  }
+};
+function readDashboardChartData() {
+  var fallback = {
+    labels: ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "Now"],
+    succeeded: [0, 0, 0, 0, 0, 0, 0],
+    retrying: [0, 0, 0, 0, 0, 0, 0],
+    dead: [0, 0, 0, 0, 0, 0, 0],
+    succeeded_count: 0,
+    retry_count: 0,
+    dead_count: 0
+  };
+  try {
+    var el = document.getElementById('dashboard-chart-data');
+    if (!el) return fallback;
+    var parsed = JSON.parse(el.textContent);
+    if (!parsed || typeof parsed !== 'object') return fallback;
+    return {
+      labels: Array.isArray(parsed.labels) ? parsed.labels : fallback.labels,
+      succeeded: Array.isArray(parsed.succeeded) ? parsed.succeeded : fallback.succeeded,
+      retrying: Array.isArray(parsed.retrying) ? parsed.retrying : fallback.retrying,
+      dead: Array.isArray(parsed.dead) ? parsed.dead : fallback.dead,
+      succeeded_count: Number(parsed.succeeded_count) || 0,
+      retry_count: Number(parsed.retry_count) || 0,
+      dead_count: Number(parsed.dead_count) || 0
+    };
+  } catch (e) {
+    return fallback;
+  }
+}
 window.renderDashboardCharts = function() {
-  const chartLabels = {{ chart.labels | tojson if chart and chart.labels else ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "Now"] | tojson }};
-  const succeededData = {{ chart.succeeded | tojson if chart and chart.succeeded else [0, 0, 0, 0, 0, 0, 0] | tojson }};
-  const retryingData = {{ chart.retrying | tojson if chart and chart.retrying else [0, 0, 0, 0, 0, 0, 0] | tojson }};
-  const deadData = {{ chart.dead | tojson if chart and chart.dead else [0, 0, 0, 0, 0, 0, 0] | tojson }};
+  var _d = readDashboardChartData();
+  var chartLabels = _d.labels;
+  var succeededData = _d.succeeded;
+  var retryingData = _d.retrying;
+  var deadData = _d.dead;
 
-  const succCount = {{ stats.succeeded_deliveries | default(0) }};
-  const retryCount = {{ stats.pending_deliveries | default(0) }};
-  const deadCount = {{ stats.dead_deliveries | default(0) }};
+  var succCount = _d.succeeded_count;
+  var retryCount = _d.retry_count;
+  var deadCount = _d.dead_count;
 
   // 1. Initialize Line / Area Chart for Traffic Volume
   const trafficCanvas = document.getElementById('deliveryTrafficChart');
@@ -162,18 +240,18 @@ window.renderDashboardCharts = function() {
 
     const ctx = trafficCanvas.getContext('2d');
     
-    // Gradients
-    const gradSuccess = ctx.createLinearGradient(0, 0, 0, 220);
-    gradSuccess.addColorStop(0, 'rgba(16, 185, 129, 0.25)');
-    gradSuccess.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
+    // Relayflow gradients
+    const gradSuccess = ctx.createLinearGradient(0, 0, 0, 240);
+    gradSuccess.addColorStop(0, 'rgba(26, 174, 92, 0.22)');
+    gradSuccess.addColorStop(1, 'rgba(26, 174, 92, 0.0)');
 
-    const gradRetry = ctx.createLinearGradient(0, 0, 0, 220);
-    gradRetry.addColorStop(0, 'rgba(245, 158, 11, 0.20)');
-    gradRetry.addColorStop(1, 'rgba(245, 158, 11, 0.0)');
+    const gradRetry = ctx.createLinearGradient(0, 0, 0, 240);
+    gradRetry.addColorStop(0, 'rgba(233, 162, 59, 0.18)');
+    gradRetry.addColorStop(1, 'rgba(233, 162, 59, 0.0)');
 
-    const gradDead = ctx.createLinearGradient(0, 0, 0, 220);
-    gradDead.addColorStop(0, 'rgba(239, 68, 68, 0.20)');
-    gradDead.addColorStop(1, 'rgba(239, 68, 68, 0.0)');
+    const gradDead = ctx.createLinearGradient(0, 0, 0, 240);
+    gradDead.addColorStop(0, 'rgba(232, 93, 106, 0.14)');
+    gradDead.addColorStop(1, 'rgba(232, 93, 106, 0.0)');
 
     window._trafficVolumeChartInstance = new Chart(ctx, {
       type: 'line',
@@ -183,12 +261,12 @@ window.renderDashboardCharts = function() {
           {
             label: '2xx Succeeded',
             data: succeededData,
-            borderColor: '#10b981',
+            borderColor: '#1aae5c',
             backgroundColor: gradSuccess,
             borderWidth: 2.5,
             fill: true,
-            tension: 0.35,
-            pointBackgroundColor: '#10b981',
+            tension: 0.42,
+            pointBackgroundColor: '#1aae5c',
             pointBorderColor: '#ffffff',
             pointBorderWidth: 2,
             pointRadius: 4,
@@ -197,13 +275,13 @@ window.renderDashboardCharts = function() {
           {
             label: 'Retrying / Due',
             data: retryingData,
-            borderColor: '#f59e0b',
+            borderColor: '#e9a23b',
             backgroundColor: gradRetry,
             borderWidth: 2,
-            borderDash: [5, 4],
+            borderDash: [6, 5],
             fill: true,
-            tension: 0.35,
-            pointBackgroundColor: '#f59e0b',
+            tension: 0.42,
+            pointBackgroundColor: '#e9a23b',
             pointBorderColor: '#ffffff',
             pointBorderWidth: 2,
             pointRadius: 3.5,
@@ -212,12 +290,12 @@ window.renderDashboardCharts = function() {
           {
             label: 'Dead Letters',
             data: deadData,
-            borderColor: '#ef4444',
+            borderColor: '#e85d6a',
             backgroundColor: gradDead,
             borderWidth: 2,
             fill: true,
-            tension: 0.35,
-            pointBackgroundColor: '#ef4444',
+            tension: 0.42,
+            pointBackgroundColor: '#e85d6a',
             pointBorderColor: '#ffffff',
             pointBorderWidth: 2,
             pointRadius: 3.5,
@@ -235,15 +313,15 @@ window.renderDashboardCharts = function() {
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: '#0f172a',
+            backgroundColor: '#15251d',
             titleColor: '#f8fafc',
-            bodyColor: '#e2e8f0',
-            borderColor: '#334155',
+            bodyColor: '#d9e6dd',
+            borderColor: '#2a4232',
             borderWidth: 1,
             padding: 10,
-            cornerRadius: 8,
-            titleFont: { family: 'monospace', size: 12, weight: 'bold' },
-            bodyFont: { family: 'monospace', size: 11 },
+            cornerRadius: 10,
+            titleFont: { family: 'Inter, monospace', size: 12, weight: 'bold' },
+            bodyFont: { family: 'Inter, monospace', size: 11 },
             callbacks: {
               label: function(context) {
                 return ` ${context.dataset.label}: ${context.parsed.y} delivery(ies)`;
@@ -254,22 +332,24 @@ window.renderDashboardCharts = function() {
         scales: {
           x: {
             grid: { display: false },
+            border: { display: false },
             ticks: {
-              color: '#94a3b8',
-              font: { family: 'monospace', size: 10 }
+              color: '#9aa9a0',
+              font: { family: 'Inter, monospace', size: 10 }
             }
           },
           y: {
             beginAtZero: true,
+            grace: '10%',
+            border: { display: false },
             grid: {
-              color: '#f1f5f9',
-              drawBorder: false,
+              color: '#eef2ee',
             },
             ticks: {
-              stepSize: 1,
+              maxTicksLimit: 6,
               precision: 0,
-              color: '#94a3b8',
-              font: { family: 'monospace', size: 10 }
+              color: '#9aa9a0',
+              font: { family: 'Inter, monospace', size: 10 }
             }
           }
         }
@@ -286,7 +366,7 @@ window.renderDashboardCharts = function() {
 
     const total = succCount + retryCount + deadCount;
     const donutData = total === 0 ? [1, 0, 0] : [succCount, retryCount, deadCount];
-    const donutColors = total === 0 ? ['#e2e8f0', '#f1f5f9', '#f8fafc'] : ['#10b981', '#f59e0b', '#ef4444'];
+    const donutColors = total === 0 ? ['#e5ebe6', '#eef2ee', '#f4f6f3'] : ['#1aae5c', '#e9a23b', '#e85d6a'];
 
     window._outcomeDonutChartInstance = new Chart(donutCanvas.getContext('2d'), {
       type: 'doughnut',
@@ -295,9 +375,9 @@ window.renderDashboardCharts = function() {
         datasets: [{
           data: donutData,
           backgroundColor: donutColors,
-          borderWidth: 2,
+          borderWidth: 3,
           borderColor: '#ffffff',
-          hoverOffset: 4
+          hoverOffset: 5
         }]
       },
       options: {
@@ -307,9 +387,9 @@ window.renderDashboardCharts = function() {
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: '#0f172a',
+            backgroundColor: '#15251d',
             padding: 10,
-            cornerRadius: 8,
+            cornerRadius: 10,
             callbacks: {
               label: function(context) {
                 if (total === 0) return ' No deliveries yet';
@@ -324,14 +404,7 @@ window.renderDashboardCharts = function() {
     });
   }
 
-  // Helper function to toggle dataset visibility from external buttons
-  window.toggleDataset = function(index) {
-    if (window._trafficVolumeChartInstance) {
-      const isVisible = window._trafficVolumeChartInstance.isDatasetVisible(index);
-      window._trafficVolumeChartInstance.setDatasetVisibility(index, !isVisible);
-      window._trafficVolumeChartInstance.update();
-    }
-  };
+  // Helper is defined once at the top of this script (see above).
 };
 
 function safeRenderDashboardCharts() {
@@ -365,11 +438,14 @@ function safeRenderDashboardCharts() {
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', safeRenderDashboardCharts);
+  document.addEventListener('DOMContentLoaded', safeRenderDashboardCharts, { once: true });
 } else {
   safeRenderDashboardCharts();
 }
-window.addEventListener('load', safeRenderDashboardCharts);
+if (!window._dashboardChartsLoadListenerAttached) {
+  window._dashboardChartsLoadListenerAttached = true;
+  window.addEventListener('load', safeRenderDashboardCharts);
+}
 
 if (!window._chartsHtmxListenerAttached) {
   window._chartsHtmxListenerAttached = true;

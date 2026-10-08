@@ -1,11 +1,28 @@
+import re as _re
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class UserRegister(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8, description="Minimum 8 characters")
+    password: str = Field(min_length=8, max_length=128, description="8..128 chars, 3 of: upper/lower/digit/symbol")
+
+    @field_validator("password")
+    @classmethod
+    def _enforce_complexity(cls, v: str) -> str:
+        # Mirrors the dashboard registration rule (views.py): 3 of 4 classes.
+        classes = sum(
+            [
+                bool(_re.search(r"[A-Z]", v)),
+                bool(_re.search(r"[a-z]", v)),
+                bool(_re.search(r"[0-9]", v)),
+                bool(_re.search(r"[^A-Za-z0-9]", v)),
+            ]
+        )
+        if classes < 3:
+            raise ValueError("Password must include 3 of: uppercase, lowercase, digit, symbol.")
+        return v
 
 
 class UserLogin(BaseModel):

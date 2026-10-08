@@ -112,11 +112,41 @@ Open [http://127.0.0.1:8080](http://127.0.0.1:8080) in your browser.
 
 Production CSS is prebuilt (`npm run build:css` → `app/static/css/dist.css`);
 do not use the Tailwind browser CDN. Docker builds it automatically.
-For single-host prod, use `compose.yaml` `reverse_proxy` (nginx, `deploy/nginx.conf`)
-and set `ALLOW_LOCAL_RECEIVERS=False` + `ALLOWED_RECEIVER_DOMAINS`.
 
 See `docs/DEMO.md` for the scripted 8-minute demo, `docs/SECURITY.md` for the
 retention/allowlist/Redis-fallback policy, and `docs/BENCHMARK_REPORT.md` for measurements.
+
+---
+
+## 6. Production Deployment
+
+Base `compose.yaml` runs nginx as plain HTTP (`deploy/nginx.dev.conf`) — for
+production you MUST apply the `compose.prod.yaml` overlay (TLS via
+`deploy/nginx.conf`, no public DB/Redis ports, resource limits, prod guards):
+
+```bash
+# 1. Create your secrets (never reuse dev values — prod refuses to boot with them)
+cp .env.example .env
+# edit .env: SECRET_KEY, SIGNING_SECRET_ENCRYPTION_KEY, API_KEY_PEPPER,
+# METRICS_API_KEY, POSTGRES_PASSWORD, REDIS_URL (redis://:pass@redis:6379/0),
+# ALLOWED_RECEIVER_DOMAINS, DEMO_RECEIVER_ADMIN_TOKEN
+
+# 2. Place real TLS certs (Let's Encrypt) — dev self-signed files will NOT do
+cp /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem deploy/tls/fullchain.pem
+cp /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem deploy/tls/privkey.pem
+
+# 3. Launch with the prod overlay
+docker compose -f compose.yaml -f compose.prod.yaml up --build -d
+
+# 4. Verify
+docker compose -f compose.yaml -f compose.prod.yaml exec web alembic upgrade head
+curl -k https://YOUR_DOMAIN/ready
+```
+
+Prod requirements enforced at boot (`app/config.py` fail-fast): `ENV=production`,
+`DEBUG=False`, `USE_DEMO_RETRY_POLICY=False`, `ALLOW_LOCAL_RECEIVERS=False`,
+non-empty `ALLOWED_RECEIVER_DOMAINS`, strong secrets. Full checklist:
+`docs/SECURITY.md` §3. Backups: `docs/BACKUP_AND_RESTORE.md`.
 
 ---
 

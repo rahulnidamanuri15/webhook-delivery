@@ -1,29 +1,32 @@
 :root {
-  --primary: #4f46e5;
-  --primary-hover: #4338ca;
-  --bg-main: #f8fafc;
+  --primary: #1aae5c;
+  --primary-hover: #159452;
+  --bg-main: #f4f6f3;
   --surface: #ffffff;
-  --border: #e2e8f0;
-  --text-main: #0f172a;
-  --text-muted: #64748b;
-  --success: #10b981;
-  --warning: #f59e0b;
-  --danger: #ef4444;
+  --border: #e5ebe6;
+  --text-main: #111813;
+  --text-muted: #6b7c70;
+  --success: #1aae5c;
+  --warning: #e9a23b;
+  --danger: #e85d6a;
+  --sidebar: #1c2f24;
+  --sidebar-deep: #15251d;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   background-color: var(--bg-main);
   color: var(--text-main);
   margin: 0;
   padding: 0;
+  -webkit-font-smoothing: antialiased;
 }
 
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
-/* Status Badges */
+/* Status Badges — kept for backend status rendering */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -46,11 +49,89 @@ body {
 
 /* Code block container */
 .code-container {
-  background: #0f172a;
+  background: #15251d;
   color: #f8fafc;
-  border-radius: 0.5rem;
+  border-radius: 0.75rem;
   padding: 1rem;
   overflow-x: auto;
   font-family: monospace;
   font-size: 0.85rem;
 }
+
+/* All interactive controls show a pointer cursor on hover (Tailwind v4
+   preflight defaults buttons to `cursor: default`). */
+button,
+[role="button"],
+input[type="button"],
+input[type="submit"],
+input[type="reset"],
+summary,
+label[for] {
+  cursor: pointer;
+}
+button:disabled,
+input:disabled {
+  cursor: not-allowed;
+}
+
+/* Relayflow visual helpers (frontend only) */
+.relay-card {
+  background: #ffffff;
+  border: 1px solid #e5ebe6;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(21, 37, 29, 0.05);
+}
+.relay-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7a8a7f;
+}
+.relay-kpi {
+  font-size: 32px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #111813;
+}
+.relay-delta {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #12805c;
+}
+.relay-delta-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: #e6f5ec;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  font-size: 10px;
+}
+.relay-nav-active {
+  background: rgba(255,255,255,0.08) !important;
+  color: #fff !important;
+}
+.relay-nav-active svg {
+  color: #fff !important;
+}
+
+/* Relayflow theme bridge: remap legacy indigo accents to brand green.
+   Frontend-only color override — no markup / logic changed. */
+.bg-indigo-600 { background-color: #1aae5c !important; }
+.hover\:bg-indigo-700:hover, .hover\:bg-indigo-500:hover { background-color: #159452 !important; }
+.bg-indigo-50, .bg-indigo-50\/70, .hover\:bg-indigo-50:hover { background-color: #eef7f1 !important; }
+.hover\:bg-indigo-100:hover { background-color: #d9f2e6 !important; }
+.text-indigo-600, .text-indigo-700 { color: #0f7a4d !important; }
+.hover\:text-indigo-800:hover, .hover\:text-indigo-900:hover { color: #0b5c3b !important; }
+.text-indigo-400 { color: #2fd180 !important; }
+.border-indigo-100, .border-indigo-200 { border-color: #bfe6d2 !important; }
+.ring-indigo-600\/20 { --tw-ring-color: rgba(26,174,92,.2) !important; }
+.focus\:ring-indigo-500:focus { --tw-ring-color: rgba(26,174,92,.35) !important; border-color: #1aae5c !important; }
+.bg-slate-900 { background-color: #15251d !important; }
+.hover\:bg-slate-800:hover { background-color: #24402f !important; }

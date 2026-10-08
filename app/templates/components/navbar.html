@@ -1,11 +1,21 @@
-<!-- Top Bar / Navbar Component -->
-<header class="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-10">
-  <div class="px-6 py-3.5 flex justify-between items-center">
-    <div>
-      <h1 class="text-xl font-bold text-slate-900 leading-tight">{% block header_title %}Overview{% endblock %}</h1>
-    </div>
-    <div class="flex items-center space-x-3">
-      {% block header_actions %}{% endblock %}
-    </div>
+<!-- Relayflow Top Bar widgets (no blocks here: blocks must live in base.html to be overridable).
+     Included by base.html inside the header. -->
+<div class="hidden md:flex items-center">
+  <div class="relative">
+    <svg class="w-4 h-4 text-[#9aa9a0] absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+    <input id="relay-global-search" type="text" placeholder="Search events..."
+           onkeydown="if(event.key==='Enter'){const q=encodeURIComponent(this.value.trim());window.location.href='/dashboard/deliveries'+(q?'?q='+q:'');}"
+           class="w-64 pl-9 pr-12 py-2 text-[13px] bg-white border border-[#e5ebe6] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#1aae5c]/30 focus:border-[#1aae5c] transition placeholder:text-[#9aa9a0]">
+    <kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex items-center gap-0.5 text-[11px] font-semibold text-[#9aa9a0] bg-[#f4f6f3] border border-[#e5ebe6] rounded-md px-1.5 py-0.5">⌘ K</kbd>
   </div>
-</header>
+</div>
+<a href="/dashboard/dead-letters" class="relative flex items-center justify-center w-9 h-9 rounded-xl border border-[#e5ebe6] bg-white hover:bg-[#f4f6f3] transition" title="Issues">
+  <svg class="w-[18px] h-[18px] text-[#3d4d43]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2a2 2 0 01-.6 1.4L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+  </svg>
+  <span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#e85d6a] ring-2 ring-white"></span>
+</a>
+<a href="/dashboard/endpoints" class="inline-flex items-center gap-1.5 px-4 py-2 text-[13px] font-semibold rounded-xl shadow-sm text-white bg-[#1aae5c] hover:bg-[#159452] transition">
+  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" /></svg>
+  Add endpoint
+</a>

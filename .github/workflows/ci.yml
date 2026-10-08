@@ -74,22 +74,23 @@ jobs:
         run: |
           python -c '
           import os, sys, re
-          patterns = [
+          content_patterns = [
               r"-----BEGIN (RSA|EC|OPENSSH|PRIVATE) KEY-----",
+              r"npg_[A-Za-z0-9_-]{10,}",
           ]
           violations = []
           for root, dirs, files in os.walk("."):
               dirs[:] = [d for d in dirs if d not in (".git", ".venv", "node_modules", "__pycache__", ".pytest_cache")]
               for f in files:
-                  if f.endswith((".py", ".yaml", ".yml")):
+                  if f in (".env",) or f.endswith((".pem", ".key", ".py", ".yaml", ".yml")):
                       p = os.path.join(root, f)
                       with open(p, "r", encoding="utf-8", errors="ignore") as fh:
                           for i, line in enumerate(fh, 1):
-                              for pat in patterns:
+                              for pat in content_patterns:
                                   if re.search(pat, line):
                                       violations.append(f"{p}:{i}")
           if violations:
-              print("Committed private key violations found:\n" + "\n".join(violations))
+              print("Committed secret violations found:\n" + "\n".join(violations))
               sys.exit(1)
           print("Secret scanning passed.")
           '
@@ -114,3 +115,24 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build:css
           test -f app/static/css/dist.css
+
+  validate-prod:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate prod compose overlay (dry-run with dummy secrets)
+        run: |
+          SECRET_KEY=dummy_secret_key_for_config_check_only_1234567890 \
+          SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A= \
+          API_KEY_PEPPER=dummy_pepper_for_config_check \
+          METRICS_API_KEY=dummy_metrics_key_for_check \
+          POSTGRES_PASSWORD=dummy_postgres_password \
+          REDIS_PASSWORD=dummy_redis_password \
+          REDIS_URL=redis://:dummy@redis:6379/0 \
+          ALLOWED_RECEIVER_DOMAINS=example.com \
+          docker compose -f compose.yaml -f compose.prod.yaml config -q
+
+      - name: Build production image
+        run: docker build -t webhook-delivery:ci .

@@ -471,8 +471,8 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
     successful_attempts = attempts_query.filter(DeliveryAttempt.outcome == "SUCCESS").count()
     avg_latency = attempts_query.with_entities(func.avg(DeliveryAttempt.duration_ms)).scalar() or 0
 
-    delivery_success_rate = round((succeeded_deliveries / total_deliveries * 100), 1) if total_deliveries > 0 else 100.0
-    attempt_success_rate = round((successful_attempts / total_attempts * 100), 1) if total_attempts > 0 else 100.0
+    delivery_success_rate = round((succeeded_deliveries / total_deliveries * 100), 1) if total_deliveries > 0 else 0.0
+    attempt_success_rate = round((successful_attempts / total_attempts * 100), 1) if total_attempts > 0 else 0.0
 
     # End-to-end time from acceptance to successful delivery
     completed_records = (
@@ -793,7 +793,7 @@ def dashboard_metrics_chart_fragment(
     pending_del = delivery_base.filter(Delivery.status.in_(["PENDING", "IN_FLIGHT", "RETRY_SCHEDULED"])).count()
     dead_del = delivery_base.filter(Delivery.status == "DEAD").count()
     total_del = succeeded_del + pending_del + dead_del
-    delivery_success_rate = round((succeeded_del / total_del * 100), 1) if total_del > 0 else 100.0
+    delivery_success_rate = round((succeeded_del / total_del * 100), 1) if total_del > 0 else 0.0
 
     attempts_query = (
         db.query(DeliveryAttempt)

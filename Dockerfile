@@ -19,11 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get purge -y --auto-remove build-essential 2>/dev/null || true
+    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt pyproject.toml ./
-RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir --no-deps .
+RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir --no-deps . \
+    && apt-get purge -y --auto-remove build-essential 2>/dev/null || true
 
 COPY app ./app
 COPY migrations ./migrations

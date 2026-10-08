@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+@theme {
+  --color-relay-900: #15251d;
+  --color-relay-800: #1c2f24;
+  --color-relay-700: #24402f;
+  --color-relay-600: #1aae5c;
+  --color-relay-500: #22c55e;
+  --color-relay-100: #d9f2e6;
+  --color-relay-50: #eef7f1;
+  --color-cream: #f4f6f3;
+  --color-line: #e5ebe6;
+  --color-ink: #111813;
+  --color-muted: #6b7c70;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -15,11 +29,67 @@
 .badge-retry_scheduled { background-color: #fed7aa; color: #9a3412; }
 .badge-dead { background-color: #fee2e2; color: #991b1b; }
 .code-container {
-  background: #0f172a;
+  background: #15251d;
   color: #f8fafc;
-  border-radius: 0.5rem;
+  border-radius: 0.75rem;
   padding: 1rem;
   overflow-x: auto;
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;
+}
+
+/* All interactive controls show a pointer cursor on hover (Tailwind v4
+   preflight defaults buttons to `cursor: default`). */
+button,
+[role="button"],
+input[type="button"],
+input[type="submit"],
+input[type="reset"],
+summary,
+label[for] {
+  cursor: pointer;
+}
+button:disabled,
+input:disabled {
+  cursor: not-allowed;
+}
+
+/* Relayflow helpers — pure visuals, no functional impact */
+.relay-card {
+  background: #ffffff;
+  border: 1px solid #e5ebe6;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(21, 37, 29, 0.05);
+}
+.relay-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7a8a7f;
+}
+.relay-kpi {
+  font-size: 32px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #111813;
+}
+.relay-delta {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #12805c;
+}
+.relay-delta-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: #e6f5ec;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  font-size: 10px;
 }

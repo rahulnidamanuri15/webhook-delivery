@@ -91,6 +91,13 @@ When deploying to a production environment:
 - [ ] Set `DEMO_RECEIVER_ADMIN_TOKEN` and do not expose the demo receiver publicly without it.
 - [ ] Configure outbound egress proxies or firewalls to restrict worker network interfaces.
 - [ ] Set `OTEL_EXPORTER_OTLP_ENDPOINT` to collect traces; logs are JSON-structured to stdout.
+- [ ] Serve ONLY behind the nginx `reverse_proxy`: `get_client_ip()` trusts
+      `X-Forwarded-For`/`X-Real-IP`, so direct `:8080` exposure lets clients spoof
+      IPs (rate-limit bypass, audit-log poisoning). Never publish port 8080.
+- [ ] Set `REDIS_URL` with a password: session logout revocation and rate limits
+      are per-process memory without Redis (multi-replica logout gap).
+- [ ] Set `USE_CELERY=True` in production so deliveries survive web restarts.
+- [ ] Schedule backups per `docs/BACKUP_AND_RESTORE.md` (DB dumps + offsite copies).
 
 ---
 

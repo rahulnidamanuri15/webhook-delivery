@@ -3,52 +3,53 @@
 {% block title %}Sign In{% endblock %}
 
 {% block public_content %}
-<div class="min-h-screen bg-slate-900 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+<div class="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8" style="background:linear-gradient(180deg,#1e3227 0%,#15251d 100%)">
   <div class="sm:mx-auto sm:w-full sm:max-w-md text-center">
-    <div class="inline-flex items-center justify-center p-3 bg-indigo-600 rounded-xl text-white shadow-lg mb-4">
-      <svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+    <div class="flex items-center justify-center gap-2 mb-4">
+      <svg class="h-8 w-8 text-[#2fd180]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6.5a3.5 3.5 0 0 0-5.2 4.6L3 16.4a2.5 2.5 0 0 0 3.5 3.5l5.3-5.3a3.5 3.5 0 0 0 4.6-5.2l-2.6 2.6-2.4-.7-.7-2.4 3.2-2.4z" />
       </svg>
+      <span class="text-white font-bold text-2xl tracking-tight">Relay<span class="text-[#2fd180]">flow</span></span>
     </div>
-    <h2 class="text-3xl font-extrabold text-white">Webhook Delivery Platform</h2>
-    <p class="mt-2 text-sm text-slate-400">Sign in to your developer dashboard</p>
+    <h2 class="text-2xl font-semibold text-white">Welcome back</h2>
+    <p class="mt-1.5 text-sm text-white/50">Sign in to your webhook dashboard</p>
   </div>
 
   <div class="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-    <div class="bg-slate-800 py-8 px-6 shadow-xl rounded-2xl sm:px-10 border border-slate-700">
+    <div class="bg-white py-8 px-6 shadow-2xl rounded-2xl sm:px-10 border border-[#e5ebe6]">
       
       {% if error %}
-      <div class="mb-4 bg-red-950/80 border border-red-500 text-red-300 text-sm p-3 rounded-lg">
+      <div class="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-xl">
         {{ error }}
       </div>
       {% endif %}
 
-      <form class="space-y-6" action="/auth/login" method="POST">
+      <form class="space-y-5" action="/auth/login" method="POST">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div>
-          <label class="block text-sm font-medium text-slate-200">Email address</label>
+          <label class="block text-[13px] font-semibold text-[#111813]">Email address</label>
           <input type="email" name="email" required autofocus
-                 class="mt-1 block w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm">
+                 class="mt-1.5 block w-full px-3 py-2.5 bg-[#f7f9f7] border border-[#e5ebe6] rounded-xl text-[#111813] placeholder-[#9aa9a0] focus:outline-none focus:ring-2 focus:ring-[#1aae5c]/30 focus:border-[#1aae5c] text-sm">
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-200">Password</label>
+          <label class="block text-[13px] font-semibold text-[#111813]">Password</label>
           <input type="password" name="password" required
-                 class="mt-1 block w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm">
+                 class="mt-1.5 block w-full px-3 py-2.5 bg-[#f7f9f7] border border-[#e5ebe6] rounded-xl text-[#111813] placeholder-[#9aa9a0] focus:outline-none focus:ring-2 focus:ring-[#1aae5c]/30 focus:border-[#1aae5c] text-sm">
         </div>
 
         <div>
           <button type="submit"
-                  class="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition">
+                  class="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-[#1aae5c] hover:bg-[#159452] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#1aae5c] transition">
             Sign in
           </button>
         </div>
       </form>
 
       <div class="mt-6 text-center">
-        <p class="text-sm text-slate-400">
+        <p class="text-sm text-[#6b7c70]">
           Don't have an account?
-          <a href="/auth/register" class="font-medium text-indigo-400 hover:text-indigo-300">Register here</a>
+          <a href="/auth/register" class="font-semibold text-[#0f7a4d] hover:text-[#0b5c3b]">Register here</a>
         </p>
       </div>
 
