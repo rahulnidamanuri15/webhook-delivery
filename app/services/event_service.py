@@ -13,12 +13,6 @@ class IdempotencyConflictError(Exception):
     pass
 
 
-class ProjectEndpointLimitExceeded(Exception):
-    """Raised when project endpoint capacity is exceeded."""
-
-    pass
-
-
 def canonicalize_payload(arg1: str | dict, arg2: dict | None = None) -> tuple[str, str]:
     """
     Returns (canonical_data_json_str, sha256_hash).

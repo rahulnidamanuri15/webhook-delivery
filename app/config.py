@@ -92,6 +92,33 @@ class Settings(BaseSettings):
         default="", description="Bearer token required for /metrics. Empty = require session auth instead."
     )
 
+    # SMTP / Email (forgot-password OTP delivery)
+    SMTP_HOST: str = Field(default="", description="SMTP server hostname (empty disables email sending)")
+    SMTP_PORT: int = Field(default=587, description="SMTP server port (587 TLS / 465 SSL / 25 plain)")
+    SMTP_USERNAME: str = Field(default="", description="SMTP auth username (empty = no auth)")
+    SMTP_PASSWORD: str = Field(default="", description="SMTP auth password")
+    SMTP_FROM_EMAIL: str = Field(
+        default="noreply@relayflow.local", description="From address used for transactional emails"
+    )
+    SMTP_FROM_NAME: str = Field(default="Relayflow", description="From display name for transactional emails")
+    SMTP_USE_TLS: bool = Field(default=True, description="Use STARTTLS on SMTP_PORT (False for SSL-on-connect on 465 or plain local relay)")
+    SMTP_USE_SSL: bool = Field(default=False, description="Use implicit SSL (SMTPS, typically port 465)")
+    SMTP_TIMEOUT_SECONDS: float = Field(default=10.0, description="SMTP connection/socket timeout")
+
+    # Forgot-password OTP policy
+    PASSWORD_RESET_OTP_LENGTH: int = Field(default=6, description="Digits in the forgot-password OTP")
+    PASSWORD_RESET_OTP_EXPIRE_MINUTES: int = Field(default=10, description="OTP validity window in minutes")
+    PASSWORD_RESET_OTP_MAX_ATTEMPTS: int = Field(default=5, description="Max OTP verification attempts before OTP is invalidated")
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = Field(
+        default=15, description="Short-lived reset-token validity after successful OTP verification"
+    )
+
+    # Trusted proxies for X-Forwarded-For evaluation (comma-separated IPs/CIDRs)
+    TRUSTED_PROXIES: str = Field(
+        default="127.0.0.1,::1",
+        description="Comma-separated list of trusted reverse proxy IPs allowed to set client IP via X-Forwarded-For",
+    )
+
     def __init__(self, **values):
         super().__init__(**values)
         import os as _os
@@ -105,16 +132,28 @@ class Settings(BaseSettings):
             "METRICS_API_KEY",
             "DATABASE_URL",
             "REDIS_URL",
+            "SMTP_PASSWORD",
         ):
             _file_path = _os.getenv(f"{_secret_field}_FILE")
-            if _file_path and _os.path.isfile(_file_path):
+            if _file_path:
+                if not _os.path.isfile(_file_path):
+                    raise RuntimeError(
+                        f"{_secret_field}_FILE is set to '{_file_path}', but the file does not exist or is not a regular file."
+                    )
                 try:
                     with open(_file_path, "r", encoding="utf-8") as _f:
                         _val = _f.read().strip()
-                        if _val:
-                            setattr(self, _secret_field, _val)
-                except Exception:
-                    pass
+                        if not _val:
+                            raise RuntimeError(
+                                f"{_secret_field}_FILE at '{_file_path}' is empty."
+                            )
+                        setattr(self, _secret_field, _val)
+                except Exception as _e:
+                    if isinstance(_e, RuntimeError):
+                        raise
+                    raise RuntimeError(
+                        f"Failed to read secret from {_secret_field}_FILE at '{_file_path}': {_e}"
+                    ) from _e
 
     class Config:
         env_file = ".env"

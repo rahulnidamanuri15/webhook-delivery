@@ -23,6 +23,7 @@ logger = logging.getLogger("db_migrate")
 TABLES_ORDER = [
     "organizations",
     "users",
+    "password_reset_otps",
     "organization_members",
     "projects",
     "api_keys",
@@ -36,7 +37,7 @@ TABLES_ORDER = [
 ]
 
 # Set of columns containing boolean flags
-BOOLEAN_COLUMNS = {"enabled"}
+BOOLEAN_COLUMNS = {"enabled", "used"}
 
 # Set of columns containing datetime timestamps
 DATETIME_COLUMNS = {
@@ -48,6 +49,7 @@ DATETIME_COLUMNS = {
     "started_at",
     "finished_at",
     "expires_at",
+    "password_changed_at",
 }
 
 

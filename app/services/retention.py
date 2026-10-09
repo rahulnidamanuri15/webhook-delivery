@@ -116,33 +116,6 @@ def purge_expired_data(
 
     db.commit()
 
-    if purged_deliveries > 0 or purged_events > 0 or purged_audit > 0:
-        try:
-            import json as _json
-            from app.models.audit_log import AuditLog
-
-            db.add(
-                AuditLog(
-                    organization_id="system",
-                    action="retention.purge",
-                    resource_type="system",
-                    resource_id="retention",
-                    ip_address="127.0.0.1",
-                    details_json=_json.dumps(
-                        {
-                            "purged_attempts": purged_attempts,
-                            "purged_deliveries": purged_deliveries,
-                            "purged_events": purged_events,
-                            "purged_audit_logs": purged_audit,
-                            "cutoff": cutoff.isoformat(),
-                        }
-                    ),
-                )
-            )
-            db.commit()
-        except Exception as e:
-            logger.warning("Failed to record retention purge audit log: %s", e)
-
     logger.info(
         "retention_purge",
         extra={

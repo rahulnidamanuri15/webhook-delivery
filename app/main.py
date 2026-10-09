@@ -27,6 +27,15 @@ async def lifespan(app: FastAPI):
     # and can mask migration issues. Run: alembic upgrade head
     logger.info("Database schema managed by Alembic migrations.")
 
+    # 1. Startup self-test: verify PinnedIPTransport compatibility with httpcore internals
+    from app.services.delivery_service import verify_dns_pinning_compatibility
+
+    if not verify_dns_pinning_compatibility():
+        err_msg = "CRITICAL: PinnedIPTransport self-test failed: httpcore internals incompatible with DNS pinning."
+        logger.error(err_msg)
+        if _IS_PROD:
+            raise RuntimeError(err_msg)
+
     # 2. In local dev mode, spawn background delivery thread only if explicitly enabled
     global dispatcher_thread
     if settings.ENABLE_INPROCESS_DISPATCHER:
@@ -53,7 +62,13 @@ app = FastAPI(
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
-    req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    raw_req_id = (request.headers.get("x-request-id") or "").strip()
+    import re as _re
+
+    if raw_req_id and len(raw_req_id) <= 64 and _re.match(r"^[A-Za-z0-9_-]+$", raw_req_id):
+        req_id = raw_req_id
+    else:
+        req_id = uuid.uuid4().hex
     request.state.request_id = req_id
     response = await call_next(request)
     response.headers["X-Request-ID"] = req_id
@@ -62,7 +77,7 @@ async def request_id_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def request_size_limit_middleware(request: Request, call_next):
-    """Enforces body size limit before JSON deserialization or memory exhaustion."""
+    """Enforces body size limit before JSON deserialization or memory exhaustion, including chunked streams."""
     content_length = request.headers.get("content-length")
     # MAX_PAYLOAD_SIZE_BYTES + 64KB margin for headers/JSON envelope
     max_bytes = settings.MAX_PAYLOAD_SIZE_BYTES + 65536
@@ -78,7 +93,40 @@ async def request_size_limit_middleware(request: Request, call_next):
             return Response(
                 content='{"detail":"Invalid Content-Length header"}', status_code=400, media_type="application/json"
             )
-    return await call_next(request)
+    else:
+        # Wrap receive channel to protect against chunked / streaming bodies exceeding max_bytes
+        bytes_received = 0
+        original_receive = request._receive
+
+        async def limited_receive():
+            nonlocal bytes_received
+            msg = await original_receive()
+            if msg.get("type") == "http.request":
+                body = msg.get("body", b"")
+                bytes_received += len(body)
+                if bytes_received > max_bytes:
+                    from fastapi import HTTPException
+
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Payload Too Large: request body exceeds maximum allowed size.",
+                    )
+            return msg
+
+        request._receive = limited_receive
+
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        from fastapi import HTTPException
+
+        if isinstance(exc, HTTPException) and exc.status_code == 413:
+            return Response(
+                content='{"detail":"Payload Too Large: request body exceeds maximum allowed size."}',
+                status_code=413,
+                media_type="application/json",
+            )
+        raise
 
 
 @app.middleware("http")
@@ -97,11 +145,12 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     # HTMX requires 'unsafe-eval' for dynamic trigger/swap expression evaluation.
-    # CDN scripts (htmx/chart.js) explicitly allowlisted.
+    # Static assets and fonts loaded from local self or Google Fonts.
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.jsdelivr.net; "
-        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data:; "
         "connect-src 'self'; "
         "frame-ancestors 'none'; "

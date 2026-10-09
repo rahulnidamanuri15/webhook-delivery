@@ -434,6 +434,401 @@ def logout(request: Request, csrf_token: str | None = Form(None)):
     return response
 
 
+# ================= FORGOT PASSWORD (OTP via SMTP) =================
+
+
+def _forgot_generic_success(request, email: str, resend: bool = False):
+    """Generic success response to prevent email enumeration."""
+    msg = "If an account exists for this email, a verification code has been sent."
+    if resend:
+        msg = "If an account exists for this email, a new verification code has been sent."
+    return templates.TemplateResponse(
+        "auth/verify_otp.html",
+        {
+            "request": request,
+            "current_user": None,
+            "email": email,
+            "message": msg,
+            "message_type": "success",
+        },
+    )
+
+
+@router.get("/auth/forgot-password", response_class=HTMLResponse)
+def forgot_password_page(request: Request):
+    return templates.TemplateResponse("auth/forgot_password.html", {"request": request, "current_user": None})
+
+
+@router.post("/auth/forgot-password")
+def forgot_password_post(
+    request: Request,
+    email: str = Form(...),
+    csrf_token: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    assert_csrf(request, csrf_token)
+    from app.services.rate_limiter import check_password_reset_request_rate_limit
+
+    clean_email = (email or "").strip().lower()[:255]
+    client_ip = get_client_ip(request)
+    allowed, wait_sec = check_password_reset_request_rate_limit(client_ip, clean_email)
+    if not allowed:
+        return templates.TemplateResponse(
+            "auth/forgot_password.html",
+            {
+                "request": request,
+                "current_user": None,
+                "error": f"Too many reset requests. Please wait {int(wait_sec) + 1}s before trying again.",
+                "email": clean_email,
+            },
+            status_code=429,
+        )
+    if not _EMAIL_REGEX.match(clean_email):
+        # Keep response generic-shaped but flag format error (no account leak).
+        return templates.TemplateResponse(
+            "auth/forgot_password.html",
+            {"request": request, "current_user": None, "error": "Please enter a valid email address.", "email": clean_email},
+            status_code=400,
+        )
+
+    user = db.query(User).filter(User.email == clean_email).first()
+    if not user:
+        # Generic response to prevent user enumeration
+        return _forgot_generic_success(request, clean_email)
+
+    from app.services.email import send_otp_email
+    from app.services.password_reset import create_otp_for_user
+
+    try:
+        _row, plain_otp = create_otp_for_user(db, user.id, user.email)
+    except Exception:
+        return templates.TemplateResponse(
+            "auth/forgot_password.html",
+            {"request": request, "current_user": None, "error": "Could not start reset. Please try again.", "email": clean_email},
+            status_code=500,
+        )
+
+    if not send_otp_email(user.email, plain_otp):
+        return templates.TemplateResponse(
+            "auth/forgot_password.html",
+            {
+                "request": request,
+                "current_user": None,
+                "error": "Unable to deliver verification code email. Please check server SMTP configuration or try again.",
+                "email": clean_email,
+            },
+            status_code=500,
+        )
+    return _forgot_generic_success(request, clean_email)
+
+
+@router.get("/auth/forgot-password/verify", response_class=HTMLResponse)
+def forgot_password_verify_page(request: Request, email: str | None = None):
+    return templates.TemplateResponse(
+        "auth/verify_otp.html", {"request": request, "current_user": None, "email": (email or "").strip()}
+    )
+
+
+@router.post("/auth/forgot-password/verify")
+def forgot_password_verify_post(
+    request: Request,
+    email: str = Form(...),
+    otp: str = Form(...),
+    csrf_token: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    assert_csrf(request, csrf_token)
+    from app.services.rate_limiter import check_password_reset_verify_rate_limit
+
+    clean_email = (email or "").strip().lower()[:255]
+    clean_otp = "".join(ch for ch in (otp or "") if ch.isdigit())[:10]
+    client_ip = get_client_ip(request)
+    allowed, wait_sec = check_password_reset_verify_rate_limit(client_ip, clean_email)
+    if not allowed:
+        return templates.TemplateResponse(
+            "auth/verify_otp.html",
+            {
+                "request": request,
+                "current_user": None,
+                "email": clean_email,
+                "error": f"Too many verification attempts. Please wait {int(wait_sec) + 1}s.",
+            },
+            status_code=429,
+        )
+
+    user = db.query(User).filter(User.email == clean_email).first()
+    if not user:
+        return templates.TemplateResponse(
+            "auth/verify_otp.html",
+            {
+                "request": request,
+                "current_user": None,
+                "email": clean_email,
+                "error": "Invalid or expired code. Please request a new one.",
+            },
+            status_code=400,
+        )
+
+    from app.services.password_reset import consume_otp, create_reset_token, verify_otp
+
+    ok, reason, row = verify_otp(db, user.id, clean_otp)
+    if not ok:
+        messages = {
+            "expired": "This code has expired. Please request a new one.",
+            "locked": "Too many wrong attempts. Please request a new code.",
+            "missing": "Invalid or expired code. Please request a new one.",
+        }
+        return templates.TemplateResponse(
+            "auth/verify_otp.html",
+            {
+                "request": request,
+                "current_user": None,
+                "email": clean_email,
+                "error": messages.get(reason, "Invalid or expired code."),
+            },
+            status_code=400,
+        )
+    # Success: single-use the OTP, then hand out a short-lived signed reset token.
+    consume_otp(db, row)
+    token = create_reset_token(user.id, row.id)
+    from urllib.parse import quote as _q
+
+    return RedirectResponse(url=f"/auth/reset-password?token={_q(token)}", status_code=303)
+
+
+@router.post("/auth/forgot-password/resend")
+def forgot_password_resend_post(
+    request: Request,
+    email: str = Form(...),
+    csrf_token: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Resend a fresh OTP (same throttling as request)."""
+    assert_csrf(request, csrf_token)
+    from app.services.rate_limiter import check_password_reset_request_rate_limit
+
+    clean_email = (email or "").strip().lower()[:255]
+    client_ip = get_client_ip(request)
+    allowed, wait_sec = check_password_reset_request_rate_limit(client_ip, clean_email)
+    if not allowed:
+        return templates.TemplateResponse(
+            "auth/verify_otp.html",
+            {
+                "request": request,
+                "current_user": None,
+                "email": clean_email,
+                "error": f"Too many reset requests. Please wait {int(wait_sec) + 1}s before trying again.",
+            },
+            status_code=429,
+        )
+    if not _EMAIL_REGEX.match(clean_email):
+        return templates.TemplateResponse(
+            "auth/verify_otp.html",
+            {"request": request, "current_user": None, "email": clean_email, "error": "Invalid or expired code."},
+            status_code=400,
+        )
+    user = db.query(User).filter(User.email == clean_email).first()
+    if not user:
+        # Generic response to prevent user enumeration
+        return _forgot_generic_success(request, clean_email, resend=True)
+    from app.services.email import send_otp_email
+    from app.services.password_reset import create_otp_for_user
+
+    try:
+        _row, plain_otp = create_otp_for_user(db, user.id, user.email)
+    except Exception:
+        return templates.TemplateResponse(
+            "auth/verify_otp.html",
+            {"request": request, "current_user": None, "email": clean_email, "error": "Could not resend. Try again."},
+            status_code=500,
+        )
+    if not send_otp_email(user.email, plain_otp):
+        return templates.TemplateResponse(
+            "auth/verify_otp.html",
+            {
+                "request": request,
+                "current_user": None,
+                "email": clean_email,
+                "error": "Unable to deliver verification code email. Please check server SMTP configuration or try again.",
+            },
+            status_code=500,
+        )
+    return _forgot_generic_success(request, clean_email, resend=True)
+
+
+@router.get("/auth/reset-password", response_class=HTMLResponse)
+def reset_password_page(request: Request, token: str | None = None, db: Session = Depends(get_db)):
+    from app.services.password_reset import verify_reset_token
+
+    data = verify_reset_token(token or "")
+    if not data:
+        return templates.TemplateResponse(
+            "auth/forgot_password.html",
+            {
+                "request": request,
+                "current_user": None,
+                "error": "This reset link is invalid or has expired. Please request a new code.",
+            },
+            status_code=400,
+        )
+    # The link is only usable after OTP verification and before any newer OTP.
+    from app.models.password_reset import PasswordResetOTP
+
+    otp_row = db.query(PasswordResetOTP).filter(PasswordResetOTP.id == data["otp_id"]).first()
+    if not otp_row or otp_row.user_id != data["user_id"] or not otp_row.used:
+        return templates.TemplateResponse(
+            "auth/forgot_password.html",
+            {
+                "request": request,
+                "current_user": None,
+                "error": "This reset link is invalid or has expired. Please request a new code.",
+            },
+            status_code=400,
+        )
+    latest = (
+        db.query(PasswordResetOTP)
+        .filter(PasswordResetOTP.user_id == data["user_id"])
+        .order_by(PasswordResetOTP.created_at.desc())
+        .first()
+    )
+    if not latest or latest.id != otp_row.id:
+        return templates.TemplateResponse(
+            "auth/forgot_password.html",
+            {
+                "request": request,
+                "current_user": None,
+                "error": "A newer verification code was requested. Please use the latest link.",
+            },
+            status_code=400,
+        )
+    return templates.TemplateResponse(
+        "auth/reset_password.html", {"request": request, "current_user": None, "token": token}
+    )
+
+
+@router.post("/auth/reset-password")
+def reset_password_post(
+    request: Request,
+    token: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+    csrf_token: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    assert_csrf(request, csrf_token)
+    from app.services.password_reset import validate_new_password, verify_reset_token
+
+    data = verify_reset_token(token or "")
+    if not data:
+        return templates.TemplateResponse(
+            "auth/forgot_password.html",
+            {
+                "request": request,
+                "current_user": None,
+                "error": "This reset link is invalid or has expired. Please request a new code.",
+            },
+            status_code=400,
+        )
+    if password != confirm_password:
+        return templates.TemplateResponse(
+            "auth/reset_password.html",
+            {"request": request, "current_user": None, "token": token, "error": "Passwords do not match."},
+            status_code=400,
+        )
+    pw_error = validate_new_password(password)
+    if pw_error:
+        return templates.TemplateResponse(
+            "auth/reset_password.html",
+            {"request": request, "current_user": None, "token": token, "error": pw_error},
+            status_code=400,
+        )
+
+    user = db.query(User).filter(User.id == data["user_id"]).first()
+    if not user:
+        return templates.TemplateResponse(
+            "auth/forgot_password.html",
+            {"request": request, "current_user": None, "error": "Account no longer exists."},
+            status_code=400,
+        )
+    # Ensure the OTP backing this token was actually consumed (verified).
+    # Also requires it to be the latest OTP for the user so that requesting
+    # a newer code invalidates older reset links.
+    from app.models.password_reset import PasswordResetOTP
+
+    otp_row = db.query(PasswordResetOTP).filter(PasswordResetOTP.id == data["otp_id"]).first()
+    if not otp_row or otp_row.user_id != user.id or not otp_row.used:
+        return templates.TemplateResponse(
+            "auth/forgot_password.html",
+            {
+                "request": request,
+                "current_user": None,
+                "error": "This reset link is invalid or has expired. Please request a new code.",
+            },
+            status_code=400,
+        )
+    latest = (
+        db.query(PasswordResetOTP)
+        .filter(PasswordResetOTP.user_id == user.id)
+        .order_by(PasswordResetOTP.created_at.desc())
+        .first()
+    )
+    if not latest or latest.id != otp_row.id:
+        return templates.TemplateResponse(
+            "auth/forgot_password.html",
+            {
+                "request": request,
+                "current_user": None,
+                "error": "A newer verification code was requested. Please use the latest link.",
+            },
+            status_code=400,
+        )
+
+    user.password_hash = hash_password(password)
+    user.password_changed_at = utc_now()
+
+    # Invalidate all existing sessions across all browsers/devices for this user
+    from app.services.security import invalidate_all_user_sessions
+    invalidate_all_user_sessions(user.id)
+
+    # Single-use reset link: remove all OTP rows for this user so the
+    # signed token cannot be replayed after a successful reset.
+    try:
+        db.query(PasswordResetOTP).filter(PasswordResetOTP.user_id == user.id).delete(synchronize_session=False)
+    except Exception:
+        pass
+    db.commit()
+
+    # Best-effort audit on the user's first org (non-blocking for password reset).
+    try:
+        membership = db.query(OrganizationMember).filter(OrganizationMember.user_id == user.id).first()
+        if membership:
+            from app.services.audit import log_audit_event
+
+            log_audit_event(
+                db=db,
+                organization_id=membership.organization_id,
+                user_id=user.id,
+                action="auth.password_reset",
+                resource_type="user",
+                resource_id=user.id,
+                ip_address=get_client_ip(request),
+                details={"email": user.email},
+            )
+    except Exception:
+        pass
+
+    response = templates.TemplateResponse(
+        "auth/login.html",
+        {
+            "request": request,
+            "current_user": None,
+            "message": "Password reset successful. Please sign in with your new password.",
+        },
+    )
+    response.delete_cookie("wh_session")
+    return response
+
+
 # ================= DASHBOARD CORE =================
 
 
@@ -1781,8 +2176,7 @@ def replay_all_dead_letters(request: Request, csrf_token: str | None = Form(None
 # ================= API KEYS =================
 
 
-@router.get("/dashboard/api-keys", response_class=HTMLResponse)
-def list_api_keys(request: Request, new_key: str | None = None, db: Session = Depends(get_db)):
+def _render_api_keys(request: Request, db: Session, new_key: str | None = None):
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
@@ -1792,6 +2186,11 @@ def list_api_keys(request: Request, new_key: str | None = None, db: Session = De
         "api_keys/index.html",
         {"request": request, "current_user": user, "current_project": project, "api_keys": keys, "new_key": new_key},
     )
+
+
+@router.get("/dashboard/api-keys", response_class=HTMLResponse)
+def list_api_keys(request: Request, db: Session = Depends(get_db)):
+    return _render_api_keys(request, db, new_key=None)
 
 
 @router.post("/dashboard/api-keys")
@@ -1839,7 +2238,7 @@ def create_api_key_post(
         details={"name": api_key_obj.name, "prefix": key_prefix},
     )
 
-    return list_api_keys(request=request, new_key=full_key, db=db)
+    return _render_api_keys(request=request, db=db, new_key=full_key)
 
 
 @router.post("/dashboard/api-keys/{key_id}/revoke")

@@ -22,6 +22,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    password_changed_at = Column(DateTime(timezone=True), nullable=True)
 
     memberships = relationship("OrganizationMember", back_populates="user", cascade="all, delete-orphan")
 
@@ -195,6 +196,11 @@ class DeliveryAttempt(Base):
     )
 
 
-# Re-export AuditLog and OrganizationInvitation
+# Re-export AuditLog, OrganizationInvitation and PasswordResetOTP
 from app.models.audit_log import AuditLog as AuditLog
 from app.models.invitation import OrganizationInvitation as OrganizationInvitation
+
+try:
+    from app.models.password_reset import PasswordResetOTP as PasswordResetOTP
+except Exception:  # pragma: no cover - circular import guard during Base init
+    pass

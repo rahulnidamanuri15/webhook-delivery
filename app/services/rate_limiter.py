@@ -7,11 +7,29 @@ from app.config import settings
 
 
 class MemoryTokenBucket:
-    """Thread-safe in-memory token bucket implementation for rate limiting."""
+    """Thread-safe in-memory token bucket implementation with TTL eviction and bounded capacity."""
 
-    def __init__(self):
+    DEFAULT_TTL_SECONDS = 3600.0
+    MAX_BUCKETS = 10000
+
+    def __init__(self, ttl_seconds: float = DEFAULT_TTL_SECONDS, max_buckets: int = MAX_BUCKETS):
         self._buckets = {}
         self._lock = threading.Lock()
+        self._ttl_seconds = float(ttl_seconds)
+        self._max_buckets = int(max_buckets)
+        self._last_cleanup = time.monotonic()
+
+    def _cleanup_expired(self, now: float) -> None:
+        """Removes idle buckets where last update exceeds TTL or capacity overflow."""
+        expired_keys = [k for k, b in self._buckets.items() if (now - b["last_updated"]) > self._ttl_seconds]
+        for k in expired_keys:
+            self._buckets.pop(k, None)
+
+        if len(self._buckets) > self._max_buckets:
+            sorted_keys = sorted(self._buckets.keys(), key=lambda k: self._buckets[k]["last_updated"])
+            num_to_remove = len(self._buckets) - self._max_buckets
+            for k in sorted_keys[:num_to_remove]:
+                self._buckets.pop(k, None)
 
     def acquire(self, key: str, rate_per_second: float, capacity: float | None = None) -> tuple[bool, float]:
         """
@@ -24,7 +42,14 @@ class MemoryTokenBucket:
 
         now = time.monotonic()
         with self._lock:
+            if (now - self._last_cleanup) > 60.0 or len(self._buckets) >= self._max_buckets:
+                self._cleanup_expired(now)
+                self._last_cleanup = now
+
             if key not in self._buckets:
+                if len(self._buckets) >= self._max_buckets:
+                    oldest_key = min(self._buckets.keys(), key=lambda k: self._buckets[k]["last_updated"])
+                    self._buckets.pop(oldest_key, None)
                 self._buckets[key] = {"tokens": float(capacity), "last_updated": now}
 
             bucket = self._buckets[key]
@@ -203,3 +228,38 @@ def check_invitation_accept_rate_limit(client_ip: str) -> tuple[bool, float]:
     """Invitation accept throttle: 10 attempts / min per IP to prevent token brute-force guessing."""
     ip = (client_ip or "unknown").strip() or "unknown"
     return _acquire_both(f"inv-accept:ip:{ip}", 10.0 / 60.0, 10.0)
+
+
+def check_password_reset_request_rate_limit(client_ip: str, email: str = "") -> tuple[bool, float]:
+    """Forgot-password request throttle (anti email-bombing / enumeration):
+    - per-IP bucket: 20 requests / hour (burst 20)
+    - per-IP+email bucket: 5 requests / hour (burst 5)
+    Both must allow; returns longest wait on denial.
+    """
+    ip = (client_ip or "unknown").strip() or "unknown"
+    em = (email or "").strip().lower()
+    ip_allowed, ip_wait = _acquire_both(f"pwdreset-req:ip:{ip}", 20.0 / 3600.0, 20.0)
+    if not ip_allowed:
+        return False, ip_wait
+    if em:
+        em_allowed, em_wait = _acquire_both(f"pwdreset-req:ip-email:{ip}:{em}", 5.0 / 3600.0, 5.0)
+        if not em_allowed:
+            return False, em_wait
+    return True, 0.0
+
+
+def check_password_reset_verify_rate_limit(client_ip: str, email: str = "") -> tuple[bool, float]:
+    """OTP verification throttle (anti brute-force):
+    - per IP+email: 10 attempts / 10 min (burst 10)
+    - per email global: 10 attempts / 10 min (burst 10) to prevent distributed guessing across IPs
+    """
+    ip = (client_ip or "unknown").strip() or "unknown"
+    em = (email or "").strip().lower() or "noemail"
+    ip_allowed, ip_wait = _acquire_both(f"pwdreset-verify:ip-email:{ip}:{em}", 10.0 / 600.0, 10.0)
+    if not ip_allowed:
+        return False, ip_wait
+    if em != "noemail":
+        em_allowed, em_wait = _acquire_both(f"pwdreset-verify:email:{em}", 10.0 / 600.0, 10.0)
+        if not em_allowed:
+            return False, em_wait
+    return True, 0.0

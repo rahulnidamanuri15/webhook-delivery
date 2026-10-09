@@ -55,6 +55,20 @@ def get_current_api_key(
     return api_key, api_key.project
 
 
+def _is_session_stale_from_pwd_change(token: str, password_changed_at) -> bool:
+    if not password_changed_at:
+        return False
+    try:
+        from app.services.security import serializer
+
+        _, ts = serializer.loads(token, return_timestamp=True, max_age=86400 * 7)
+        token_ts = ts.timestamp() if hasattr(ts, "timestamp") else float(ts)
+        pwd_ts = password_changed_at.timestamp() if hasattr(password_changed_at, "timestamp") else float(password_changed_at)
+        return token_ts < pwd_ts
+    except Exception:
+        return False
+
+
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     """Authenticates server-side session cookie for dashboard UI."""
     token = request.cookies.get("wh_session")
@@ -69,6 +83,12 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
+    if _is_session_stale_from_pwd_change(token, user.password_changed_at):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session invalidated due to password reset. Please sign in again.",
+        )
+
     return user
 
 
@@ -79,4 +99,9 @@ def get_optional_user(request: Request, db: Session = Depends(get_db)) -> User |
     data = verify_session_token(token)
     if not data or "user_id" not in data:
         return None
-    return db.query(User).filter(User.id == data["user_id"]).first()
+    user = db.query(User).filter(User.id == data["user_id"]).first()
+    if not user:
+        return None
+    if _is_session_stale_from_pwd_change(token, user.password_changed_at):
+        return None
+    return user

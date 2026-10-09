@@ -57,6 +57,16 @@ class PinnedIPTransport(httpx.HTTPTransport):
             logger.error(f"PinnedIPTransport init failed, pinning unavailable (fail-closed): {e}")
 
 
+def verify_dns_pinning_compatibility() -> bool:
+    """Startup self-test verifying that PinnedIPTransport can hook into httpcore internals."""
+    try:
+        t = PinnedIPTransport({"pin-test.internal": "127.0.0.1"})
+        return bool(t.pinning_active)
+    except Exception as e:
+        logger.error(f"DNS pinning transport self-test failed: {e}")
+        return False
+
+
 def _build_timeout() -> "httpx.Timeout":
     """Separate connect vs total timeouts (total stays < lease duration)."""
     total = float(settings.HTTP_TIMEOUT_SECONDS)
@@ -269,7 +279,19 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
     except Exception as e:
         err_msg = f"Secret decryption error: {e}"
         logger.error(f"Failed to decrypt endpoint secret for {endpoint.id}: {err_msg}")
-        _save_terminal_failure(db, delivery_id, claimed_lease_token, err_msg)
+        _record_attempt_and_update_state(
+            db=db,
+            delivery_id=delivery_id,
+            lease_token=claimed_lease_token,
+            attempt_number=delivery.attempt_count,
+            started_at=utc_now(),
+            finished_at=utc_now(),
+            http_status=None,
+            duration_ms=0,
+            error_code="FERNET_DECRYPT_ERROR",
+            response_excerpt=err_msg[: settings.RESPONSE_EXCERPT_MAX_BYTES],
+            outcome="RETRYABLE_ERROR",
+        )
         return False
 
     # 4. Generate headers with HMAC signature and fresh timestamp
@@ -300,7 +322,19 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
             # (DNS-rebinding TOCTOU). Retryable so a fixed worker can deliver.
             logger.error(f"Delivery {delivery_id}: IP pinning unavailable, refusing to send (fail-closed).")
             db.rollback()
-            _save_terminal_failure(db, delivery_id, claimed_lease_token, "IP pinning unavailable (fail-closed)")
+            _record_attempt_and_update_state(
+                db=db,
+                delivery_id=delivery_id,
+                lease_token=claimed_lease_token,
+                attempt_number=delivery.attempt_count,
+                started_at=utc_now(),
+                finished_at=utc_now(),
+                http_status=None,
+                duration_ms=0,
+                error_code="PINNING_UNAVAILABLE",
+                response_excerpt="IP pinning unavailable (fail-closed)",
+                outcome="RETRYABLE_ERROR",
+            )
             return False
         client_kwargs["transport"] = transport
     # Release session resources before blocking HTTP. claim_delivery() already

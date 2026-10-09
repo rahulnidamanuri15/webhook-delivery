@@ -145,11 +145,11 @@ def test_delivery_secret_decryption_failure_records_descriptive_error():
     assert success is False
 
     session.refresh(delivery)
-    assert delivery.status == "DEAD"
+    assert delivery.status == "RETRY_SCHEDULED"
     assert len(delivery.attempts) == 1
     attempt = delivery.attempts[0]
-    assert attempt.outcome == "PERMANENT_ERROR"
-    assert attempt.error_code == "SSRF_OR_CONFIG_ERROR"
+    assert attempt.outcome == "RETRYABLE_ERROR"
+    assert attempt.error_code == "FERNET_DECRYPT_ERROR"
     assert "Secret decryption error:" in attempt.response_excerpt
     assert "Failed to decrypt signing secret" in attempt.response_excerpt
     assert len(attempt.response_excerpt.strip()) > 30

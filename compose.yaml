@@ -71,7 +71,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/live', timeout=5)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=5)\""]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -180,7 +180,7 @@ services:
       - DEMO_RECEIVER_ADMIN_TOKEN=${DEMO_RECEIVER_ADMIN_TOKEN:-}
       - DEMO_RECEIVER_ENDPOINT_SECRET=${DEMO_RECEIVER_ENDPOINT_SECRET:-}
       - DEMO_RECEIVER_DB_FILE=/tmp/demo_receiver.db
-    command: uvicorn demo_receiver.app:app --host 127.0.0.1 --port 8001
+    command: uvicorn demo_receiver.app:app --host 0.0.0.0 --port 8001
 
   reverse_proxy:
     image: nginx:1.27-alpine

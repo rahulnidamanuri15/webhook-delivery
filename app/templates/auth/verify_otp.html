@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Verify Code{% endblock %}
+
+{% block public_content %}
+<div class="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8" style="background:linear-gradient(180deg,#1e3227 0%,#15251d 100%)">
+  <div class="sm:mx-auto sm:w-full sm:max-w-md text-center">
+    <div class="flex items-center justify-center gap-2 mb-4">
+      <svg class="h-8 w-8 text-[#2fd180]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6.5a3.5 3.5 0 0 0-5.2 4.6L3 16.4a2.5 2.5 0 0 0 3.5 3.5l5.3-5.3a3.5 3.5 0 0 0 4.6-5.2l-2.6 2.6-2.4-.7-.7-2.4 3.2-2.4z" />
+      </svg>
+      <span class="text-white font-bold text-2xl tracking-tight">Relay<span class="text-[#2fd180]">flow</span></span>
+    </div>
+    <h2 class="text-2xl font-semibold text-white">Check your email</h2>
+    <p class="mt-1.5 text-sm text-white/50">We sent a 6-digit verification code{% if email %} to <span class="text-white/80 font-medium">{{ email }}</span>{% endif %}. It expires in 10 minutes.</p>
+  </div>
+
+  <div class="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
+    <div class="bg-white py-8 px-6 shadow-2xl rounded-2xl sm:px-10 border border-[#e5ebe6]">
+
+      {% if error %}
+      <div class="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-xl">
+        {{ error }}
+      </div>
+      {% endif %}
+      {% if message %}
+      <div class="mb-4 bg-[#e6f5ec] border border-[#bfe6d2] text-[#0f7a4d] text-sm p-3 rounded-xl">
+        {{ message }}
+      </div>
+      {% endif %}
+
+      <form class="space-y-5" action="/auth/forgot-password/verify" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="email" value="{{ email or '' }}">
+        <div>
+          <label class="block text-[13px] font-semibold text-[#111813]">Verification code</label>
+          <input type="text" name="otp" required autofocus inputmode="numeric" autocomplete="one-time-code"
+                 pattern="[0-9]{4,10}" maxlength="10" minlength="4" placeholder="Enter 6-digit code"
+                 class="mt-1.5 block w-full px-3 py-2.5 bg-[#f7f9f7] border border-[#e5ebe6] rounded-xl text-[#111813] placeholder-[#9aa9a0] focus:outline-none focus:ring-2 focus:ring-[#1aae5c]/30 focus:border-[#1aae5c] text-sm text-center tracking-[0.4em] font-semibold">
+          <p class="mt-1.5 text-xs text-[#6b7c70]">Enter the code from the email. After 5 wrong attempts you'll need a new code.</p>
+        </div>
+
+        <div>
+          <button type="submit"
+                  class="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-[#1aae5c] hover:bg-[#159452] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#1aae5c] transition">
+            Verify code
+          </button>
+        </div>
+      </form>
+
+      <form class="mt-3" action="/auth/forgot-password/resend" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="email" value="{{ email or '' }}">
+        <button type="submit"
+                class="w-full flex justify-center py-2.5 px-4 border border-[#e5ebe6] rounded-xl shadow-sm text-sm font-semibold text-[#0f7a4d] bg-white hover:bg-[#f7f9f7] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#1aae5c] transition">
+          Resend code
+        </button>
+      </form>
+
+      <div class="mt-6 text-center">
+        <p class="text-sm text-[#6b7c70]">
+          Wrong email?
+          <a href="/auth/forgot-password" class="font-semibold text-[#0f7a4d] hover:text-[#0b5c3b]">Start over</a>
+        </p>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}

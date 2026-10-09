@@ -225,3 +225,97 @@ def test_invitation_account_takeover_prevention():
     finally:
         app.dependency_overrides.clear()
         db.close()
+
+
+def test_user_session_invalidation():
+    from app.services.security import invalidate_all_user_sessions
+    import time
+
+    uid = "usr_test_sess_inval"
+    tok1 = create_session_token(uid)
+    assert verify_session_token(tok1) is not None
+
+    time.sleep(0.01)
+    invalidate_all_user_sessions(uid)
+
+    # Old token signed prior to invalidation must be rejected
+    assert verify_session_token(tok1) is None
+
+    # Fresh token signed after invalidation must be accepted
+    time.sleep(0.01)
+    tok2 = create_session_token(uid)
+    assert verify_session_token(tok2) is not None
+
+
+def test_stale_session_from_password_changed_at():
+    from datetime import datetime, UTC
+    from app.api.deps import _is_session_stale_from_pwd_change
+
+    tok = create_session_token("usr_test_pwd")
+    now_ts = datetime.now(UTC)
+    # If password was changed after token was issued -> stale
+    assert _is_session_stale_from_pwd_change(tok, now_ts) is True
+    # If password was changed in the past (before token was issued) -> not stale
+    assert _is_session_stale_from_pwd_change(tok, datetime(2020, 1, 1, tzinfo=UTC)) is False
+
+
+def test_get_client_ip_anti_spoofing():
+    from unittest.mock import MagicMock
+    from app.services.security import get_client_ip
+
+    # Direct client from untrusted host attempts XFF spoofing
+    direct_req = MagicMock()
+    direct_req.client.host = "203.0.113.195"
+    direct_req.headers = {"x-forwarded-for": "10.0.0.1, 192.168.1.1"}
+    assert get_client_ip(direct_req) == "203.0.113.195"
+
+    # Request from trusted proxy (127.0.0.1) has XFF honored
+    proxied_req = MagicMock()
+    proxied_req.client.host = "127.0.0.1"
+    proxied_req.headers = {"x-forwarded-for": "198.51.100.42"}
+    assert get_client_ip(proxied_req) == "198.51.100.42"
+
+
+def test_memory_token_bucket_ttl_and_eviction():
+    import time
+    from app.services.rate_limiter import MemoryTokenBucket
+
+    bucket = MemoryTokenBucket(ttl_seconds=0.05, max_buckets=5)
+    allowed, _ = bucket.acquire("key1", rate_per_second=10)
+    assert allowed is True
+    assert "key1" in bucket._buckets
+
+    # Sleep past TTL
+    time.sleep(0.06)
+    bucket._cleanup_expired(time.monotonic())
+    assert "key1" not in bucket._buckets
+
+    # Capacity bounding
+    for i in range(10):
+        bucket.acquire(f"key_{i}", rate_per_second=10)
+    assert len(bucket._buckets) <= 5
+
+
+def test_secret_file_loader_fail_fast(tmp_path, monkeypatch):
+    from app.config import Settings
+
+    non_existent = str(tmp_path / "missing_secret.txt")
+    monkeypatch.setenv("SECRET_KEY_FILE", non_existent)
+    import pytest
+
+    with pytest.raises(RuntimeError, match="does not exist"):
+        Settings()
+
+    # Empty file must also raise
+    empty_file = tmp_path / "empty_secret.txt"
+    empty_file.write_text("")
+    monkeypatch.setenv("SECRET_KEY_FILE", str(empty_file))
+    with pytest.raises(RuntimeError, match="empty"):
+        Settings()
+
+
+def test_dns_pinning_compatibility_self_test():
+    from app.services.delivery_service import verify_dns_pinning_compatibility
+
+    assert verify_dns_pinning_compatibility() is True
+

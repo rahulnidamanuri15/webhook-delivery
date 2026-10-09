@@ -208,6 +208,9 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+_denied_user_session_timestamps: dict[str, float] = {}
+
+
 def invalidate_session_token(token: str) -> None:
     """Adds a session token to the logout denylist until its max_age elapses."""
     if not token:
@@ -222,6 +225,42 @@ def invalidate_session_token(token: str) -> None:
         except Exception:
             pass
     _denied_session_hashes[h] = float(expiry)
+
+
+def invalidate_all_user_sessions(user_id: str) -> None:
+    """Invalidates all sessions issued for user_id prior to this moment (e.g. on password reset)."""
+    if not user_id:
+        return
+    now_ts = _time.time()
+    r = _get_redis_client()
+    if r is not None:
+        try:
+            r.setex(f"user_session_revoked_at:{user_id}", 86400 * 7, str(now_ts))
+        except Exception:
+            pass
+    _denied_user_session_timestamps[user_id] = float(now_ts)
+
+
+def is_user_session_revoked(user_id: str, token_timestamp: float) -> bool:
+    if not user_id:
+        return False
+    r = _get_redis_client()
+    if r is not None:
+        try:
+            val = r.get(f"user_session_revoked_at:{user_id}")
+            if val is not None:
+                revoked_at = float(val)
+                if token_timestamp < revoked_at:
+                    return True
+        except Exception:
+            pass
+    revoked_at = _denied_user_session_timestamps.get(user_id)
+    if revoked_at is not None:
+        if _time.time() > revoked_at + (86400 * 7):
+            _denied_user_session_timestamps.pop(user_id, None)
+        elif token_timestamp < revoked_at:
+            return True
+    return False
 
 
 def is_session_token_denied(token: str) -> bool:
@@ -253,8 +292,15 @@ def verify_session_token(token: str, max_age: int = 86400 * 7) -> dict | None:
     if not token or is_session_token_denied(token):
         return None
     try:
-        return serializer.loads(token, max_age=max_age)
-    except (BadSignature, SignatureExpired):
+        data, ts = serializer.loads(token, max_age=max_age, return_timestamp=True)
+        if not isinstance(data, dict):
+            return None
+        token_ts = ts.timestamp() if hasattr(ts, "timestamp") else float(ts)
+        user_id = data.get("user_id")
+        if user_id and is_user_session_revoked(user_id, token_ts):
+            return None
+        return data
+    except (BadSignature, SignatureExpired, Exception):
         return None
 
 
@@ -302,18 +348,56 @@ def validate_request_csrf(request, form_csrf_token: str | None = None) -> bool:
     return verify_csrf_token(form_csrf_token, session_id)
 
 
+def _is_trusted_proxy(ip_str: str) -> bool:
+    if not ip_str:
+        return False
+    # Local loopback and testclient are trusted by default
+    if ip_str in ("127.0.0.1", "::1", "localhost", "testclient"):
+        return True
+    import ipaddress
+
+    trusted_raw = getattr(settings, "TRUSTED_PROXIES", "127.0.0.1,::1") or "127.0.0.1,::1"
+    trusted_list = [p.strip() for p in trusted_raw.split(",") if p.strip()]
+    for pattern in trusted_list:
+        if pattern == "*" or pattern == ip_str:
+            return True
+        try:
+            if "/" in pattern:
+                if ipaddress.ip_address(ip_str) in ipaddress.ip_network(pattern, strict=False):
+                    return True
+            else:
+                if ipaddress.ip_address(ip_str) == ipaddress.ip_address(pattern):
+                    return True
+        except ValueError:
+            pass
+    return False
+
+
 def get_client_ip(request) -> str:
-    """Safely extracts client IP, honoring X-Forwarded-For and X-Real-IP when behind reverse proxies."""
+    """Safely extracts client IP.
+    Only trusts X-Forwarded-For and X-Real-IP if the direct connecting peer is a trusted proxy.
+    On direct exposure, returns request.client.host directly to prevent IP header spoofing.
+    """
     if not request:
         return "127.0.0.1"
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        parts = [p.strip() for p in xff.split(",") if p.strip()]
-        if parts:
-            return parts[0]
-    x_real = request.headers.get("x-real-ip")
-    if x_real and x_real.strip():
-        return x_real.strip()
-    if getattr(request, "client", None) and request.client.host:
-        return request.client.host
-    return "127.0.0.1"
+
+    direct_ip = "127.0.0.1"
+    client_obj = getattr(request, "client", None)
+    if client_obj is not None:
+        host = getattr(client_obj, "host", None)
+        if isinstance(host, str) and host:
+            direct_ip = host
+
+    # Only inspect forwarded headers if incoming connection comes from trusted reverse proxy
+    if _is_trusted_proxy(direct_ip):
+        headers = getattr(request, "headers", {})
+        xff = headers.get("x-forwarded-for") if hasattr(headers, "get") else None
+        if xff:
+            parts = [p.strip() for p in xff.split(",") if p.strip()]
+            if parts:
+                return parts[0]
+        x_real = headers.get("x-real-ip") if hasattr(headers, "get") else None
+        if x_real and x_real.strip():
+            return x_real.strip()
+
+    return direct_ip
