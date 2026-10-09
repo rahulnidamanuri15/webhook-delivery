@@ -329,4 +329,3 @@ def test_dns_pinning_compatibility_self_test():
     from app.services.delivery_service import verify_dns_pinning_compatibility
 
     assert verify_dns_pinning_compatibility() is True
-

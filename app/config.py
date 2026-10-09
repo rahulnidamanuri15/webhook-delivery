@@ -101,14 +101,18 @@ class Settings(BaseSettings):
         default="noreply@relayflow.local", description="From address used for transactional emails"
     )
     SMTP_FROM_NAME: str = Field(default="Relayflow", description="From display name for transactional emails")
-    SMTP_USE_TLS: bool = Field(default=True, description="Use STARTTLS on SMTP_PORT (False for SSL-on-connect on 465 or plain local relay)")
+    SMTP_USE_TLS: bool = Field(
+        default=True, description="Use STARTTLS on SMTP_PORT (False for SSL-on-connect on 465 or plain local relay)"
+    )
     SMTP_USE_SSL: bool = Field(default=False, description="Use implicit SSL (SMTPS, typically port 465)")
     SMTP_TIMEOUT_SECONDS: float = Field(default=10.0, description="SMTP connection/socket timeout")
 
     # Forgot-password OTP policy
     PASSWORD_RESET_OTP_LENGTH: int = Field(default=6, description="Digits in the forgot-password OTP")
     PASSWORD_RESET_OTP_EXPIRE_MINUTES: int = Field(default=10, description="OTP validity window in minutes")
-    PASSWORD_RESET_OTP_MAX_ATTEMPTS: int = Field(default=5, description="Max OTP verification attempts before OTP is invalidated")
+    PASSWORD_RESET_OTP_MAX_ATTEMPTS: int = Field(
+        default=5, description="Max OTP verification attempts before OTP is invalidated"
+    )
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = Field(
         default=15, description="Short-lived reset-token validity after successful OTP verification"
     )
@@ -157,9 +161,7 @@ class Settings(BaseSettings):
                     with open(_file_path, "r", encoding="utf-8") as _f:
                         _val = _f.read().strip()
                         if not _val:
-                            raise RuntimeError(
-                                f"{_secret_field}_FILE at '{_file_path}' is empty."
-                            )
+                            raise RuntimeError(f"{_secret_field}_FILE at '{_file_path}' is empty.")
                         setattr(self, _secret_field, _val)
                 except Exception as _e:
                     if isinstance(_e, RuntimeError):
@@ -198,8 +200,7 @@ def validate_production_settings(s: Settings) -> None:
     _redis = str(s.REDIS_URL or "").strip()
     if _redis.startswith(("redis://", "rediss://")) and "@" not in _redis:
         raise RuntimeError(
-            "REDIS_URL must include authentication credentials "
-            "(e.g., redis://:password@host:port/db) in production."
+            "REDIS_URL must include authentication credentials " "(e.g., redis://:password@host:port/db) in production."
         )
     if not (s.SMTP_HOST or "").strip() or not (s.SMTP_FROM_EMAIL or "").strip() or not (s.SMTP_PASSWORD or "").strip():
         raise RuntimeError(
@@ -207,9 +208,7 @@ def validate_production_settings(s: Settings) -> None:
             "so password-reset codes and team invitations are actually delivered."
         )
     if (s.TRUSTED_PROXIES or "").strip() in ("", "*"):
-        raise RuntimeError(
-            "TRUSTED_PROXIES must list explicit proxy IPs or CIDRs in production. '*' is not allowed."
-        )
+        raise RuntimeError("TRUSTED_PROXIES must list explicit proxy IPs or CIDRs in production. '*' is not allowed.")
     if s.SECRET_KEY in _INSECURE_SECRET_DEFAULTS or len(s.SECRET_KEY) < 32:
         raise RuntimeError(
             "SECRET_KEY must be set to a strong random value (>=32 chars) in production. "

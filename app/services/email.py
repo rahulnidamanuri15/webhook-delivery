@@ -55,8 +55,7 @@ def _build_otp_message(to_email: str, otp: str, expire_minutes: int) -> EmailMes
     msg["Subject"] = f"{from_name} password reset code"
     msg["From"] = f"{from_name} <{from_email}>"
     msg["To"] = to_email
-    msg.set_content(
-        f"""Hi,
+    msg.set_content(f"""Hi,
 
 You requested a password reset for your {from_name} account.
 
@@ -71,8 +70,7 @@ If you did not request this, you can safely ignore this email —
 your password will not change.
 
 — The {from_name} team
-"""
-    )
+""")
     msg.add_alternative(
         f"""<html><body style="font-family:Inter,system-ui,sans-serif;color:#111813;">
 <p>Hi,</p>
@@ -178,8 +176,7 @@ def send_invitation_email(to_email: str, invite_url: str, org_name: str, role: s
     msg["Subject"] = f"You've been invited to {org_name or from_name}"
     msg["From"] = f"{from_name} <{from_email}>"
     msg["To"] = clean_to
-    msg.set_content(
-        f"""Hi,
+    msg.set_content(f"""Hi,
 
 You've been invited to join {org_name or "an organization"} on {from_name} as {role or "member"}.
 
@@ -190,8 +187,7 @@ Open this link to accept (it expires in 7 days):
 If you did not expect this invitation, you can ignore this email.
 
 — The {from_name} team
-"""
-    )
+""")
     msg.add_alternative(
         f"""<html><body style="font-family:Inter,system-ui,sans-serif;color:#111813;">
 <p>Hi,</p>

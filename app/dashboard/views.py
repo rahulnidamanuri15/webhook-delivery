@@ -487,7 +487,12 @@ def forgot_password_post(
         # Keep response generic-shaped but flag format error (no account leak).
         return templates.TemplateResponse(
             "auth/forgot_password.html",
-            {"request": request, "current_user": None, "error": "Please enter a valid email address.", "email": clean_email},
+            {
+                "request": request,
+                "current_user": None,
+                "error": "Please enter a valid email address.",
+                "email": clean_email,
+            },
             status_code=400,
         )
 
@@ -504,7 +509,12 @@ def forgot_password_post(
     except Exception:
         return templates.TemplateResponse(
             "auth/forgot_password.html",
-            {"request": request, "current_user": None, "error": "Could not start reset. Please try again.", "email": clean_email},
+            {
+                "request": request,
+                "current_user": None,
+                "error": "Could not start reset. Please try again.",
+                "email": clean_email,
+            },
             status_code=500,
         )
 
@@ -770,6 +780,7 @@ def reset_password_post(
 
     # Invalidate all existing sessions across all browsers/devices for this user
     from app.services.security import invalidate_all_user_sessions
+
     invalidate_all_user_sessions(user.id)
 
     # Single-use reset link: remove all OTP rows for this user so the
@@ -2297,7 +2308,9 @@ def list_audit_logs(request: Request, page: int = 1, db: Session = Depends(get_d
 
 
 @router.get("/dashboard/team", response_class=HTMLResponse)
-def list_team(request: Request, db: Session = Depends(get_db), notice: str | None = None, notice_type: str | None = None):
+def list_team(
+    request: Request, db: Session = Depends(get_db), notice: str | None = None, notice_type: str | None = None
+):
     user, org, project = get_user_and_project(request, db)
     if not user or not org:
         return RedirectResponse(url="/auth/login", status_code=302)
@@ -2427,7 +2440,9 @@ def invite_team_member(
         details={"invitee_email": email_clean, "role": invitation.role, "emailed": sent},
     )
 
-    return RedirectResponse(url=f"/dashboard/team?notice={notice}&notice_type={'success' if sent else 'error'}", status_code=303)
+    return RedirectResponse(
+        url=f"/dashboard/team?notice={notice}&notice_type={'success' if sent else 'error'}", status_code=303
+    )
 
 
 @router.post("/dashboard/team/invitations/{inv_id}/revoke")

@@ -63,7 +63,9 @@ def _is_session_stale_from_pwd_change(token: str, password_changed_at) -> bool:
 
         _, ts = serializer.loads(token, return_timestamp=True, max_age=86400 * 7)
         token_ts = ts.timestamp() if hasattr(ts, "timestamp") else float(ts)
-        pwd_ts = password_changed_at.timestamp() if hasattr(password_changed_at, "timestamp") else float(password_changed_at)
+        pwd_ts = (
+            password_changed_at.timestamp() if hasattr(password_changed_at, "timestamp") else float(password_changed_at)
+        )
         return token_ts < pwd_ts
     except Exception:
         return False
