@@ -129,7 +129,8 @@ production you MUST apply the `compose.prod.yaml` overlay (TLS via
 cp .env.example .env
 # edit .env: SECRET_KEY, SIGNING_SECRET_ENCRYPTION_KEY, API_KEY_PEPPER,
 # METRICS_API_KEY, POSTGRES_PASSWORD, REDIS_URL (redis://:pass@redis:6379/0),
-# ALLOWED_RECEIVER_DOMAINS, DEMO_RECEIVER_ADMIN_TOKEN
+# ALLOWED_RECEIVER_DOMAINS, PUBLIC_BASE_URL (https://your.domain),
+# SMTP_HOST, SMTP_PASSWORD, SMTP_FROM_EMAIL
 
 # 2. Place real TLS certs (Let's Encrypt) — dev self-signed files will NOT do
 cp /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem deploy/tls/fullchain.pem

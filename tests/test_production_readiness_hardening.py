@@ -74,8 +74,52 @@ def test_production_fails_on_missing_allowlist():
         ALLOW_LOCAL_RECEIVERS=False,
         USE_DEMO_RETRY_POLICY=False,
         ALLOWED_RECEIVER_DOMAINS="",  # Missing allowlist
+        SMTP_HOST="smtp.example.com",
+        SMTP_PASSWORD="smtp-secret",
+        SMTP_FROM_EMAIL="noreply@example.com",
+        REDIS_URL="redis://:secret@redis:6379/0",
     )
     with pytest.raises(RuntimeError, match="ALLOWED_RECEIVER_DOMAINS must be configured in production"):
+        validate_production_settings(s)
+
+
+def test_production_fails_without_smtp():
+    s = Settings(
+        ENV="production",
+        DEBUG=False,
+        DATABASE_URL="postgresql+psycopg://user:strongpass@host/db",
+        SECRET_KEY="A" * 64,
+        SIGNING_SECRET_ENCRYPTION_KEY="B" * 43 + "=",
+        API_KEY_PEPPER="pepper_is_long_enough",
+        METRICS_API_KEY="metrics_key_is_long_enough",
+        ALLOW_LOCAL_RECEIVERS=False,
+        USE_DEMO_RETRY_POLICY=False,
+        ALLOWED_RECEIVER_DOMAINS="example.com",
+        REDIS_URL="redis://:secret@redis:6379/0",
+        SMTP_HOST="",
+    )
+    with pytest.raises(RuntimeError, match="SMTP_HOST"):
+        validate_production_settings(s)
+
+
+def test_production_fails_on_unauthenticated_redis():
+    s = Settings(
+        ENV="production",
+        DEBUG=False,
+        DATABASE_URL="postgresql+psycopg://user:strongpass@host/db",
+        SECRET_KEY="A" * 64,
+        SIGNING_SECRET_ENCRYPTION_KEY="B" * 43 + "=",
+        API_KEY_PEPPER="pepper_is_long_enough",
+        METRICS_API_KEY="metrics_key_is_long_enough",
+        ALLOW_LOCAL_RECEIVERS=False,
+        USE_DEMO_RETRY_POLICY=False,
+        ALLOWED_RECEIVER_DOMAINS="example.com",
+        SMTP_HOST="smtp.example.com",
+        SMTP_PASSWORD="smtp-secret",
+        SMTP_FROM_EMAIL="noreply@example.com",
+        REDIS_URL="rediss://redis:6379/0",
+    )
+    with pytest.raises(RuntimeError, match="REDIS_URL must include authentication"):
         validate_production_settings(s)
 
 
@@ -91,6 +135,10 @@ def test_production_fails_on_unsafe_lease_timeout():
         ALLOW_LOCAL_RECEIVERS=False,
         USE_DEMO_RETRY_POLICY=False,
         ALLOWED_RECEIVER_DOMAINS="example.com",
+        SMTP_HOST="smtp.example.com",
+        SMTP_PASSWORD="smtp-secret",
+        SMTP_FROM_EMAIL="noreply@example.com",
+        REDIS_URL="redis://:secret@redis:6379/0",
         HTTP_TIMEOUT_SECONDS=30.0,
         LEASE_DURATION_SECONDS=30,  # Unsafe: timeout not less than lease - margin
     )
@@ -143,6 +191,27 @@ def test_production_metrics_requires_bearer_token(monkeypatch):
     resp_valid = client.get("/metrics", headers={"Authorization": "Bearer prod_metrics_key_12345678"})
     assert resp_valid.status_code == 200
     assert "webhook_" in resp_valid.text
+
+
+def test_client_ip_uses_rightmost_untrusted_hop(monkeypatch):
+    """A trusted proxy at the right edge is skipped; a spoofed leftmost hop is not."""
+    from app.config import settings
+    from app.services.security import get_client_ip
+
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", "10.0.0.0/8,172.16.0.0/12")
+
+    class _Req:
+        def __init__(self, client, headers):
+            self.client = type("C", (), {"host": client})()
+            self.headers = headers
+
+    # nginx appended the real client; the client tried to prepend a fake hop.
+    proxied = _Req("10.0.1.5", {"x-forwarded-for": "1.2.3.4, 203.0.113.9", "x-real-ip": "203.0.113.9"})
+    assert get_client_ip(proxied) == "203.0.113.9"
+
+    # Direct connection: ignore a client-supplied X-Forwarded-For.
+    direct = _Req("198.51.100.20", {"x-forwarded-for": "1.2.3.4"})
+    assert get_client_ip(direct) == "198.51.100.20"
 
 
 def test_invitation_token_hashed_at_rest(mem_db):

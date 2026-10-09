@@ -107,21 +107,28 @@ def send_otp_email(to_email: str, otp: str, expire_minutes: int | None = None) -
     if not is_email_configured():
         if settings.PASSWORD_RESET_OTP_CAPTURE:
             _captured_otps.append({"to": clean_to, "otp": otp})
-        else:
-            # No recipient, no code: nothing here is usable as a credential.
-            logger.info(
-                "SMTP not configured; password-reset email not sent (request expires in %sm)",
-                exp_min,
-            )
+            return True
+        # Production must not pretend the code was sent. Dev/test stays quiet
+        # so local flows work without an SMTP server, and the OTP is never logged.
+        if str(settings.ENV or "").strip().lower() == "production":
+            logger.error("SMTP not configured; refusing to fake a password-reset delivery")
+            return False
+        logger.info(
+            "SMTP not configured; password-reset email not sent (request expires in %sm)",
+            exp_min,
+        )
         return True
 
-    msg = _build_otp_message(clean_to, otp, exp_min)
+    return _send_message(_build_otp_message(clean_to, otp, exp_min), clean_to)
+
+
+def _send_message(msg: EmailMessage, to_email: str) -> bool:
+    """Delivers one message. Never raises and never logs message contents."""
     host = (settings.SMTP_HOST or "").strip()
     port = int(settings.SMTP_PORT or 587)
     username = (settings.SMTP_USERNAME or "").strip()
     password = settings.SMTP_PASSWORD or ""
     timeout = float(settings.SMTP_TIMEOUT_SECONDS or 10.0)
-
     try:
         if settings.SMTP_USE_SSL:
             context = ssl.create_default_context()
@@ -137,10 +144,63 @@ def send_otp_email(to_email: str, otp: str, expire_minutes: int | None = None) -
                 if username:
                     server.login(username, password)
                 server.send_message(msg)
-        logger.info("Password-reset email accepted for %s via %s:%s", _mask_email(clean_to), host, port)
+        logger.info("Email accepted for %s via %s:%s", _mask_email(to_email), host, port)
         return True
     except Exception as e:
-        logger.warning(
-            "Failed to send password-reset email to %s via %s:%s: %s", _mask_email(clean_to), host, port, e
-        )
+        logger.warning("Failed to send email to %s via %s:%s: %s", _mask_email(to_email), host, port, e)
         return False
+
+
+def send_invitation_email(to_email: str, invite_url: str, org_name: str, role: str) -> bool:
+    """Emails a one-time invitation link. Returns False when it cannot be delivered.
+
+    The URL contains the raw token. Callers must not persist that token, and
+    this function never logs the URL.
+    """
+    clean_to = (to_email or "").strip()
+    if not clean_to or not invite_url:
+        return False
+    if not is_email_configured():
+        if str(settings.ENV or "").strip().lower() == "production":
+            logger.error("SMTP not configured; refusing to fake an invitation delivery")
+        else:
+            logger.info("SMTP not configured; invitation email not sent to %s", _mask_email(clean_to))
+        return False
+
+    from_name = (settings.SMTP_FROM_NAME or "Relayflow").strip() or "Relayflow"
+    from_email = (settings.SMTP_FROM_EMAIL or "noreply@relayflow.local").strip()
+    safe_name = _html.escape(from_name, quote=True)
+    safe_org = _html.escape((org_name or "your organization").strip(), quote=True)
+    safe_role = _html.escape((role or "member").strip(), quote=True)
+    safe_url = _html.escape(invite_url, quote=True)
+
+    msg = EmailMessage()
+    msg["Subject"] = f"You've been invited to {org_name or from_name}"
+    msg["From"] = f"{from_name} <{from_email}>"
+    msg["To"] = clean_to
+    msg.set_content(
+        f"""Hi,
+
+You've been invited to join {org_name or "an organization"} on {from_name} as {role or "member"}.
+
+Open this link to accept (it expires in 7 days):
+
+    {invite_url}
+
+If you did not expect this invitation, you can ignore this email.
+
+— The {from_name} team
+"""
+    )
+    msg.add_alternative(
+        f"""<html><body style="font-family:Inter,system-ui,sans-serif;color:#111813;">
+<p>Hi,</p>
+<p>You've been invited to join <strong>{safe_org}</strong> on {safe_name} as <strong>{safe_role}</strong>.</p>
+<p><a href="{safe_url}" style="display:inline-block;padding:10px 16px;background:#1aae5c;color:#fff;
+text-decoration:none;border-radius:8px;font-weight:600;">Accept invitation</a></p>
+<p style="color:#6b7c70;">This link expires in 7 days. If you did not expect this, ignore this email.</p>
+<p>— The {safe_name} team</p>
+</body></html>""",
+        subtype="html",
+    )
+    return _send_message(msg, clean_to)

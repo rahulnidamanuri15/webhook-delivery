@@ -63,6 +63,17 @@ services:
       - HTTP_CONNECT_TIMEOUT_SECONDS=${HTTP_CONNECT_TIMEOUT_SECONDS:-3.0}
       - DISPATCH_MAX_WORKERS=${DISPATCH_MAX_WORKERS:-10}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Relayflow}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
+      - SMTP_USE_SSL=${SMTP_USE_SSL:-False}
       - DEBUG=False
       - PORT=8080
     depends_on:
@@ -78,7 +89,7 @@ services:
       start_period: 20s
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*'"
+             uvicorn app.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips \"$${FORWARDED_ALLOW_IPS}\""
 
   seed:
     image: webhook-delivery:latest
@@ -147,7 +158,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info -c 4
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info -c ${CELERY_CONCURRENCY:-4}
 
   celery_beat:
     image: webhook-delivery:latest
@@ -197,3 +208,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  certbot_var:

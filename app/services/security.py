@@ -373,10 +373,33 @@ def _is_trusted_proxy(ip_str: str) -> bool:
     return False
 
 
+def _forwarded_chain(request, direct_ip: str) -> list[str]:
+    """Client plus each proxy hop, left to right, ending at the socket peer.
+
+    Nginx sends X-Real-IP (the immediate client) and appends that same client
+    to X-Forwarded-For. Uvicorn's proxy-headers middleware may already have
+    replaced the socket peer with the leftmost forwarded address, so the
+    socket peer is not a reliable "who connected" signal.
+    """
+    headers = getattr(request, "headers", {}) or {}
+    chain: list[str] = []
+    xff = headers.get("x-forwarded-for") if hasattr(headers, "get") else None
+    if xff:
+        chain.extend(p.strip() for p in xff.split(",") if p.strip())
+    x_real = headers.get("x-real-ip") if hasattr(headers, "get") else None
+    if x_real and x_real.strip() and (not chain or chain[-1] != x_real.strip()):
+        chain.append(x_real.strip())
+    if direct_ip and (not chain or chain[-1] != direct_ip):
+        chain.append(direct_ip)
+    return chain
+
+
 def get_client_ip(request) -> str:
-    """Safely extracts client IP.
-    Only trusts X-Forwarded-For and X-Real-IP if the direct connecting peer is a trusted proxy.
-    On direct exposure, returns request.client.host directly to prevent IP header spoofing.
+    """Client IP, counting only hops from a trusted reverse proxy.
+
+    Walks the forwarded chain from the right and returns the first address
+    that is not itself a trusted proxy. A direct connection (no trusted hop
+    at the right edge) ignores client-supplied X-Forwarded-For entirely.
     """
     if not request:
         return "127.0.0.1"
@@ -388,16 +411,10 @@ def get_client_ip(request) -> str:
         if isinstance(host, str) and host:
             direct_ip = host
 
-    # Only inspect forwarded headers if incoming connection comes from trusted reverse proxy
-    if _is_trusted_proxy(direct_ip):
-        headers = getattr(request, "headers", {})
-        xff = headers.get("x-forwarded-for") if hasattr(headers, "get") else None
-        if xff:
-            parts = [p.strip() for p in xff.split(",") if p.strip()]
-            if parts:
-                return parts[0]
-        x_real = headers.get("x-real-ip") if hasattr(headers, "get") else None
-        if x_real and x_real.strip():
-            return x_real.strip()
-
+    chain = _forwarded_chain(request, direct_ip)
+    if not chain or not _is_trusted_proxy(chain[-1]):
+        return direct_ip
+    for hop in reversed(chain):
+        if not _is_trusted_proxy(hop):
+            return hop
     return direct_ip

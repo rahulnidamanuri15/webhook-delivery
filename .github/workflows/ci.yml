@@ -132,6 +132,10 @@ jobs:
           REDIS_PASSWORD=dummy_redis_password \
           REDIS_URL=redis://:dummy@redis:6379/0 \
           ALLOWED_RECEIVER_DOMAINS=example.com \
+          PUBLIC_BASE_URL=https://example.com \
+          SMTP_HOST=smtp.example.com \
+          SMTP_PASSWORD=dummy_smtp_password \
+          SMTP_FROM_EMAIL=noreply@example.com \
           docker compose -f compose.yaml -f compose.prod.yaml config -q
 
       - name: Build production image

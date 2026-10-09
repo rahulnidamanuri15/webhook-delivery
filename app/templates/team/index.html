@@ -32,7 +32,7 @@
 
       <div>
         <button type="submit" class="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-sm transition">
-          Generate Invitation Link
+          Send invitation
         </button>
       </div>
     </form>
@@ -101,7 +101,6 @@
             <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Role</th>
             <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
             <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Expires At</th>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Invite Link</th>
             <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Action</th>
           </tr>
         </thead>
@@ -126,16 +125,6 @@
             <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-500">
               {{ inv.expires_at.strftime('%Y-%m-%d %H:%M') }}
             </td>
-            <td class="px-4 py-3 whitespace-nowrap text-xs">
-              {% if inv.status == 'PENDING' and is_manager and inv.token %}
-              <button onclick="copyToClipboard(window.location.origin + '/auth/invitations/{{ inv.token }}', 'inv-btn-{{ inv.id }}')" id="inv-btn-{{ inv.id }}"
-                      class="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded text-xs border border-indigo-200 transition">
-                Copy Link
-              </button>
-              {% else %}
-              <span class="text-slate-400">—</span>
-              {% endif %}
-            </td>
             <td class="px-4 py-3 whitespace-nowrap text-right text-xs font-medium">
               {% if inv.status == 'PENDING' and is_manager %}
               <form action="/dashboard/team/invitations/{{ inv.id }}/revoke" method="POST" class="inline">
@@ -149,7 +138,7 @@
           </tr>
           {% else %}
           <tr>
-            <td colspan="6" class="px-6 py-8 text-center text-sm text-slate-500">
+            <td colspan="5" class="px-6 py-8 text-center text-sm text-slate-500">
               No pending invitations. Invite a team member using the form above.
             </td>
           </tr>

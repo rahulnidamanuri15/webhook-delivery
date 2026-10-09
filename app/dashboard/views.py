@@ -2297,7 +2297,7 @@ def list_audit_logs(request: Request, page: int = 1, db: Session = Depends(get_d
 
 
 @router.get("/dashboard/team", response_class=HTMLResponse)
-def list_team(request: Request, db: Session = Depends(get_db)):
+def list_team(request: Request, db: Session = Depends(get_db), notice: str | None = None, notice_type: str | None = None):
     user, org, project = get_user_and_project(request, db)
     if not user or not org:
         return RedirectResponse(url="/auth/login", status_code=302)
@@ -2334,6 +2334,8 @@ def list_team(request: Request, db: Session = Depends(get_db)):
             "members": members,
             "invitations": invitations,
             "is_manager": is_mgr,
+            "message": (notice or "").strip()[:500] or None,
+            "message_type": "error" if notice_type == "error" else "success",
         },
     )
 
@@ -2392,6 +2394,25 @@ def invite_team_member(
     db.add(invitation)
     db.commit()
 
+    from urllib.parse import quote
+
+    from app.services.email import send_invitation_email
+
+    base = (settings.PUBLIC_BASE_URL or "").strip().rstrip("/")
+    if not base:
+        base = str(request.base_url).rstrip("/")
+    invite_url = f"{base}/auth/invitations/{raw_token}"
+    sent = send_invitation_email(email_clean, invite_url, org.name, invitation.role)
+    # The raw token is never stored. If email could not be sent, keep it only
+    # for this one redirect so the inviter can still hand the link over.
+    if not sent:
+        notice = quote(
+            "Email could not be sent. Copy this invite link now — it will not be shown again: " + invite_url,
+            safe="",
+        )
+    else:
+        notice = quote(f"Invitation emailed to {email_clean}.", safe="")
+
     from app.services.audit import log_audit_event
 
     client_ip = get_client_ip(request)
@@ -2403,10 +2424,10 @@ def invite_team_member(
         resource_type="invitation",
         resource_id=invitation.id,
         ip_address=client_ip,
-        details={"invitee_email": email_clean, "role": invitation.role},
+        details={"invitee_email": email_clean, "role": invitation.role, "emailed": sent},
     )
 
-    return RedirectResponse(url="/dashboard/team", status_code=303)
+    return RedirectResponse(url=f"/dashboard/team?notice={notice}&notice_type={'success' if sent else 'error'}", status_code=303)
 
 
 @router.post("/dashboard/team/invitations/{inv_id}/revoke")

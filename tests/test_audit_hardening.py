@@ -37,6 +37,12 @@ def test_config_production_failfast():
             API_KEY_PEPPER="pepper_is_long_enough",
             METRICS_API_KEY="metrics_key_is_long_enough",
             ALLOW_LOCAL_RECEIVERS=False,
+            REDIS_URL="redis://:secret@redis:6379/0",
+            SMTP_HOST="smtp.example.com",
+            SMTP_PASSWORD="smtp-secret",
+            SMTP_FROM_EMAIL="noreply@example.com",
+            ALLOWED_RECEIVER_DOMAINS="example.com",
+            USE_DEMO_RETRY_POLICY=False,
         )
         validate_production_settings(s)
 
@@ -51,6 +57,12 @@ def test_config_production_failfast():
             API_KEY_PEPPER="pepper_is_long_enough",
             METRICS_API_KEY="metrics_key_is_long_enough",
             ALLOW_LOCAL_RECEIVERS=False,
+            REDIS_URL="redis://:secret@redis:6379/0",
+            SMTP_HOST="smtp.example.com",
+            SMTP_PASSWORD="smtp-secret",
+            SMTP_FROM_EMAIL="noreply@example.com",
+            ALLOWED_RECEIVER_DOMAINS="example.com",
+            USE_DEMO_RETRY_POLICY=False,
         )
         validate_production_settings(s)
 

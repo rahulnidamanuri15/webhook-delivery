@@ -125,6 +125,10 @@ def test_production_fails_on_demo_retry_policy():
         ALLOW_LOCAL_RECEIVERS=False,
         ALLOWED_RECEIVER_DOMAINS="example.com",
         USE_DEMO_RETRY_POLICY=True,
+        REDIS_URL="redis://:secret@redis:6379/0",
+        SMTP_HOST="smtp.example.com",
+        SMTP_PASSWORD="smtp-secret",
+        SMTP_FROM_EMAIL="noreply@example.com",
     )
     with pytest.raises(RuntimeError, match="USE_DEMO_RETRY_POLICY must be False in production"):
         validate_production_settings(s)
@@ -133,15 +137,22 @@ def test_production_fails_on_demo_retry_policy():
     validate_production_settings(s)
 
 
-def test_get_client_ip_headers():
+def test_get_client_ip_headers(monkeypatch):
     from unittest.mock import MagicMock
+    from app.config import settings
     from app.services.security import get_client_ip
 
+    # Only the rightmost hop is the connecting proxy. Earlier hops are untrusted,
+    # so a client cannot pick its own address by prepending X-Forwarded-For.
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", "150.172.238.178,70.41.3.18,10.0.0.0/8")
+
     req1 = MagicMock()
+    req1.client.host = "150.172.238.178"
     req1.headers = {"x-forwarded-for": "203.0.113.195, 70.41.3.18, 150.172.238.178"}
     assert get_client_ip(req1) == "203.0.113.195"
 
     req2 = MagicMock()
+    req2.client.host = "10.0.0.5"
     req2.headers = {"x-real-ip": "198.51.100.22"}
     assert get_client_ip(req2) == "198.51.100.22"
 

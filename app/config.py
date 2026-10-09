@@ -119,10 +119,17 @@ class Settings(BaseSettings):
         description="Test-only: capture plaintext OTPs in-process instead of sending or logging them",
     )
 
-    # Trusted proxies for X-Forwarded-For evaluation (comma-separated IPs/CIDRs)
+    # Trusted proxies for X-Forwarded-For evaluation (comma-separated IPs/CIDRs).
+    # Docker compose: nginx and the app share a bridge network, so the default
+    # covers RFC1918 peers. Never set this to "*".
     TRUSTED_PROXIES: str = Field(
-        default="127.0.0.1,::1",
-        description="Comma-separated list of trusted reverse proxy IPs allowed to set client IP via X-Forwarded-For",
+        default="127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+        description="Comma-separated trusted reverse-proxy IPs/CIDRs allowed to set the client IP",
+    )
+    # Public origin used in invitation emails. Empty = derive from the request.
+    PUBLIC_BASE_URL: str = Field(
+        default="",
+        description="Public https origin for links in email (e.g. https://hooks.example.com). No trailing slash.",
     )
 
     def __init__(self, **values):
@@ -188,6 +195,21 @@ def validate_production_settings(s: Settings) -> None:
     is_prod = str(s.ENV or "").strip().lower() == "production"
     if not is_prod:
         return
+    _redis = str(s.REDIS_URL or "").strip()
+    if _redis.startswith(("redis://", "rediss://")) and "@" not in _redis:
+        raise RuntimeError(
+            "REDIS_URL must include authentication credentials "
+            "(e.g., redis://:password@host:port/db) in production."
+        )
+    if not (s.SMTP_HOST or "").strip() or not (s.SMTP_FROM_EMAIL or "").strip() or not (s.SMTP_PASSWORD or "").strip():
+        raise RuntimeError(
+            "SMTP_HOST, SMTP_FROM_EMAIL, and SMTP_PASSWORD are required in production "
+            "so password-reset codes and team invitations are actually delivered."
+        )
+    if (s.TRUSTED_PROXIES or "").strip() in ("", "*"):
+        raise RuntimeError(
+            "TRUSTED_PROXIES must list explicit proxy IPs or CIDRs in production. '*' is not allowed."
+        )
     if s.SECRET_KEY in _INSECURE_SECRET_DEFAULTS or len(s.SECRET_KEY) < 32:
         raise RuntimeError(
             "SECRET_KEY must be set to a strong random value (>=32 chars) in production. "
