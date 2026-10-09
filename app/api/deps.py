@@ -61,8 +61,17 @@ def _is_session_stale_from_pwd_change(token: str, password_changed_at) -> bool:
     try:
         from app.services.security import serializer
 
-        _, ts = serializer.loads(token, return_timestamp=True, max_age=86400 * 7)
-        token_ts = ts.timestamp() if hasattr(ts, "timestamp") else float(ts)
+        data, ts = serializer.loads(token, return_timestamp=True, max_age=86400 * 7)
+        # Prefer signed high-resolution "iat" when present; itsdangerous
+        # timestamps are only 1-second resolution and would falsely mark a
+        # token created in the same second after a password change as stale.
+        try:
+            if isinstance(data, dict) and data.get("iat") is not None:
+                token_ts = float(data["iat"])
+            else:
+                token_ts = ts.timestamp() if hasattr(ts, "timestamp") else float(ts)
+        except (TypeError, ValueError):
+            token_ts = ts.timestamp() if hasattr(ts, "timestamp") else float(ts)
         pwd_ts = (
             password_changed_at.timestamp() if hasattr(password_changed_at, "timestamp") else float(password_changed_at)
         )

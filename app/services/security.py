@@ -284,7 +284,12 @@ def is_session_token_denied(token: str) -> bool:
 
 
 def create_session_token(user_id: str, org_id: str | None = None, project_id: str | None = None) -> str:
-    data = {"user_id": user_id, "org_id": org_id, "project_id": project_id}
+    # Include high-resolution issued-at ("iat") inside the signed payload.
+    # itsdangerous timestamps have only 1-second resolution, which is too coarse
+    # to order tokens created in the same second as a revocation. The signed
+    # "iat" (float seconds from time.time()) gives sub-second ordering so a
+    # token created after invalidate_all_user_sessions() is not falsely revoked.
+    data = {"user_id": user_id, "org_id": org_id, "project_id": project_id, "iat": _time.time()}
     return serializer.dumps(data)
 
 
@@ -295,7 +300,13 @@ def verify_session_token(token: str, max_age: int = 86400 * 7) -> dict | None:
         data, ts = serializer.loads(token, max_age=max_age, return_timestamp=True)
         if not isinstance(data, dict):
             return None
-        token_ts = ts.timestamp() if hasattr(ts, "timestamp") else float(ts)
+        # Prefer signed high-resolution "iat" when present; fall back to the
+        # serializer timestamp (1-second resolution) for legacy tokens.
+        try:
+            iat = data.get("iat", None)
+            token_ts = float(iat) if iat is not None else (ts.timestamp() if hasattr(ts, "timestamp") else float(ts))
+        except (TypeError, ValueError):
+            token_ts = ts.timestamp() if hasattr(ts, "timestamp") else float(ts)
         user_id = data.get("user_id")
         if user_id and is_user_session_revoked(user_id, token_ts):
             return None
