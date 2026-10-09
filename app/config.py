@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = Field(
         default=15, description="Short-lived reset-token validity after successful OTP verification"
     )
+    # Test-only sink for the plaintext OTP when SMTP is not configured.
+    # Never enable outside automated tests: it keeps live OTPs in process memory.
+    PASSWORD_RESET_OTP_CAPTURE: bool = Field(
+        default=False,
+        description="Test-only: capture plaintext OTPs in-process instead of sending or logging them",
+    )
 
     # Trusted proxies for X-Forwarded-For evaluation (comma-separated IPs/CIDRs)
     TRUSTED_PROXIES: str = Field(

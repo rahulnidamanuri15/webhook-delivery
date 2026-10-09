@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import logging
 import secrets
+import time
 from datetime import timedelta
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -138,6 +139,99 @@ def consume_otp(db: Session, row: PasswordResetOTP) -> None:
 
 def create_reset_token(user_id: str, otp_id: str) -> str:
     return _reset_serializer.dumps({"user_id": user_id, "otp_id": otp_id, "purpose": "forgot-password"})
+
+
+# Server-side reset sessions. The browser only ever sees an opaque id in a
+# short-lived cookie; the signed bearer stays here so it cannot land in a
+# request URL, access log, proxy log, or browser history.
+# Redis when available (shared across workers), else in-process.
+_reset_sessions: dict[str, tuple[str, float]] = {}
+_redis_reset = None
+_redis_reset_checked = False
+
+
+def _reset_session_ttl() -> int:
+    return int(settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES or 15) * 60
+
+
+def _get_reset_redis():
+    global _redis_reset, _redis_reset_checked
+    if _redis_reset_checked:
+        return _redis_reset
+    _redis_reset_checked = True
+    try:
+        import redis as _redis_mod
+
+        client = _redis_mod.from_url(settings.REDIS_URL, socket_connect_timeout=0.3, socket_timeout=0.3)
+        client.ping()
+        _redis_reset = client
+    except Exception:
+        _redis_reset = None
+    return _redis_reset
+
+
+def _purge_expired_reset_sessions(now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    expired = [sid for sid, (_token, exp) in _reset_sessions.items() if exp <= now]
+    for sid in expired:
+        _reset_sessions.pop(sid, None)
+
+
+def issue_reset_session(token: str) -> str:
+    """Stores ``token`` server-side and returns an opaque session id.
+
+    The id carries no user, OTP, or signature material.
+    """
+    session_id = secrets.token_urlsafe(32)
+    ttl = _reset_session_ttl()
+    client = _get_reset_redis()
+    if client is not None:
+        try:
+            client.setex(f"pwdreset_session:{session_id}", ttl, token)
+            return session_id
+        except Exception:
+            logger.warning("Reset-session store unavailable; using in-process fallback")
+    _purge_expired_reset_sessions()
+    _reset_sessions[session_id] = (token, time.time() + ttl)
+    return session_id
+
+
+def lookup_reset_session(session_id: str) -> str | None:
+    """Returns the signed token for a live session id, else None."""
+    if not session_id:
+        return None
+    client = _get_reset_redis()
+    if client is not None:
+        try:
+            raw = client.get(f"pwdreset_session:{session_id}")
+            if raw is None:
+                return None
+            return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        except Exception:
+            logger.warning("Reset-session lookup failed")
+            return None
+    _purge_expired_reset_sessions()
+    entry = _reset_sessions.get(session_id)
+    if entry is None:
+        return None
+    token, exp = entry
+    if exp <= time.time():
+        _reset_sessions.pop(session_id, None)
+        return None
+    return token
+
+
+def consume_reset_session(session_id: str) -> None:
+    """Forgets a reset session so its cookie cannot be replayed."""
+    if not session_id:
+        return
+    client = _get_reset_redis()
+    if client is not None:
+        try:
+            client.delete(f"pwdreset_session:{session_id}")
+        except Exception:
+            logger.warning("Reset-session consume failed")
+    _reset_sessions.pop(session_id, None)
 
 
 def verify_reset_token(token: str, max_age_seconds: int | None = None) -> dict | None:

@@ -588,12 +588,25 @@ def forgot_password_verify_post(
             },
             status_code=400,
         )
-    # Success: single-use the OTP, then hand out a short-lived signed reset token.
+    # Success: single-use the OTP. The signed bearer stays server-side;
+    # the browser receives only an opaque id in a short-lived cookie, and
+    # the redirect URL carries no credential for logs or history to keep.
     consume_otp(db, row)
-    token = create_reset_token(user.id, row.id)
-    from urllib.parse import quote as _q
+    from app.services.password_reset import issue_reset_session
 
-    return RedirectResponse(url=f"/auth/reset-password?token={_q(token)}", status_code=303)
+    token = create_reset_token(user.id, row.id)
+    session_id = issue_reset_session(token)
+    response = RedirectResponse(url="/auth/reset-password", status_code=303)
+    response.set_cookie(
+        "wh_reset_session",
+        session_id,
+        httponly=True,
+        max_age=int(settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES or 15) * 60,
+        samesite="strict",
+        secure=is_cookie_secure(),
+        path="/auth/reset-password",
+    )
+    return response
 
 
 @router.post("/auth/forgot-password/resend")
@@ -656,35 +669,43 @@ def forgot_password_resend_post(
     return _forgot_generic_success(request, clean_email, resend=True)
 
 
-@router.get("/auth/reset-password", response_class=HTMLResponse)
-def reset_password_page(request: Request, token: str | None = None, db: Session = Depends(get_db)):
-    from app.services.password_reset import verify_reset_token
+def _reset_context(request: Request) -> tuple[dict | None, str]:
+    """Resolves the reset cookie to its verified token payload.
 
+    Returns (payload, session_id). payload is None when the cookie is
+    missing, unknown, or the signed bearer inside it has expired.
+    """
+    from app.services.password_reset import lookup_reset_session, verify_reset_token
+
+    session_id = request.cookies.get("wh_reset_session") or ""
+    token = lookup_reset_session(session_id)
     data = verify_reset_token(token or "")
     if not data:
-        return templates.TemplateResponse(
-            "auth/forgot_password.html",
-            {
-                "request": request,
-                "current_user": None,
-                "error": "This reset link is invalid or has expired. Please request a new code.",
-            },
-            status_code=400,
-        )
+        return None, session_id
+    return data, session_id
+
+
+def _reject_reset(request: Request, message: str, status_code: int = 400):
+    response = templates.TemplateResponse(
+        "auth/forgot_password.html",
+        {"request": request, "current_user": None, "error": message},
+        status_code=status_code,
+    )
+    response.delete_cookie("wh_reset_session", path="/auth/reset-password")
+    return response
+
+
+@router.get("/auth/reset-password", response_class=HTMLResponse)
+def reset_password_page(request: Request, db: Session = Depends(get_db)):
+    data, _session_id = _reset_context(request)
+    if not data:
+        return _reject_reset(request, "This reset link is invalid or has expired. Please request a new code.")
     # The link is only usable after OTP verification and before any newer OTP.
     from app.models.password_reset import PasswordResetOTP
 
     otp_row = db.query(PasswordResetOTP).filter(PasswordResetOTP.id == data["otp_id"]).first()
     if not otp_row or otp_row.user_id != data["user_id"] or not otp_row.used:
-        return templates.TemplateResponse(
-            "auth/forgot_password.html",
-            {
-                "request": request,
-                "current_user": None,
-                "error": "This reset link is invalid or has expired. Please request a new code.",
-            },
-            status_code=400,
-        )
+        return _reject_reset(request, "This reset link is invalid or has expired. Please request a new code.")
     latest = (
         db.query(PasswordResetOTP)
         .filter(PasswordResetOTP.user_id == data["user_id"])
@@ -692,64 +713,41 @@ def reset_password_page(request: Request, token: str | None = None, db: Session 
         .first()
     )
     if not latest or latest.id != otp_row.id:
-        return templates.TemplateResponse(
-            "auth/forgot_password.html",
-            {
-                "request": request,
-                "current_user": None,
-                "error": "A newer verification code was requested. Please use the latest link.",
-            },
-            status_code=400,
-        )
-    return templates.TemplateResponse(
-        "auth/reset_password.html", {"request": request, "current_user": None, "token": token}
-    )
+        return _reject_reset(request, "A newer verification code was requested. Please use the latest link.")
+    return templates.TemplateResponse("auth/reset_password.html", {"request": request, "current_user": None})
 
 
 @router.post("/auth/reset-password")
 def reset_password_post(
     request: Request,
-    token: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
     csrf_token: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
     assert_csrf(request, csrf_token)
-    from app.services.password_reset import validate_new_password, verify_reset_token
+    from app.services.password_reset import consume_reset_session, validate_new_password
 
-    data = verify_reset_token(token or "")
+    data, session_id = _reset_context(request)
     if not data:
-        return templates.TemplateResponse(
-            "auth/forgot_password.html",
-            {
-                "request": request,
-                "current_user": None,
-                "error": "This reset link is invalid or has expired. Please request a new code.",
-            },
-            status_code=400,
-        )
+        return _reject_reset(request, "This reset link is invalid or has expired. Please request a new code.")
     if password != confirm_password:
         return templates.TemplateResponse(
             "auth/reset_password.html",
-            {"request": request, "current_user": None, "token": token, "error": "Passwords do not match."},
+            {"request": request, "current_user": None, "error": "Passwords do not match."},
             status_code=400,
         )
     pw_error = validate_new_password(password)
     if pw_error:
         return templates.TemplateResponse(
             "auth/reset_password.html",
-            {"request": request, "current_user": None, "token": token, "error": pw_error},
+            {"request": request, "current_user": None, "error": pw_error},
             status_code=400,
         )
 
     user = db.query(User).filter(User.id == data["user_id"]).first()
     if not user:
-        return templates.TemplateResponse(
-            "auth/forgot_password.html",
-            {"request": request, "current_user": None, "error": "Account no longer exists."},
-            status_code=400,
-        )
+        return _reject_reset(request, "Account no longer exists.")
     # Ensure the OTP backing this token was actually consumed (verified).
     # Also requires it to be the latest OTP for the user so that requesting
     # a newer code invalidates older reset links.
@@ -757,15 +755,7 @@ def reset_password_post(
 
     otp_row = db.query(PasswordResetOTP).filter(PasswordResetOTP.id == data["otp_id"]).first()
     if not otp_row or otp_row.user_id != user.id or not otp_row.used:
-        return templates.TemplateResponse(
-            "auth/forgot_password.html",
-            {
-                "request": request,
-                "current_user": None,
-                "error": "This reset link is invalid or has expired. Please request a new code.",
-            },
-            status_code=400,
-        )
+        return _reject_reset(request, "This reset link is invalid or has expired. Please request a new code.")
     latest = (
         db.query(PasswordResetOTP)
         .filter(PasswordResetOTP.user_id == user.id)
@@ -773,15 +763,7 @@ def reset_password_post(
         .first()
     )
     if not latest or latest.id != otp_row.id:
-        return templates.TemplateResponse(
-            "auth/forgot_password.html",
-            {
-                "request": request,
-                "current_user": None,
-                "error": "A newer verification code was requested. Please use the latest link.",
-            },
-            status_code=400,
-        )
+        return _reject_reset(request, "A newer verification code was requested. Please use the latest link.")
 
     user.password_hash = hash_password(password)
     user.password_changed_at = utc_now()
@@ -825,7 +807,11 @@ def reset_password_post(
             "message": "Password reset successful. Please sign in with your new password.",
         },
     )
+    # The signed bearer is forgotten with the session, so the cookie cannot
+    # be replayed even if the browser still holds it.
+    consume_reset_session(session_id)
     response.delete_cookie("wh_session")
+    response.delete_cookie("wh_reset_session", path="/auth/reset-password")
     return response
 
 

@@ -2,8 +2,9 @@
 
 Uses only the Python standard library (smtplib + email) so no new
 dependencies are required. When SMTP is not configured (no SMTP_HOST),
-sending is skipped and the OTP is written to the application log so
-local development and tests can still complete the flow.
+delivery is skipped. The plaintext OTP is never written to the application
+log. Automated tests opt into an in-process capture sink with
+PASSWORD_RESET_OTP_CAPTURE; that sink is off unless explicitly enabled.
 """
 
 import html as _html
@@ -15,6 +16,27 @@ from email.message import EmailMessage
 from app.config import settings
 
 logger = logging.getLogger("webhook.email")
+
+# In-process mail sink. Populated only when PASSWORD_RESET_OTP_CAPTURE is on,
+# so tests can read a code without it ever reaching a log line.
+_captured_otps: list[dict[str, str]] = []
+
+
+def captured_otps() -> list[dict[str, str]]:
+    """Copies of OTPs held by the test-only capture sink."""
+    return [dict(item) for item in _captured_otps]
+
+
+def clear_captured_otps() -> None:
+    _captured_otps.clear()
+
+
+def _mask_email(email: str) -> str:
+    """user@example.com -> u***@example.com. Never log the full recipient."""
+    local, _, domain = (email or "").partition("@")
+    if not local or not domain:
+        return "***"
+    return f"{local[0]}***@{domain}"
 
 
 def is_email_configured() -> bool:
@@ -73,8 +95,9 @@ def send_otp_email(to_email: str, otp: str, expire_minutes: int | None = None) -
 
     Never raises: SMTP failures are logged and return False so callers can
     keep the user-facing response generic (no account enumeration, no 500s).
-    When SMTP is unconfigured, logs the OTP at INFO for dev/test and
-    returns True so the flow remains usable offline.
+    When SMTP is unconfigured, returns True without logging the OTP so the
+    flow stays usable offline. With PASSWORD_RESET_OTP_CAPTURE enabled the
+    OTP is held in an in-process sink for tests; it is never logged.
     """
     exp_min = int(expire_minutes if expire_minutes is not None else settings.PASSWORD_RESET_OTP_EXPIRE_MINUTES)
     clean_to = (to_email or "").strip()
@@ -82,10 +105,14 @@ def send_otp_email(to_email: str, otp: str, expire_minutes: int | None = None) -
         return False
 
     if not is_email_configured():
-        if str(settings.ENV or "").strip().lower() == "production":
-            logger.error("SMTP not configured in production; refusing to log plain OTP for %s", clean_to)
-            return False
-        logger.info("SMTP not configured; password-reset OTP for %s: %s (expires in %sm)", clean_to, otp, exp_min)
+        if settings.PASSWORD_RESET_OTP_CAPTURE:
+            _captured_otps.append({"to": clean_to, "otp": otp})
+        else:
+            # No recipient, no code: nothing here is usable as a credential.
+            logger.info(
+                "SMTP not configured; password-reset email not sent (request expires in %sm)",
+                exp_min,
+            )
         return True
 
     msg = _build_otp_message(clean_to, otp, exp_min)
@@ -110,8 +137,10 @@ def send_otp_email(to_email: str, otp: str, expire_minutes: int | None = None) -
                 if username:
                     server.login(username, password)
                 server.send_message(msg)
-        logger.info("Password-reset OTP sent to %s via %s:%s", clean_to, host, port)
+        logger.info("Password-reset email accepted for %s via %s:%s", _mask_email(clean_to), host, port)
         return True
     except Exception as e:
-        logger.warning("Failed to send password-reset OTP to %s via %s:%s: %s", clean_to, host, port, e)
+        logger.warning(
+            "Failed to send password-reset email to %s via %s:%s: %s", _mask_email(clean_to), host, port, e
+        )
         return False
