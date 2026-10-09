@@ -124,6 +124,7 @@ jobs:
 
       - name: Validate prod compose overlay (dry-run with dummy secrets)
         run: |
+          ENV=development \
           SECRET_KEY=dummy_secret_key_for_config_check_only_1234567890 \
           SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A= \
           API_KEY_PEPPER=dummy_pepper_for_config_check \
