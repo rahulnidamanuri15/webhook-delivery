@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{% block title %}Dashboard{% endblock %} - Relayflow</title>
+  <title>{% block title %}Dashboard{% endblock %} - Hookflow</title>
   
   <!-- Tailwind CSS (production build via `npm run build:css` -> /static/css/dist.css).
        Do not use the browser CDN in production. Rebuild with:
@@ -20,7 +20,7 @@
   <!-- Chart.js vendored locally -->
   <script src="/static/js/chart.umd.min.js"></script>
   
-  <!-- Relayflow App CSS (theme variables / overrides) -->
+  <!-- Hookflow App CSS (theme variables / overrides) -->
   <link rel="stylesheet" href="/static/css/app.css">
   
   {% block extra_head %}{% endblock %}
@@ -43,7 +43,6 @@
           <span class="hidden sm:block w-px h-5 bg-[#e5ebe6]"></span>
           <span class="hidden sm:inline-flex items-center gap-1.5 text-[13px] font-medium text-[#6b7c70]">
             <span class="w-2 h-2 rounded-full bg-[#1aae5c] ring-4 ring-[#e6f5ec]"></span>
-            Production
           </span>
         </div>
         <div class="flex-1"></div>

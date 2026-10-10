@@ -385,7 +385,7 @@ def index(request: Request):
                         <span class="pulse-dot" title="Listening for incoming webhooks"></span>
                     </h1>
                     <p style="margin:4px 0 0 0; color: #6b7280; font-size: 14px;">
-                        Listening on <code>http://127.0.0.1:8001/webhook</code> | Platform: <a href="http://127.0.0.1:8080/dashboard" target="_blank" style="color:#2563eb; text-decoration:none;">WebhookHub Dashboard (8080) &rarr;</a>
+                        Listening on <code>http://127.0.0.1:8001/webhook</code> | Platform: <a href="http://127.0.0.1:8080/dashboard" target="_blank" style="color:#2563eb; text-decoration:none;">Hookflow Dashboard (8080) &rarr;</a>
                     </p>
                 </div>
                 <form action="/clear" method="post" style="display:flex; gap:8px;">

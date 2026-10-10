@@ -26,7 +26,7 @@ from app.models import (
     utc_now,
 )
 from app.services.delivery_service import replay_delivery
-from app.services.event_service import ingest_event
+from app.services.event_service import IdempotencyConflictError, ingest_event
 from app.services.security import (
     create_session_token,
     decrypt_secret,
@@ -142,7 +142,39 @@ def get_user_and_project(request: Request, db: Session):
     if not project:
         project = db.query(Project).filter(Project.organization_id == org.id).first()
 
+    # Sidebar "Issues" badge + navbar bell must be visible on every tab, not
+    # just Overview (which is the only view that builds the full `stats`
+    # dict). One cheap indexed COUNT here covers all dashboard pages since
+    # they all go through this helper. Failures never break the page.
+    try:
+        request.state.sidebar_dead_count = get_sidebar_dead_count(db, project.id if project else None)
+    except Exception:
+        pass
+
     return user, org, project
+
+
+def get_sidebar_dead_count(db: Session, project_id: str | None) -> int | None:
+    """Dead-delivery count for the sidebar Issues badge and navbar bell.
+
+    Returns None when there is no project context (badge hidden) or the
+    query fails (badge hidden rather than showing a wrong 0).
+    """
+    if not project_id:
+        return None
+    try:
+        return (
+            db.query(func.count(Delivery.id))
+            .join(Event, Delivery.event_id == Event.id)
+            .filter(Event.project_id == project_id, Delivery.status == "DEAD")
+            .scalar()
+        ) or 0
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
 
 
 def get_membership(db: Session, org_id: str, user_id: str):
@@ -443,9 +475,15 @@ def logout(request: Request, csrf_token: str | None = Form(None)):
 
 def _forgot_generic_success(request, email: str, resend: bool = False):
     """Generic success response to prevent email enumeration."""
-    msg = "If an account exists for this email, a verification code has been sent."
+    msg = (
+        "If an account exists for this email, a verification code has been sent. "
+        "Can't find it? Check your spam folder."
+    )
     if resend:
-        msg = "If an account exists for this email, a new verification code has been sent."
+        msg = (
+            "If an account exists for this email, a new verification code has been sent. "
+            "Can't find it? Check your spam folder."
+        )
     return templates.TemplateResponse(
         "auth/verify_otp.html",
         {
@@ -502,7 +540,7 @@ def forgot_password_post(
 
     user = db.query(User).filter(User.email == clean_email).first()
     if not user:
-        # Generic response to prevent user enumeration
+        # Generic response to prevent user enumeration (same in dev and prod).
         return _forgot_generic_success(request, clean_email)
 
     from app.services.email import send_otp_email
@@ -656,7 +694,7 @@ def forgot_password_resend_post(
         )
     user = db.query(User).filter(User.email == clean_email).first()
     if not user:
-        # Generic response to prevent user enumeration
+        # Generic response to prevent user enumeration (same in dev and prod).
         return _forgot_generic_success(request, clean_email, resend=True)
     from app.services.email import send_otp_email
     from app.services.password_reset import create_otp_for_user
@@ -1925,8 +1963,21 @@ def send_test_event_post(
         event, is_dup, count = ingest_event(
             db=db, project_id=project.id, event_type=event_type.strip(), payload_data=parsed_data, idempotency_key=_idem
         )
+    except IdempotencyConflictError as e:
+        return templates.TemplateResponse(
+            "events/send_test.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "message": f"Idempotency conflict: {e} Use a new key or resend the exact same event type and payload.",
+                "message_type": "error",
+            },
+            status_code=409,
+        )
     except ValueError as e:
-        safe_msg = str(e) if str(e).startswith(("Event type", "Payload", "Idempotency-Key")) else "Invalid event data."
+        _raw = str(e) or ""
+        safe_msg = _raw if _raw.lower().startswith(("event", "payload", "idempotency")) else "Invalid event data."
         return templates.TemplateResponse(
             "events/send_test.html",
             {
@@ -1938,20 +1989,39 @@ def send_test_event_post(
             },
             status_code=400,
         )
-    except Exception:
+    except Exception as e:
         import logging as _logging
 
         _logging.getLogger("webhook.dashboard").exception("send-test ingest failed")
+        try:
+            from sqlalchemy.exc import OperationalError as _OperationalError
+
+            _is_db_error = isinstance(e, _OperationalError)
+        except Exception:
+            _is_db_error = False
+        _req_id = getattr(getattr(request, "state", None), "request_id", None) or "-"
+        if _is_db_error:
+            _msg = (
+                "Database temporarily unavailable. Your payload was not saved. "
+                f"Please try again in a moment. (Reference: {_req_id})"
+            )
+            _status = 503
+        else:
+            _msg = (
+                f"Event ingestion failed ({type(e).__name__}). "
+                f"Please try again. (Reference: {_req_id})"
+            )
+            _status = 400
         return templates.TemplateResponse(
             "events/send_test.html",
             {
                 "request": request,
                 "current_user": user,
                 "current_project": project,
-                "message": "Event ingestion failed. Please check your payload and try again.",
+                "message": _msg,
                 "message_type": "error",
             },
-            status_code=400,
+            status_code=_status,
         )
 
     return RedirectResponse(url=f"/dashboard/events/{event.id}", status_code=303)
@@ -2351,6 +2421,7 @@ def list_team(
             "members": members,
             "invitations": invitations,
             "is_manager": is_mgr,
+            "actor_role": membership.role if membership else None,
             "message": (notice or "").strip()[:500] or None,
             "message_type": "error" if notice_type == "error" else "success",
         },
@@ -2428,7 +2499,7 @@ def invite_team_member(
             safe="",
         )
     else:
-        notice = quote(f"Invitation emailed to {email_clean}.", safe="")
+        notice = quote(f"Invitation emailed to {email_clean}. If not visible, Check your spam folder too!", safe="")
 
     from app.services.audit import log_audit_event
 
@@ -2502,6 +2573,13 @@ def update_member_role(
     if not user or not org:
         return RedirectResponse(url="/auth/login", status_code=302)
     actor = require_manager(db, org, user)
+    from urllib.parse import quote as _quote
+
+    def _deny(msg: str):
+        return RedirectResponse(
+            url=f"/dashboard/team?notice={_quote(msg, safe='')}&notice_type=error",
+            status_code=303,
+        )
 
     target = (
         db.query(OrganizationMember)
@@ -2512,17 +2590,17 @@ def update_member_role(
         .first()
     )
     if not target:
-        raise HTTPException(status_code=404, detail="Member not found")
+        return _deny("Member not found.")
     if target.user_id == user.id:
-        raise HTTPException(status_code=400, detail="You cannot change your own role")
+        return _deny("You cannot change your own role.")
     new_role = (role or "").strip().lower()
     if new_role not in ("admin", "member"):
-        raise HTTPException(status_code=400, detail="Role must be admin or member")
+        return _deny("Role must be admin or member.")
     # Only owners may promote to admin or demote admins; admins manage members only.
     if actor.role != "owner" and (target.role in ("owner", "admin") or new_role == "admin"):
-        raise HTTPException(status_code=403, detail="Only owners can manage admin roles")
+        return _deny("Only owners can manage admin roles.")
     if target.role == "owner":
-        raise HTTPException(status_code=403, detail="Owner role cannot be changed; transfer ownership manually")
+        return _deny("Owner role cannot be changed; transfer ownership manually.")
     target.role = new_role
     db.commit()
 
@@ -2538,7 +2616,10 @@ def update_member_role(
         ip_address=get_client_ip(request),
         details={"email": target.user.email if target.user else None, "new_role": new_role},
     )
-    return RedirectResponse(url="/dashboard/team", status_code=303)
+    return RedirectResponse(
+        url=f"/dashboard/team?notice={_quote(f'Role updated to {new_role}.', safe='')}&notice_type=success",
+        status_code=303,
+    )
 
 
 @router.post("/dashboard/team/members/{member_id}/remove")
@@ -2549,6 +2630,13 @@ def remove_member(member_id: str, request: Request, csrf_token: str | None = For
     if not user or not org:
         return RedirectResponse(url="/auth/login", status_code=302)
     actor = require_manager(db, org, user)
+    from urllib.parse import quote as _quote
+
+    def _deny(msg: str):
+        return RedirectResponse(
+            url=f"/dashboard/team?notice={_quote(msg, safe='')}&notice_type=error",
+            status_code=303,
+        )
 
     target = (
         db.query(OrganizationMember)
@@ -2559,9 +2647,9 @@ def remove_member(member_id: str, request: Request, csrf_token: str | None = For
         .first()
     )
     if not target:
-        raise HTTPException(status_code=404, detail="Member not found")
+        return _deny("Member not found.")
     if target.user_id == user.id:
-        raise HTTPException(status_code=400, detail="You cannot remove yourself")
+        return _deny("You cannot remove yourself.")
     if target.role == "owner":
         owners = (
             db.query(OrganizationMember)
@@ -2572,9 +2660,9 @@ def remove_member(member_id: str, request: Request, csrf_token: str | None = For
             .count()
         )
         if owners <= 1:
-            raise HTTPException(status_code=400, detail="Cannot remove the last owner")
+            return _deny("Cannot remove the last owner.")
         if actor.role != "owner":
-            raise HTTPException(status_code=403, detail="Only owners can remove an owner")
+            return _deny("Only owners can remove an owner.")
     db.delete(target)
     db.commit()
 
@@ -2590,7 +2678,10 @@ def remove_member(member_id: str, request: Request, csrf_token: str | None = For
         ip_address=get_client_ip(request),
         details={"removed_user_id": target.user_id},
     )
-    return RedirectResponse(url="/dashboard/team", status_code=303)
+    return RedirectResponse(
+        url=f"/dashboard/team?notice={_quote('Member removed successfully.', safe='')}&notice_type=success",
+        status_code=303,
+    )
 
 
 @router.get("/auth/invitations/{token}", response_class=HTMLResponse)

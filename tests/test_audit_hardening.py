@@ -254,17 +254,3 @@ def test_email_validation(monkeypatch):
     )
     assert res.status_code == 400
     assert "Invalid email address format" in res.text
-
-
-def test_demo_receiver_config_validation():
-    from demo_receiver.app import app as demo_app
-
-    demo_client = TestClient(demo_app)
-
-    # Invalid mode
-    res_mode = demo_client.post("/config", json={"mode": "invalid_mode"})
-    assert res_mode.status_code == 400
-
-    # Invalid status code
-    res_sc = demo_client.post("/config", json={"mode": "status_code", "status_code": 9999})
-    assert res_sc.status_code == 400

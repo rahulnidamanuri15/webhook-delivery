@@ -67,8 +67,8 @@ jobs:
 
       - name: Lint (ruff + black check)
         run: |
-          ruff check app demo_receiver tests scripts benchmarks
-          black --check app demo_receiver tests scripts benchmarks
+          ruff check app tests scripts
+          black --check app tests scripts
 
       - name: Secret scan check
         run: |

@@ -54,19 +54,51 @@ def is_domain_allowed(hostname: str) -> tuple[bool, str | None]:
     return False, (f"Domain '{hostname}' is not in the configured receiver allowlist " f"({', '.join(allowlist)}).")
 
 
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "demo_receiver", "webhook_demo_receiver", "host.docker.internal")
+
+
 def _validate_url_syntax_and_domain(url: str):
     """Performs URL syntax, scheme, credential, length, and domain checks without DNS."""
     if not url or not isinstance(url, str):
         return False, "URL cannot be empty.", None
 
+    url = url.strip()
+    if not url:
+        return False, "URL cannot be empty.", None
+
     try:
-        parsed = urlparse(url.strip())
+        parsed = urlparse(url)
     except Exception:
         return False, "Malformed URL.", None
 
-    allowed_schemes = ("http", "https") if (settings.DEBUG or settings.ALLOW_LOCAL_RECEIVERS) else ("https",)
-    if parsed.scheme.lower() not in allowed_schemes:
-        return False, f"URL scheme must be one of: {', '.join(allowed_schemes)}.", parsed
+    scheme = (parsed.scheme or "").lower()
+    if not scheme:
+        return (
+            False,
+            "URL must start with https:// (e.g. https://api.example.com/webhook). "
+            "Did you forget the scheme? http:// is only allowed for local testing.",
+            parsed,
+        )
+
+    is_prod = str(getattr(settings, "ENV", "") or "").strip().lower() == "production"
+    allow_http = bool(settings.DEBUG or settings.ALLOW_LOCAL_RECEIVERS or not is_prod)
+    allowed_schemes = ("http", "https") if allow_http else ("https",)
+    if scheme not in allowed_schemes:
+        if scheme == "http":
+            return (
+                False,
+                "Only https:// URLs are allowed. "
+                "Use an https:// receiver URL, or for local testing set "
+                "ALLOW_LOCAL_RECEIVERS=True in .env (and restart) to allow "
+                "http:// loopback receivers such as http://127.0.0.1:8001/webhook.",
+                parsed,
+            )
+        return (
+            False,
+            f"URL scheme must be one of: {', '.join(allowed_schemes)}. "
+            "Use an https:// URL (http:// is only for local testing).",
+            parsed,
+        )
 
     if parsed.username or parsed.password:
         return False, "URLs with embedded credentials are not allowed.", parsed
@@ -75,10 +107,20 @@ def _validate_url_syntax_and_domain(url: str):
     if not hostname:
         return False, "URL must contain a valid hostname.", parsed
 
-    # Public-demo domain allowlist (checked before localhost exception)
-    allowed, allow_err = is_domain_allowed(hostname)
-    if not allowed:
-        return False, allow_err, parsed
+    is_local = hostname.lower() in LOCAL_HOSTS
+    # Loopback receivers are explicitly opted-in via ALLOW_LOCAL_RECEIVERS and
+    # bypass the public-demo domain allowlist (they are still gated below by
+    # the ALLOW_LOCAL_RECEIVERS check + scheme policy).
+    if not (is_local and settings.ALLOW_LOCAL_RECEIVERS):
+        allowed, allow_err = is_domain_allowed(hostname)
+        if not allowed:
+            return (
+                False,
+                f"{allow_err} "
+                "Add the domain to ALLOWED_RECEIVER_DOMAINS in .env, or clear "
+                "ALLOWED_RECEIVER_DOMAINS (empty disables the allowlist) for local dev.",
+                parsed,
+            )
 
     # Length + label guards (avoid tiny DoS via 2KB hostnames / deep labels)
     if len(hostname) > 253 or len(url) > 2048:
@@ -98,8 +140,7 @@ def validate_webhook_url(url: str) -> tuple[bool, str | None]:
         return False, err
 
     hostname = parsed.hostname
-    local_hosts = ("localhost", "127.0.0.1", "::1", "demo_receiver", "webhook_demo_receiver", "host.docker.internal")
-    if settings.ALLOW_LOCAL_RECEIVERS and hostname.lower() in local_hosts:
+    if settings.ALLOW_LOCAL_RECEIVERS and hostname.lower() in LOCAL_HOSTS:
         return True, None
 
     # Resolve hostname to IP addresses and verify against restricted ranges
@@ -153,8 +194,7 @@ def resolve_and_pin_destination(url: str) -> PinnedResolutionResult:
         return PinnedResolutionResult(False, err, url, {})
 
     hostname = parsed.hostname
-    local_hosts = ("localhost", "127.0.0.1", "::1", "demo_receiver", "webhook_demo_receiver", "host.docker.internal")
-    if settings.ALLOW_LOCAL_RECEIVERS and hostname and hostname.lower() in local_hosts:
+    if settings.ALLOW_LOCAL_RECEIVERS and hostname and hostname.lower() in LOCAL_HOSTS:
         return PinnedResolutionResult(True, None, url, {"Host": parsed.netloc}, None)
 
     try:

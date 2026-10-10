@@ -39,10 +39,6 @@ A production-grade, multi-tenant webhook delivery platform built with **FastAPI*
   - Real-time auto-refreshing delivery tables via HTMX polling.
   - Delivery attempt timeline showing duration, HTTP status code, and bounded response excerpts.
   - Visual delivery distribution bar and audit log viewer.
-- **Controllable Demo Receiver**:
-  - Built-in simulator app to easily test: Always 200, Fail first N requests, 429 rate limit, or slow timeout.
-- **Automated Load Testing & Benchmarking**:
-  - Asynchronous load testing tool (`benchmarks/run_benchmark.py`) measuring throughput and p50/p95 latency.
 
 ---
 
@@ -81,40 +77,41 @@ A production-grade, multi-tenant webhook delivery platform built with **FastAPI*
 - Python 3.11+
 - Virtual environment activated
 
-### 1. Run Migrations & Seed Sample Data
+### 1. Run Migrations & Create the First Owner
 ```powershell
 # In PowerShell:
 .\.venv\Scripts\alembic.exe upgrade head
-.\.venv\Scripts\python.exe scripts/seed.py
 ```
 
-Demo credentials created:
-- **Dashboard URL**: `http://127.0.0.1:8080/auth/login`
-- **Email**: `demo@example.com`
-- **Password**: `Password123!`
-- **Pre-configured API Key**: `wh_live_demo1234567890abcdef123456`
+Registration is closed by default (`ALLOW_OPEN_REGISTRATION=False`). To create
+the first owner account, temporarily allow open registration in `.env`:
 
-### 2. Start the Controllable Demo Receiver (Port 8001)
-In a new terminal:
 ```powershell
-$env:DEMO_RECEIVER_ADMIN_TOKEN="demo-local-token-change-me"
-.\.venv\Scripts\python.exe -m uvicorn demo_receiver.app:app --port 8001 --reload
+# .env: set ALLOW_OPEN_REGISTRATION=True, then:
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8080 --reload
 ```
-Open [http://127.0.0.1:8001](http://127.0.0.1:8001) to view the simulator panel.
-Admin controls (`/configure`, `/config`, `/clear`) require loopback or `X-Admin-Token`.
 
-### 3. Start the Main Platform (Port 8080)
+Open `http://127.0.0.1:8080/auth/register`, register your owner account (it is
+created as org `owner` with a default project), then set
+`ALLOW_OPEN_REGISTRATION=False` again and restart. Further users join via team
+invitations.
+
+### 2. Start the Main Platform (Port 8080)
 In another terminal:
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8080 --reload
 ```
 Open [http://127.0.0.1:8080](http://127.0.0.1:8080) in your browser.
 
+To test deliveries locally, point an endpoint at any publicly reachable test
+URL (e.g. a request-bin) or run a tiny local receiver with
+`ALLOW_LOCAL_RECEIVERS=True`, then publish via **"Publish Test Event"** in the
+dashboard.
+
 Production CSS is prebuilt (`npm run build:css` → `app/static/css/dist.css`);
 do not use the Tailwind browser CDN. Docker builds it automatically.
 
-See `docs/DEMO.md` for the scripted 8-minute demo, `docs/SECURITY.md` for the
-retention/allowlist/Redis-fallback policy, and `docs/BENCHMARK_REPORT.md` for measurements.
+See `docs/SECURITY.md` for the retention/allowlist/Redis-fallback policy.
 
 ---
 
@@ -148,8 +145,54 @@ curl -k https://YOUR_DOMAIN/ready
 
 Prod requirements enforced at boot (`app/config.py` fail-fast): `ENV=production`,
 `DEBUG=False`, `USE_DEMO_RETRY_POLICY=False`, `ALLOW_LOCAL_RECEIVERS=False`,
-non-empty `ALLOWED_RECEIVER_DOMAINS`, strong secrets. Full checklist:
-`docs/SECURITY.md` §3. Backups: `docs/BACKUP_AND_RESTORE.md`.
+`ALLOW_OPEN_REGISTRATION` defaulting to `False`, non-empty `ALLOWED_RECEIVER_DOMAINS`, strong
+secrets. Full checklist: `docs/SECURITY.md` §3. Backups:
+`docs/BACKUP_AND_DISASTER_RECOVERY.md`.
+
+### Oracle Cloud Always Free ARM VM (Ampere A1)
+
+All images (`python:3.11-slim`, `postgres:16-alpine`, `redis:7-alpine`,
+`nginx:1.27-alpine`) are multi-arch — building on the ARM VM yields a native
+ARM64 image. Resource limits in `compose.prod.yaml` default to the smallest
+shape (1 OCPU / 6 GB); on 4 OCPU / 24 GB raise `CELERY_CONCURRENCY` to 4-8.
+
+```bash
+# 0. On the VM: Ubuntu 22.04+ ARM, Docker + Compose plugin, ports 80/443 open
+#    in the VCN security list AND in iptables/firewalld. Clone lean:
+git clone <your-repo-url> webhook-delivery && cd webhook-delivery
+
+# 1. Secrets (same as above)
+cp .env.example .env && nano .env
+
+# 2a. STAGE 1 — no domain yet (HTTP-only, ACME/preflight ONLY):
+#     The HTTP-only proxy exists so Let's Encrypt can reach
+#     /.well-known/acme-challenge/ and so you can curl /ready and /healthz.
+#     Do NOT register or log in over plain HTTP: production sets Secure
+#     session/CSRF cookies, which browsers never send over HTTP, so the
+#     dashboard login cannot work until HTTPS is up. Create the first owner
+#     with the bootstrap script instead (no open registration needed):
+NGINX_CONF=./deploy/nginx.oracle-http.conf DEPLOY_PROD_ALLOW_MISSING_TLS=1 \
+  ./scripts/deploy_prod.sh up --build -d
+curl http://<VM_PUBLIC_IP>/ready   # {"status":"ready",...}
+curl http://<VM_PUBLIC_IP>/healthz # ok (via reverse_proxy)
+
+# 2b. Create the first owner via bootstrap (registration stays closed):
+docker compose -f compose.yaml -f compose.prod.yaml run --rm web \
+  python scripts/bootstrap_admin.py --email admin@example.com --password 'StrongPass123!'
+# (Refuses to run if users already exist unless --force; never logs the password.)
+
+# 3. STAGE 2 — domain + TLS (once DNS points at the VM):
+#    issue certs (see deploy/tls/README.md), copy fullchain.pem + privkey.pem
+#    into deploy/tls/, then:
+make deploy-prod
+curl https://YOUR_DOMAIN/ready
+# Now sign in over HTTPS: https://YOUR_DOMAIN/auth/login (owner from step 2b).
+# Keep ALLOW_OPEN_REGISTRATION=False in .env; further users join via team
+# invitations. Never weaken Secure cookie flags to make HTTP login work.
+```
+
+Nightly DB backups land in `./backups/` via the `db_backup` service (7-day
+retention). Operate with `make ps-prod / logs-prod / down-prod`.
 
 ---
 
@@ -158,7 +201,7 @@ non-empty `ALLOWED_RECEIVER_DOMAINS`, strong secrets. Full checklist:
 ### Example cURL Request:
 ```bash
 curl -X POST http://127.0.0.1:8080/api/v1/events \
-  -H "Authorization: Bearer wh_live_demo1234567890abcdef123456" \
+  -H "Authorization: Bearer wh_live_YOUR_API_KEY" \
   -H "Idempotency-Key: payment-txn-10492" \
   -H "Content-Type: application/json" \
   -d '{
@@ -185,7 +228,7 @@ curl -X POST http://127.0.0.1:8080/api/v1/events \
 
 ## 5. Running the Automated Test Suite
 
-Run all 20 unit and integration tests with pytest:
+Run the full test suite with pytest:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -v
 ```
@@ -201,23 +244,4 @@ Test coverage includes:
 
 ---
 
-## 6. Interview Demonstration Walkthrough
-
-1. **Open the Controllable Receiver** at `http://127.0.0.1:8001`.
-   - Set mode to **"Fail First N Requests (then 200)"** with count = `3`.
-2. **Open the Platform Dashboard** at `http://127.0.0.1:8080`.
-   - Sign in with `demo@example.com` / `Password123!`.
-3. **Publish an Event**:
-   - Click **"Publish Test Event"** and submit `payment.succeeded`.
-4. **Watch Real-Time Retries**:
-   - In the Dashboard Overview, observe the delivery status change:
-     - Attempt #1: HTTP 500 $\rightarrow$ `RETRY_SCHEDULED`
-     - Attempt #2: HTTP 500 $\rightarrow$ `RETRY_SCHEDULED`
-     - Attempt #3: HTTP 500 $\rightarrow$ `RETRY_SCHEDULED`
-     - Attempt #4: HTTP 200 OK $\rightarrow$ `SUCCEEDED`
-5. **Inspect Attempt Timeline**:
-   - Click into the delivery to see the step-by-step visual timeline with latency, HTTP codes, and response excerpts.
-6. **Simulate a Dead Letter & Replay**:
-   - Change receiver mode to **HTTP 400 Bad Request** (permanent client error).
-   - Publish an event $\rightarrow$ immediately marked as `DEAD`.
-   - Click **"Replay Delivery"** $\rightarrow$ a new linked delivery is created preserving the original event ID with a reset attempt budget.
+## 4. How to Publish Events via API

@@ -1,4 +1,4 @@
-<!-- Relayflow Top Bar widgets (no blocks here: blocks must live in base.html to be overridable).
+<!-- Hookflow Top Bar widgets (no blocks here: blocks must live in base.html to be overridable).
      Included by base.html inside the header. -->
 <div class="hidden md:flex items-center">
   <div class="relative">
@@ -13,7 +13,16 @@
   <svg class="w-[18px] h-[18px] text-[#3d4d43]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
     <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2a2 2 0 01-.6 1.4L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
   </svg>
+  {# Red dot only when there are actually dead deliveries. Same source as the sidebar badge. #}
+  {% set _dead = none %}
+  {% if request is defined and request.state is defined and request.state.sidebar_dead_count is defined %}
+    {% set _dead = request.state.sidebar_dead_count %}
+  {% elif stats is defined and stats.dead_deliveries is defined %}
+    {% set _dead = stats.dead_deliveries %}
+  {% endif %}
+  {% if _dead is not none and _dead > 0 %}
   <span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#e85d6a] ring-2 ring-white"></span>
+  {% endif %}
 </a>
 <a href="/dashboard/endpoints" class="inline-flex items-center gap-1.5 px-4 py-2 text-[13px] font-semibold rounded-xl shadow-sm text-white bg-[#1aae5c] hover:bg-[#159452] transition">
   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" /></svg>

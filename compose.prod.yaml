@@ -7,18 +7,33 @@
 #   docker compose -f compose.yaml -f compose.prod.yaml up --build
 #
 # Requires all secrets (no dev defaults). app/config.py fail-fasts if
-# placeholders or weak values remain. Demo seed / demo_receiver are
-# excluded by default (profiles in base file).
+# placeholders or weak values remain. Dev tools (seed/demo/benchmarks) stay
+# in the repo but are excluded from prod: base-file profile services never
+# start by default, and the prod image stays lean via .dockerignore.
 #
 # NOTE: `!reset` requires Docker Compose v2.24+. Plain `ports: []` does NOT
 # clear base-file ports (sequences merge) — `!reset []` does.
+#
+# Resource limits default to the smallest Always Free ARM shape (1 OCPU / 6 GB).
+# On a 4 OCPU / 24 GB shape, raise CELERY_CONCURRENCY to 4-8.
+#
+# No-domain (HTTP-only) first boot on Oracle Cloud — ACME/preflight ONLY:
+#   NGINX_CONF=./deploy/nginx.oracle-http.conf DEPLOY_PROD_ALLOW_MISSING_TLS=1 \
+#     ./scripts/deploy_prod.sh up --build -d
+# The HTTP-only proxy serves /.well-known/acme-challenge/, /ready and /healthz.
+# Do NOT register/log in over plain HTTP: production uses Secure session/CSRF
+# cookies, which browsers never send over HTTP, so dashboard login requires
+# HTTPS. Create the first owner with scripts/bootstrap_admin.py (registration
+# stays closed), then issue certs and redeploy without the overrides to switch
+# to TLS (default ./deploy/nginx.conf serves TLS on :443) and sign in over HTTPS.
+# Never weaken Secure cookie flags to make HTTP login work.
 name: webhook-delivery-prod
 
 services:
   postgres:
     ports: !reset []  # never expose DB publicly in prod; app network only
-    mem_limit: 1g
-    cpus: 2.0
+    mem_limit: 768m
+    cpus: 1.0
     logging:
       driver: json-file
       options:
@@ -39,11 +54,39 @@ services:
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is required in production}
 
+  # Single source of truth for schema migrations (runs once, gates app services).
+  # Web/workers do NOT run `alembic upgrade head` on startup (see Dockerfile +
+  # compose.yaml); they wait for this job via service_completed_successfully.
+  migrations:
+    build: .
+    image: webhook-delivery:latest
+    command: alembic upgrade head
+    environment:
+      - ENV=production
+      - DEBUG=False
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production}@postgres:5432/${POSTGRES_DB:-webhook_platform}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required in production}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY is required in production}
+      - API_KEY_PEPPER=${API_KEY_PEPPER:?API_KEY_PEPPER is required in production}
+      - METRICS_API_KEY=${METRICS_API_KEY:?METRICS_API_KEY is required in production}
+      - REDIS_URL=${REDIS_URL:?REDIS_URL with password is required, e.g. redis://:pass@redis:6379/0}
+      - ALLOW_LOCAL_RECEIVERS=False
+      - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:?ALLOWED_RECEIVER_DOMAINS is required in production}
+      - USE_DEMO_RETRY_POLICY=False
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required in production, e.g. https://hooks.example.com}
+      - SMTP_HOST=${SMTP_HOST:?SMTP_HOST is required in production}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:?SMTP_PASSWORD is required in production}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:?SMTP_FROM_EMAIL is required in production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   web:
     # Never expose :8080 directly in prod — traffic must go via reverse_proxy (:80/:443).
     ports: !reset []
-    mem_limit: 512m
-    cpus: 1.0
+    mem_limit: 384m
+    cpus: 0.75
     logging:
       driver: json-file
       options:
@@ -58,6 +101,11 @@ services:
       - METRICS_API_KEY=${METRICS_API_KEY:?METRICS_API_KEY is required in production}
       - REDIS_URL=${REDIS_URL:?REDIS_URL with password is required, e.g. redis://:pass@redis:6379/0}
       - ALLOW_LOCAL_RECEIVERS=False
+      # Closed by default; NEVER open for HTTP-only onboarding (Secure cookies
+      # require HTTPS, so plain-HTTP registration/login cannot work). Create
+      # the first owner with scripts/bootstrap_admin.py, then sign in over
+      # HTTPS. Briefly opening registration is only meaningful behind TLS.
+      - ALLOW_OPEN_REGISTRATION=${ALLOW_OPEN_REGISTRATION:-False}
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:?ALLOWED_RECEIVER_DOMAINS is required in production}
       - USE_CELERY=True
       - ENABLE_INPROCESS_DISPATCHER=False
@@ -71,13 +119,20 @@ services:
       - SMTP_USERNAME=${SMTP_USERNAME:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:?SMTP_PASSWORD is required in production}
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:?SMTP_FROM_EMAIL is required in production}
-      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Relayflow}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Hookflow}
       - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
       - SMTP_USE_SSL=${SMTP_USE_SSL:-False}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
 
   celery_worker:
-    mem_limit: 1g
-    cpus: 2.0
+    mem_limit: 768m
+    cpus: 1.0
     logging:
       driver: json-file
       options:
@@ -95,7 +150,23 @@ services:
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:?ALLOWED_RECEIVER_DOMAINS is required in production}
       - USE_DEMO_RETRY_POLICY=False
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-4}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required in production}
+      - SMTP_HOST=${SMTP_HOST:?SMTP_HOST is required in production}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:?SMTP_PASSWORD is required in production}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:?SMTP_FROM_EMAIL is required in production}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Hookflow}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
+      - SMTP_USE_SSL=${SMTP_USE_SSL:-False}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
 
   celery_beat:
     mem_limit: 256m
@@ -111,15 +182,34 @@ services:
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required in production}
       - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY is required in production}
       - API_KEY_PEPPER=${API_KEY_PEPPER:?API_KEY_PEPPER is required in production}
+      - METRICS_API_KEY=${METRICS_API_KEY:?METRICS_API_KEY is required in production}
       - REDIS_URL=${REDIS_URL:?REDIS_URL with password is required}
+      - ALLOW_LOCAL_RECEIVERS=False
+      - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:?ALLOWED_RECEIVER_DOMAINS is required in production}
       - USE_DEMO_RETRY_POLICY=False
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required in production}
+      - SMTP_HOST=${SMTP_HOST:?SMTP_HOST is required in production}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:?SMTP_PASSWORD is required in production}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:?SMTP_FROM_EMAIL is required in production}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Hookflow}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
+      - SMTP_USE_SSL=${SMTP_USE_SSL:-False}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
 
   # Fail-closed if accidentally enabled in prod: force production env + secrets
   # so placeholder defaults can never run against the prod DB.
   dispatcher:
-    mem_limit: 512m
-    cpus: 1.0
+    mem_limit: 384m
+    cpus: 0.75
     logging:
       driver: json-file
       options:
@@ -131,11 +221,18 @@ services:
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required in production}
       - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY is required in production}
       - API_KEY_PEPPER=${API_KEY_PEPPER:?API_KEY_PEPPER is required in production}
+      - METRICS_API_KEY=${METRICS_API_KEY:?METRICS_API_KEY is required in production}
       - REDIS_URL=${REDIS_URL:?REDIS_URL with password is required}
       - ALLOW_LOCAL_RECEIVERS=False
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:?ALLOWED_RECEIVER_DOMAINS is required in production}
       - USE_DEMO_RETRY_POLICY=False
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required in production}
+      - SMTP_HOST=${SMTP_HOST:?SMTP_HOST is required in production}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:?SMTP_PASSWORD is required in production}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:?SMTP_FROM_EMAIL is required in production}
 
+  # Fail-closed guard for dev-only seed: refuses production in scripts/seed.py.
+  # Kept so `--profile seed` can never run silently against prod DB.
   seed:
     environment:
       - ENV=${ENV:?ENV must be explicitly set to run seed (refuses production in scripts/seed.py)}
@@ -153,16 +250,36 @@ services:
         max-size: "10m"
         max-file: "5"
     volumes:
-      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # Default is the TLS conf. For HTTP-only first boot (no domain yet),
+      # override with NGINX_CONF=./deploy/nginx.oracle-http.conf (see header).
+      - ${NGINX_CONF:-./deploy/nginx.conf}:/etc/nginx/conf.d/default.conf:ro
       - ./deploy/tls:/etc/nginx/tls:ro
       - certbot_var:/var/www/certbot:ro
+    # Periodic reload picks up renewed flat certs (see certbot deploy-hook).
+    # Nginx keeps serving; reload is zero-downtime.
+    command: >
+      sh -c "(while true; do sleep 12h; nginx -s reload 2>/dev/null || true; done &) && nginx -g 'daemon off;'"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/ >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/healthz >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
 
+  # Certbot uses webroot against reverse_proxy (:80 serves /.well-known/).
+  # Host ./deploy/tls doubles as /etc/letsencrypt (lineage under live/) AND
+  # the flat fullchain/privkey.pem nginx reads. The deploy-hook copies each
+  # renewed lineage to the flat paths so nginx (periodic reload above) picks
+  # it up without hardcoding a domain in nginx.conf.
+  # Initial issuance (once per domain, see deploy/tls/README.md):
+  #   docker compose -f compose.yaml -f compose.prod.yaml run --rm certbot \
+  #     certonly --webroot -w /var/www/certbot -d hooks.example.com \
+  #     --email you@example.com --agree-tos --non-interactive
+  # The entrypoint below dispatches: no args -> renewal loop; any args ->
+  # `certbot "$@"` (so `run --rm certbot certonly ...` works). Renewal
+  # promotion lives in deploy/certbot-deploy-hook.sh (dedicated script so
+  # $RENEWED_LINEAGE is expanded by certbot at hook time, never by compose
+  # or the outer shell).
   certbot:
     image: certbot/certbot:latest
     restart: unless-stopped
@@ -176,7 +293,12 @@ services:
     volumes:
       - ./deploy/tls:/etc/letsencrypt
       - certbot_var:/var/www/certbot
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+      - ./deploy/certbot-entrypoint.sh:/usr/local/bin/certbot-entrypoint.sh:ro
+      - ./deploy/certbot-deploy-hook.sh:/usr/local/bin/certbot-deploy-hook.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/certbot-entrypoint.sh"]
+    # Empty command: `up` runs the renewal loop; `run --rm certbot <args>`
+    # appends <args> as entrypoint parameters for one-shot issuance.
+    command: []
   db_backup:
     image: prodrigestivill/postgres-backup-local:16
     restart: unless-stopped

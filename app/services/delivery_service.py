@@ -181,8 +181,14 @@ def claim_delivery(db: Session, delivery_id: str) -> tuple[Delivery, str] | None
     Attempts to atomically acquire an execution lease on a delivery row.
     Returns (delivery, lease_token) if claimed, or None if already claimed/completed.
     """
-    # Tolerate clock skew and dispatch lease margin (from Celery pre-dispatch)
-    now = utc_now() + timedelta(seconds=settings.LEASE_DURATION_SECONDS + 2)
+    # Strict retry eligibility: only deliveries whose next_attempt_at has arrived
+    # may be claimed. A tiny 2s clock-skew allowance covers DB/app time drift.
+    # Dispatch reservations (Celery pre-dispatch dedup) are tracked separately in
+    # Redis by the dispatcher — they MUST NOT extend this window. A wider window
+    # (e.g. LEASE_DURATION + 2s) lets an old/duplicate queued task bypass the
+    # normal retry backoff and claim a delivery scheduled up to ~32s in the
+    # future (reproduced: 25s-future delivery claimed immediately).
+    now = utc_now() + timedelta(seconds=2)
     delivery = (
         db.query(Delivery)
         .filter(

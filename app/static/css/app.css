@@ -74,7 +74,7 @@ input:disabled {
   cursor: not-allowed;
 }
 
-/* Relayflow visual helpers (frontend only) */
+/* Hookflow visual helpers (frontend only) */
 .relay-card {
   background: #ffffff;
   border: 1px solid #e5ebe6;
@@ -121,7 +121,7 @@ input:disabled {
   color: #fff !important;
 }
 
-/* Relayflow theme bridge: remap legacy indigo accents to brand green.
+/* Hookflow theme bridge: remap legacy indigo accents to brand green.
    Frontend-only color override — no markup / logic changed. */
 .bg-indigo-600 { background-color: #1aae5c !important; }
 .hover\:bg-indigo-700:hover, .hover\:bg-indigo-500:hover { background-color: #159452 !important; }

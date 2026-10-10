@@ -2,6 +2,20 @@
 # Automated PostgreSQL backup with gzip compression, checksums, and retention rotation.
 set -euo pipefail
 
+# SQLAlchemy URLs (postgresql+psycopg://, postgresql+psycopg2://, ...) are NOT
+# valid libpq connection URIs for pg_dump/psql. Strip any "+driver" suffix so
+# the app's DATABASE_URL works directly with native PostgreSQL tooling.
+normalize_db_url() {
+    local url="$1"
+    if [[ "${url}" =~ ^postgresql\+[^:]*:// ]]; then
+        url="postgresql://${url#*://}"
+    fi
+    printf '%s' "${url}"
+}
+
+: "${DATABASE_URL:?DATABASE_URL must be provided}"
+LIBPQ_URL="$(normalize_db_url "${DATABASE_URL}")"
+
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 TIMESTAMP=$(date -u +"%Y%m%d_%H%M%SZ")
@@ -11,7 +25,7 @@ CHECKSUM_FILE="${BACKUP_FILE}.sha256"
 mkdir -p "${BACKUP_DIR}"
 
 echo "[$(date -u)] Starting database backup to ${BACKUP_FILE}..."
-pg_dump "${DATABASE_URL}" | gzip -c > "${BACKUP_FILE}"
+pg_dump "${LIBPQ_URL}" | gzip -c > "${BACKUP_FILE}"
 
 # Generate cryptographic checksum for verification
 sha256sum "${BACKUP_FILE}" > "${CHECKSUM_FILE}"

@@ -88,7 +88,6 @@ When deploying to a production environment:
 - [ ] Enforce HTTPS-only receiver URLs (production defaults to `https` when `DEBUG=False` and `ALLOW_LOCAL_RECEIVERS=False`).
 - [ ] Store `SECRET_KEY` and `SIGNING_SECRET_ENCRYPTION_KEY` in a secure secrets manager (e.g., AWS Secrets Manager, HashiCorp Vault).
 - [ ] Set `DATA_RETENTION_DAYS` (default 90) and verify the hourly purge / `tasks.purge_expired_data` schedule.
-- [ ] Set `DEMO_RECEIVER_ADMIN_TOKEN` and do not expose the demo receiver publicly without it.
 - [ ] Configure outbound egress proxies or firewalls to restrict worker network interfaces.
 - [ ] Set `OTEL_EXPORTER_OTLP_ENDPOINT` to collect traces; logs are JSON-structured to stdout.
 - [ ] Serve ONLY behind the nginx `reverse_proxy`: `get_client_ip()` trusts
@@ -97,7 +96,7 @@ When deploying to a production environment:
 - [ ] Set `REDIS_URL` with a password: session logout revocation and rate limits
       are per-process memory without Redis (multi-replica logout gap).
 - [ ] Set `USE_CELERY=True` in production so deliveries survive web restarts.
-- [ ] Schedule backups per `docs/BACKUP_AND_RESTORE.md` (DB dumps + offsite copies).
+- [ ] Schedule backups per `docs/BACKUP_AND_DISASTER_RECOVERY.md` (DB dumps + offsite copies).
 
 ---
 
@@ -113,4 +112,4 @@ When deploying to a production environment:
 - Purge runs hourly in the dispatcher loop and via Celery `tasks.purge_expired_data`.
 
 If the encryption key (`SIGNING_SECRET_ENCRYPTION_KEY`) is lost, restored signing
-secrets cannot be decrypted — back it up separately (see `BACKUP_AND_RESTORE.md`).
+secrets cannot be decrypted — back it up separately (see `BACKUP_AND_DISASTER_RECOVERY.md`).

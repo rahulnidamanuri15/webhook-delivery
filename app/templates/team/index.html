@@ -68,18 +68,28 @@
         </div>
         {% if is_manager %}
         <div class="flex items-center space-x-2">
-          <form action="/dashboard/team/members/{{ m.id }}/role" method="POST" class="flex items-center space-x-2">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <select name="role" class="px-2 py-1 border border-slate-300 rounded text-xs bg-white">
-              <option value="member" {% if m.role == 'member' %}selected{% endif %}>Member</option>
-              <option value="admin" {% if m.role == 'admin' %}selected{% endif %}>Admin</option>
-            </select>
-            <button type="submit" class="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded">Update role</button>
-          </form>
-          <form action="/dashboard/team/members/{{ m.id }}/remove" method="POST" class="inline" onsubmit="return confirm('Remove this member?');">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold rounded border border-rose-200">Remove</button>
-          </form>
+          {% if m.user_id == current_user.id %}
+          <span class="text-[11px] font-medium text-slate-400">This is you</span>
+          {% else %}
+            {% if m.role != 'owner' %}
+            <form action="/dashboard/team/members/{{ m.id }}/role" method="POST" class="flex items-center space-x-2">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <select name="role" class="px-2 py-1 border border-slate-300 rounded text-xs bg-white">
+                <option value="member" {% if m.role == 'member' %}selected{% endif %}>Member</option>
+                <option value="admin" {% if m.role == 'admin' %}selected{% endif %}>Admin</option>
+              </select>
+              <button type="submit" class="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded">Update role</button>
+            </form>
+            {% else %}
+            <span class="text-[11px] font-medium text-slate-400" title="Owner role cannot be changed here; transfer ownership manually">Owner</span>
+            {% endif %}
+            {% if m.role != 'owner' or actor_role == 'owner' %}
+            <form action="/dashboard/team/members/{{ m.id }}/remove" method="POST" class="inline" onsubmit="return confirm('Remove this member?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold rounded border border-rose-200">Remove</button>
+            </form>
+            {% endif %}
+          {% endif %}
         </div>
         {% endif %}
       </div>

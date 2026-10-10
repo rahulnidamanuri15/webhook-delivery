@@ -15,6 +15,17 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
+# --- 0. Load .env (documented prod path: cp .env.example .env) -------------------
+# Checks below validate exported variables; without this, a file-only deploy
+# (the documented flow) would always fail. CI has no .env file and injects
+# dummy secrets via environment, so this is a no-op there.
+if [[ -f ".env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+
 BASE_FILE="compose.yaml"
 PROD_FILE="compose.prod.yaml"
 

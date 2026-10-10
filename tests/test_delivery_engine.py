@@ -234,3 +234,49 @@ def test_dispatcher_enqueues_to_celery_when_enabled(delivery_db):
                 mock_delay.assert_any_call(delivery_id)
     finally:
         settings.USE_CELERY = False
+
+
+def test_claim_rejects_future_retry_duplicate_task(delivery_db):
+    """Regression: a duplicate queued task arriving before the retry time must
+    NOT bypass backoff (previously claimable up to LEASE+2s ≈ 32s in future)."""
+    from app.services.delivery_service import claim_delivery
+
+    project = delivery_db.query(Project).first()
+    event, _, _ = ingest_event(delivery_db, project.id, "order.created", {"order_id": "ord_future_dup"})
+    delivery = event.deliveries[0]
+
+    # Simulate a failed attempt rescheduled 25s in the future (normal backoff).
+    delivery.status = "RETRY_SCHEDULED"
+    delivery.attempt_count = 1
+    delivery.next_attempt_at = utc_now() + timedelta(seconds=25)
+    delivery_db.commit()
+
+    # Duplicate/old Celery task arriving now must be rejected.
+    assert claim_delivery(delivery_db, delivery.id) is None
+    delivery_db.rollback()
+
+    # Once the retry time arrives, the same delivery is claimable again.
+    delivery.status = "RETRY_SCHEDULED"
+    delivery.next_attempt_at = utc_now() - timedelta(seconds=1)
+    delivery_db.commit()
+    claimed = claim_delivery(delivery_db, delivery.id)
+    assert claimed is not None
+    assert claimed[0].id == delivery.id
+
+
+def test_dispatch_reservation_does_not_mutate_retry_eligibility(delivery_db):
+    """get_due_delivery_ids(mark_dispatched=True) must not push next_attempt_at
+    into the future: retry eligibility stays in the DB, reservations in Redis."""
+    from app.workers.dispatcher import get_due_delivery_ids
+
+    project = delivery_db.query(Project).first()
+    event, _, _ = ingest_event(delivery_db, project.id, "order.created", {"order_id": "ord_reserve"})
+    delivery = event.deliveries[0]
+    original_next = delivery.next_attempt_at
+    delivery_db.commit()
+
+    ids = get_due_delivery_ids(delivery_db, batch_size=10, mark_dispatched=True)
+    assert delivery.id in ids
+
+    delivery_db.refresh(delivery)
+    assert delivery.next_attempt_at == original_next

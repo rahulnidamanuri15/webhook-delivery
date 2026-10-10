@@ -17,7 +17,7 @@ COMPOSE_PROD := docker compose -f compose.yaml -f compose.prod.yaml
 DEPLOY_SCRIPT := ./scripts/deploy_prod.sh
 
 .PHONY: help enforce-prod-compose config-prod build-prod up-prod deploy-prod \
-	migrate-prod ps-prod logs-prod down-prod config-dev build-dev up-dev down-dev
+	migrate-prod ps-prod logs-prod down-prod config-dev build-dev up-dev down-dev migrate-dev
 
 help:
 	@echo "Webhook Delivery compose targets:"
@@ -25,9 +25,10 @@ help:
 	@echo "  make up-prod [ARGS='...']   Start prod stack (always with overlay)"
 	@echo "  make build-prod             Build prod images (always with overlay)"
 	@echo "  make config-prod            Render/validate prod compose config"
-	@echo "  make migrate-prod           Run alembic migrations in prod web container"
+	@echo "  make migrate-prod           Run the single migrations service (prod overlay)"
 	@echo "  make ps-prod / logs-prod / down-prod"
-	@echo "  make up-dev / build-dev / config-dev / down-dev   Local dev only (base file)"
+  @echo "  make up-dev / build-dev / config-dev / down-dev   Local dev only (base file)"
+  @echo "  make migrate-dev          Run the base-stack migrations service"
 
 enforce-prod-compose:
 	bash scripts/enforce_prod_compose.sh
@@ -41,13 +42,14 @@ build-prod:
 up-prod:
 	$(COMPOSE_PROD) up -d $(ARGS)
 
-# Full production deploy: guard + wrapper (fixed overlay) + migrations.
+# Full production deploy: guard + wrapper (fixed overlay).
+# Schema runs via the single `migrations` service; web/workers gate on it.
 deploy-prod: enforce-prod-compose
 	$(DEPLOY_SCRIPT) up --build -d $(ARGS)
-	$(COMPOSE_PROD) exec web alembic upgrade head
 
+# Single manual entrypoint (same job `up` runs automatically via gating).
 migrate-prod:
-	$(COMPOSE_PROD) exec web alembic upgrade head
+	$(COMPOSE_PROD) up --build migrations
 
 ps-prod:
 	$(COMPOSE_PROD) ps
@@ -67,6 +69,11 @@ build-dev:
 
 up-dev:
 	$(COMPOSE_BASE) up $(ARGS)
+
+# Single manual entrypoint for the base-stack migrations job
+# (same job `up-dev` runs automatically via gating).
+migrate-dev:
+	$(COMPOSE_BASE) up --build migrations
 
 down-dev:
 	$(COMPOSE_BASE) down $(ARGS)

@@ -1,4 +1,12 @@
-<!-- Relayflow Observability Graphs — visual restyle only, IDs + HTMX preserved -->
+<!-- Hookflow Observability Graphs — visual restyle only, IDs + HTMX preserved -->
+<style>
+  /* Loading feedback for the range switcher: HTMX adds .htmx-request to the
+     hx-indicator element (the switcher div) for the duration of the request. */
+  #chart-range-spinner { display: none; }
+  .htmx-request #chart-range-spinner { display: inline-flex !important; }
+  .htmx-request button.range-btn { opacity: .5; pointer-events: none; }
+  button.range-btn.htmx-request { opacity: .5; pointer-events: none; }
+</style>
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 w-full" id="dashboard-charts-container">
 
   <!-- GRAPH 1: Delivery performance (Live traffic) -->
@@ -23,23 +31,29 @@
         <!-- Time Range Switcher (HTMX Partial Swaps — unchanged endpoints) -->
         <div class="flex items-center gap-1 bg-[#f4f6f3] border border-[#e5ebe6] p-1 rounded-xl text-xs font-semibold">
           {% set cur_range = chart.range if chart and chart.range else '24h' %}
-          <button type="button" hx-get="/dashboard/metrics/chart?range=24h" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
-                  class="px-3 py-1 rounded-lg transition {% if cur_range == '24h' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#6b7c70] hover:text-[#111813]{% endif %}">
+          <button type="button" hx-get="/dashboard/metrics/chart?range=24h" hx-target="#dashboard-charts-container" hx-swap="outerHTML" hx-indicator="closest div"
+                  class="range-btn px-3 py-1 rounded-lg transition {% if cur_range == '24h' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#6b7c70] hover:text-[#111813]{% endif %}">
             24h
           </button>
-          <button type="button" hx-get="/dashboard/metrics/chart?range=7d" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
-                  class="px-3 py-1 rounded-lg transition {% if cur_range == '7d' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#6b7c70] hover:text-[#111813]{% endif %}">
+          <button type="button" hx-get="/dashboard/metrics/chart?range=7d" hx-target="#dashboard-charts-container" hx-swap="outerHTML" hx-indicator="closest div"
+                  class="range-btn px-3 py-1 rounded-lg transition {% if cur_range == '7d' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#6b7c70] hover:text-[#111813]{% endif %}">
             7d
           </button>
-          <button type="button" hx-get="/dashboard/metrics/chart?range=30d" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
-                  class="px-3 py-1 rounded-lg transition {% if cur_range == '30d' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#6b7c70] hover:text-[#111813]{% endif %}">
+          <button type="button" hx-get="/dashboard/metrics/chart?range=30d" hx-target="#dashboard-charts-container" hx-swap="outerHTML" hx-indicator="closest div"
+                  class="range-btn px-3 py-1 rounded-lg transition {% if cur_range == '30d' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#6b7c70] hover:text-[#111813]{% endif %}">
             30d
           </button>
-          <button type="button" hx-get="/dashboard/metrics/chart?range=1h" hx-target="#dashboard-charts-container" hx-swap="outerHTML"
-                  class="px-2.5 py-1 rounded-lg transition {% if cur_range == '1h' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#9aa9a0] hover:text-[#111813]{% endif %}"
+          <button type="button" hx-get="/dashboard/metrics/chart?range=1h" hx-target="#dashboard-charts-container" hx-swap="outerHTML" hx-indicator="closest div"
+                  class="range-btn px-2.5 py-1 rounded-lg transition {% if cur_range == '1h' %}bg-white text-[#0f7a4d] shadow-sm font-bold{% else %}text-[#9aa9a0] hover:text-[#111813]{% endif %}"
                   title="Last hour">
             1h
           </button>
+          <span id="chart-range-spinner" class="items-center pl-1 pr-0.5 text-[#0f7a4d]" title="Loading…">
+            <svg class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+            </svg>
+          </span>
         </div>
       </div>
     </div>
@@ -182,7 +196,7 @@
 
 </div>
 
-<!-- Real Dynamic Graph Initialization Script (logic unchanged, Relayflow palette) -->
+<!-- Real Dynamic Graph Initialization Script (logic unchanged, Hookflow palette) -->
 <script>
 // Defined at top level so legend buttons work even before the first render.
 window.toggleDataset = window.toggleDataset || function(index) {
@@ -240,7 +254,7 @@ window.renderDashboardCharts = function() {
 
     const ctx = trafficCanvas.getContext('2d');
     
-    // Relayflow gradients
+    // Hookflow gradients
     const gradSuccess = ctx.createLinearGradient(0, 0, 0, 240);
     gradSuccess.addColorStop(0, 'rgba(26, 174, 92, 0.22)');
     gradSuccess.addColorStop(1, 'rgba(26, 174, 92, 0.0)');

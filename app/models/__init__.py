@@ -99,7 +99,9 @@ class Endpoint(Base):
 
     project = relationship("Project", back_populates="endpoints")
     subscriptions = relationship("EndpointSubscription", back_populates="endpoint", cascade="all, delete-orphan")
-    deliveries = relationship("Delivery", back_populates="endpoint", cascade="all, delete-orphan")
+    # Delivery history is audit data: deleting an endpoint must NOT delete
+    # past deliveries (they keep target_url_snapshot). See delete_endpoint_post.
+    deliveries = relationship("Delivery", back_populates="endpoint")
 
 
 class EndpointSubscription(Base):
@@ -140,7 +142,9 @@ class Delivery(Base):
 
     id = Column(String(32), primary_key=True, default=lambda: generate_id("dlv"))
     event_id = Column(String(32), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
-    endpoint_id = Column(String(32), ForeignKey("endpoints.id", ondelete="CASCADE"), nullable=False, index=True)
+    # SET NULL on endpoint delete preserves audit history (target_url_snapshot
+    # remains). Workers treat missing endpoint as terminal "Endpoint deleted".
+    endpoint_id = Column(String(32), ForeignKey("endpoints.id", ondelete="SET NULL"), nullable=True, index=True)
     target_url_snapshot = Column(String(2048), nullable=False)
 
     # State machine: PENDING, IN_FLIGHT, SUCCEEDED, RETRY_SCHEDULED, DEAD

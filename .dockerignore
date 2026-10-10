@@ -21,7 +21,15 @@ node_modules/
 webhook_delivery.egg-info/
 *.egg-info/
 tests/
+# Dev-only tools stay in the repo but stay out of the prod runtime image.
 benchmarks/
+demo_receiver/
 docs/BENCHMARK_REPORT.md
+docs/DEMO.md
+docs/BACKUP_AND_RESTORE.md
 backups/*
 !backups/.gitkeep
+# Never bake TLS keys or local secret files into the image.
+*.pem
+*.key
+deploy/tls/*.pem

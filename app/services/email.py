@@ -44,8 +44,8 @@ def is_email_configured() -> bool:
 
 
 def _build_otp_message(to_email: str, otp: str, expire_minutes: int) -> EmailMessage:
-    from_name = (settings.SMTP_FROM_NAME or "Relayflow").strip() or "Relayflow"
-    from_email = (settings.SMTP_FROM_EMAIL or "noreply@relayflow.local").strip()
+    from_name = (settings.SMTP_FROM_NAME or "Hookflow").strip() or "Hookflow"
+    from_email = (settings.SMTP_FROM_EMAIL or "noreply@hookflow.local").strip()
     safe_name = _html.escape(from_name, quote=True)
     safe_otp = _html.escape((otp or "").strip(), quote=True)
     msg = EmailMessage()
@@ -165,8 +165,8 @@ def send_invitation_email(to_email: str, invite_url: str, org_name: str, role: s
             logger.info("SMTP not configured; invitation email not sent to %s", _mask_email(clean_to))
         return False
 
-    from_name = (settings.SMTP_FROM_NAME or "Relayflow").strip() or "Relayflow"
-    from_email = (settings.SMTP_FROM_EMAIL or "noreply@relayflow.local").strip()
+    from_name = (settings.SMTP_FROM_NAME or "Hookflow").strip() or "Hookflow"
+    from_email = (settings.SMTP_FROM_EMAIL or "noreply@hookflow.local").strip()
     safe_name = _html.escape(from_name, quote=True)
     safe_org = _html.escape((org_name or "your organization").strip(), quote=True)
     safe_role = _html.escape((role or "member").strip(), quote=True)

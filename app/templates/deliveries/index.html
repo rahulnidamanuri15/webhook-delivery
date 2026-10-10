@@ -63,7 +63,7 @@
   <!-- Deliveries Table Container with HTMX Polling -->
   <div class="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
     <div id="deliveries-table-container"
-         hx-get="/dashboard/deliveries/table{% if status_filter %}?status={{ status_filter }}{% endif %}&page={{ page }}"
+         hx-get="/dashboard/deliveries/table?{% if status_filter %}status={{ status_filter }}&{% endif %}page={{ page }}"
          hx-trigger="every 3s [document.getElementById('auto-refresh-toggle') && document.getElementById('auto-refresh-toggle').checked]"
          hx-swap="innerHTML">
       {% include "deliveries/_table.html" %}

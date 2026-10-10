@@ -39,6 +39,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # Single source of truth for schema migrations (runs once, gates app services).
+  # Web/workers/seed/dispatcher do NOT run `alembic upgrade head` on startup;
+  # they wait for this job via service_completed_successfully, so a fresh
+  # base/dev deployment can never appear ready while application tables are
+  # missing. (The prod overlay defines its own stricter copy of this job.)
+  migrations:
+    build: .
+    image: webhook-delivery:latest
+    environment:
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-webhook_platform}
+      - ENV=${ENV:-development}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be provided via .env or environment}
+      - SIGNING_SECRET_ENCRYPTION_KEY=${SIGNING_SECRET_ENCRYPTION_KEY:?SIGNING_SECRET_ENCRYPTION_KEY must be provided via .env or environment}
+      - API_KEY_PEPPER=${API_KEY_PEPPER:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: alembic upgrade head
+    restart: "no"
+
   web:
     build: .
     image: webhook-delivery:latest
@@ -58,6 +78,7 @@ services:
       - METRICS_API_KEY=${METRICS_API_KEY:-}
       - ALLOW_LOCAL_RECEIVERS=${ALLOW_LOCAL_RECEIVERS:-False}
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:-}
+      - ALLOW_OPEN_REGISTRATION=${ALLOW_OPEN_REGISTRATION:-False}
       - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-90}
       - AUDIT_RETENTION_DAYS=${AUDIT_RETENTION_DAYS:-365}
       - HTTP_CONNECT_TIMEOUT_SECONDS=${HTTP_CONNECT_TIMEOUT_SECONDS:-3.0}
@@ -71,7 +92,7 @@ services:
       - SMTP_USERNAME=${SMTP_USERNAME:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
-      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Relayflow}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Hookflow}
       - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
       - SMTP_USE_SSL=${SMTP_USE_SSL:-False}
       - DEBUG=False
@@ -81,6 +102,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=5)\""]
       interval: 30s
@@ -88,9 +111,10 @@ services:
       retries: 3
       start_period: 20s
     command: >
-      sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips \"$${FORWARDED_ALLOW_IPS}\""
+      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips \"$${FORWARDED_ALLOW_IPS}\""
 
+  # Dev-only seed: kept in repo, excluded from default stack via profile.
+  # Refuses production in scripts/seed.py. Run: docker compose --profile seed run --rm seed
   seed:
     image: webhook-delivery:latest
     profiles: ["seed"]
@@ -105,6 +129,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     command: python scripts/seed.py
 
   dispatcher:
@@ -133,6 +159,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     command: python -m app.workers.runner
 
   celery_worker:
@@ -158,9 +186,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     command: celery -A app.workers.celery_app.celery_app worker --loglevel=info -c ${CELERY_CONCURRENCY:-4}
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery_app inspect ping -d celery@$HOSTNAME | grep 'OK' || exit 1"]
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery_app inspect ping -d celery@$$HOSTNAME | grep 'OK' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -183,13 +213,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     command: celery -A app.workers.celery_app.celery_app beat --loglevel=info --pidfile=/tmp/celerybeat.pid
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'celery.*beat' || exit 1"]
+      # No procps dependency: the beat PID file is the liveness signal.
+      # `kill -0` is a shell builtin; `cat` is coreutils (always present).
+      test: ["CMD-SHELL", "test -f /tmp/celerybeat.pid && kill -0 $(cat /tmp/celerybeat.pid) || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
 
+  # Dev-only demo receiver: kept in repo, excluded from default stack + prod image.
+  # Prod image is lean (demo_receiver/ docker-ignored); for docker demo, code is
+  # bind-mounted so `docker compose --profile demo up` works without baking dev code.
+  # Primary local usage (see docs/DEMO.md): python -m uvicorn demo_receiver.app:app --port 8001
   demo_receiver:
     image: webhook-delivery:latest
     container_name: webhook_demo_receiver
@@ -202,6 +240,8 @@ services:
       - DEMO_RECEIVER_ADMIN_TOKEN=${DEMO_RECEIVER_ADMIN_TOKEN:-}
       - DEMO_RECEIVER_ENDPOINT_SECRET=${DEMO_RECEIVER_ENDPOINT_SECRET:-}
       - DEMO_RECEIVER_DB_FILE=/tmp/demo_receiver.db
+    volumes:
+      - ./demo_receiver:/app/demo_receiver:ro
     command: uvicorn demo_receiver.app:app --host 0.0.0.0 --port 8001
 
   reverse_proxy:

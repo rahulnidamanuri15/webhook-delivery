@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "Reliable Webhook Delivery Platform"
+    PROJECT_NAME: str = "Hookflow"
     ENV: str = "development"
     DEBUG: bool = False
     PORT: int = 8080
@@ -102,9 +102,9 @@ class Settings(BaseSettings):
     SMTP_USERNAME: str = Field(default="", description="SMTP auth username (empty = no auth)")
     SMTP_PASSWORD: str = Field(default="", description="SMTP auth password")
     SMTP_FROM_EMAIL: str = Field(
-        default="noreply@relayflow.local", description="From address used for transactional emails"
+        default="noreply@hookflow.local", description="From address used for transactional emails"
     )
-    SMTP_FROM_NAME: str = Field(default="Relayflow", description="From display name for transactional emails")
+    SMTP_FROM_NAME: str = Field(default="Hookflow", description="From display name for transactional emails")
     SMTP_USE_TLS: bool = Field(
         default=True, description="Use STARTTLS on SMTP_PORT (False for SSL-on-connect on 465 or plain local relay)"
     )

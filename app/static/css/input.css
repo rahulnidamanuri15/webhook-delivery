@@ -54,7 +54,7 @@ input:disabled {
   cursor: not-allowed;
 }
 
-/* Relayflow helpers — pure visuals, no functional impact */
+/* Hookflow helpers — pure visuals, no functional impact */
 .relay-card {
   background: #ffffff;
   border: 1px solid #e5ebe6;
