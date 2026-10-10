@@ -144,6 +144,14 @@ jobs:
                 esac
               fi
               # A bare base-file render must NOT be prod-safe; otherwise the guard is moot.
+              # NOTE: compose.yaml interpolates ${POSTGRES_PASSWORD:?} /
+              # ${SECRET_KEY:?} / ${SIGNING_SECRET_ENCRYPTION_KEY:?} and CI has
+              # no .env file, so export dummies first. Otherwise `config` errors
+              # out (stderr is suppressed below) and the grep misreports
+              # "assumptions changed" instead of the real interpolation error.
+              export POSTGRES_PASSWORD=dummy_postgres_password_for_check
+              export SECRET_KEY=dummy_secret_key_for_enforcement_check_only_1234567890
+              export SIGNING_SECRET_ENCRYPTION_KEY=yFz8s0v81v3G-xG3hV48V7s9uY5pL0tM2wN4bQ6rE8A=
               if docker compose -f compose.yaml config 2>/dev/null | grep -q 'published: "5432"'; then
                 echo "Confirmed: bare compose.yaml exposes DB ports, so the overlay is load-bearing."
               else

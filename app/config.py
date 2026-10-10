@@ -30,8 +30,7 @@ class Settings(BaseSettings):
     )
 
     ALLOW_OPEN_REGISTRATION: bool = Field(
-       default=False, 
-       description="Allow anyone to register. MUST be False in production."
+        default=False, description="Allow anyone to register. MUST be False in production."
     )
 
     # Delivery Engine & Workers
