@@ -17,3 +17,5 @@ node_modules/
 *.pem
 deploy/tls/*.pem
 !deploy/tls/.gitkeep
+backups/*
+!backups/.gitkeep

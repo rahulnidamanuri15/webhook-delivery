@@ -23,3 +23,5 @@ webhook_delivery.egg-info/
 tests/
 benchmarks/
 docs/BENCHMARK_REPORT.md
+backups/*
+!backups/.gitkeep
