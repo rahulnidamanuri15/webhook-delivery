@@ -228,14 +228,25 @@ def test_api_key_name_bounds():
         db.close()
 
 
-def test_email_validation():
+def test_email_validation(monkeypatch):
+    from app.config import settings as _s
+
     client = TestClient(app)
     anon_csrf_id = "test_anon_csrf_id"
     mock_req = MagicMock()
     mock_req.cookies = {"wh_csrf_id": anon_csrf_id}
     csrf_tok, _ = get_csrf_token_for_request(mock_req)
 
-    # Register with invalid email
+    # Open registration is disabled by default: guard fires before validation.
+    res_closed = client.post(
+        "/auth/register",
+        data={"email": "not-an-email", "password": "Password123!", "csrf_token": csrf_tok},
+        cookies={"wh_csrf_id": anon_csrf_id},
+    )
+    assert res_closed.status_code == 403
+
+    # With open registration enabled, invalid email is rejected with 400.
+    monkeypatch.setattr(_s, "ALLOW_OPEN_REGISTRATION", True)
     res = client.post(
         "/auth/register",
         data={"email": "not-an-email", "password": "Password123!", "csrf_token": csrf_tok},
