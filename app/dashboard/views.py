@@ -315,6 +315,10 @@ def register_post(
 
     _reg_ip = get_client_ip(request)
     _reg_allowed, _reg_wait = check_registration_rate_limit(_reg_ip)
+
+    if not settings.ALLOW_OPEN_REGISTRATION:
+        raise HTTPException(status_code=403, detail="Open registration is disabled. Contact an administrator.")
+
     if not _reg_allowed:
         return templates.TemplateResponse(
             "auth/register.html",

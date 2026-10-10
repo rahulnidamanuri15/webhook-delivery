@@ -29,6 +29,11 @@ class Settings(BaseSettings):
         description="Comma-separated fallback Fernet keys for zero-downtime key rotation",
     )
 
+    ALLOW_OPEN_REGISTRATION: bool = Field(
+       default=False, 
+       description="Allow anyone to register. MUST be False in production."
+    )
+
     # Delivery Engine & Workers
     REDIS_URL: str = "redis://localhost:6379/0"
     USE_CELERY: bool = Field(default=False, description="Enqueue outbound webhook deliveries through Celery and Redis")

@@ -136,8 +136,10 @@ cp .env.example .env
 cp /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem deploy/tls/fullchain.pem
 cp /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem deploy/tls/privkey.pem
 
-# 3. Launch with the prod overlay
-docker compose -f compose.yaml -f compose.prod.yaml up --build -d
+# 3. Launch with the prod overlay (blessed entrypoints enforce it — never
+#    run bare `docker compose up` for production; CI fails such builds)
+make deploy-prod
+# equivalent: ./scripts/deploy_prod.sh up --build -d
 
 # 4. Verify
 docker compose -f compose.yaml -f compose.prod.yaml exec web alembic upgrade head

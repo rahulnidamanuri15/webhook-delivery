@@ -9,11 +9,14 @@
 # Requires all secrets (no dev defaults). app/config.py fail-fasts if
 # placeholders or weak values remain. Demo seed / demo_receiver are
 # excluded by default (profiles in base file).
+#
+# NOTE: `!reset` requires Docker Compose v2.24+. Plain `ports: []` does NOT
+# clear base-file ports (sequences merge) — `!reset []` does.
 name: webhook-delivery-prod
 
 services:
   postgres:
-    ports: []  # never expose DB publicly in prod; app network only
+    ports: !reset []  # never expose DB publicly in prod; app network only
     mem_limit: 1g
     cpus: 2.0
     logging:
@@ -25,7 +28,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production}
 
   redis:
-    ports: []
+    ports: !reset []
     mem_limit: 256m
     cpus: 0.5
     logging:
@@ -38,7 +41,7 @@ services:
 
   web:
     # Never expose :8080 directly in prod — traffic must go via reverse_proxy (:80/:443).
-    ports: []
+    ports: !reset []
     mem_limit: 512m
     cpus: 1.0
     logging:
@@ -145,3 +148,25 @@ services:
       - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./deploy/tls:/etc/nginx/tls:ro
       - certbot_var:/var/www/certbot:ro
+  
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - ./deploy/tls:/etc/letsencrypt
+      - certbot_var:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+  db_backup:
+    image: prodrigestivill/postgres-backup-local:16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-webhook_platform}
+      - SCHEDULE=@daily
+      - BACKUP_KEEP_DAYS=7
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy

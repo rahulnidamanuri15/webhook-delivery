@@ -159,6 +159,12 @@ services:
       redis:
         condition: service_healthy
     command: celery -A app.workers.celery_app.celery_app worker --loglevel=info -c ${CELERY_CONCURRENCY:-4}
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery_app inspect ping -d celery@$HOSTNAME | grep 'OK' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   celery_beat:
     image: webhook-delivery:latest
@@ -178,6 +184,11 @@ services:
       redis:
         condition: service_healthy
     command: celery -A app.workers.celery_app.celery_app beat --loglevel=info --pidfile=/tmp/celerybeat.pid
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'celery.*beat' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   demo_receiver:
     image: webhook-delivery:latest

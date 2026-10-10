@@ -5,6 +5,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Production Compose Enforcement
+* Added `Makefile` prod targets (`deploy-prod`, `up-prod`, `build-prod`, ...) that always pin `-f compose.yaml -f compose.prod.yaml`.
+* Added `scripts/deploy_prod.sh` wrapper: forces `ENV=production`, fail-fasts on missing prod secrets, refuses `-f/--file` overrides and demo/seed profiles, requires TLS certs for `up`.
+* Added `scripts/enforce_prod_compose.sh` + `enforce-prod-compose` CI job: fails builds that run `docker compose up/build` without the prod overlay (branch-gated on `main`/`master`), and asserts the rendered prod config publishes no DB/Redis/app ports.
+* Fixed `compose.prod.yaml` port closure: `ports: []` merges (no-op) — now `ports: !reset []` so DB/Redis/web are truly off the host in production (requires Docker Compose v2.24+).
+
 ## [1.0.0] - 2026-10-08
 
 ### Production Readiness & Security Hardening

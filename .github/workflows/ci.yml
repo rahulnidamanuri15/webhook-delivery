@@ -116,6 +116,46 @@ jobs:
           npm run build:css
           test -f app/static/css/dist.css
 
+  enforce-prod-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce production compose overlay (Makefile + wrapper + hardening)
+        run: bash scripts/enforce_prod_compose.sh
+
+      - name: Fail if production branch bypasses prod overlay
+        run: |
+          # Belt-and-braces: on production branches the overlay is mandatory.
+          # The script above already validates hardening + render safety; this step
+          # explicitly fails a production-branch build that sidesteps the overlay.
+          case "${GITHUB_REF_NAME:-}" in
+            main|master)
+              echo "Production branch detected (${GITHUB_REF_NAME}); verifying overlay is mandatory..."
+              grep -q "compose.prod.yaml" scripts/deploy_prod.sh || { echo "::error::deploy wrapper must reference compose.prod.yaml"; exit 1; }
+              grep -q "compose.prod.yaml" Makefile || { echo "::error::Makefile prod targets must reference compose.prod.yaml"; exit 1; }
+              if [ -n "${COMPOSE_FILE:-}" ]; then
+                case "${COMPOSE_FILE}" in
+                  *compose.prod.yaml*) echo "COMPOSE_FILE includes prod overlay: ${COMPOSE_FILE}" ;;
+                  *) echo "::error::COMPOSE_FILE on production branch must include compose.prod.yaml (got: ${COMPOSE_FILE})"; exit 1 ;;
+                esac
+              fi
+              # A bare base-file render must NOT be prod-safe; otherwise the guard is moot.
+              if docker compose -f compose.yaml config 2>/dev/null | grep -q 'published: "5432"'; then
+                echo "Confirmed: bare compose.yaml exposes DB ports, so the overlay is load-bearing."
+              else
+                echo "::error::bare compose.yaml no longer exposes DB ports; enforcement assumptions changed."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Non-production ref (${GITHUB_REF_NAME:-unknown}); overlay enforcement still validated by script above."
+              ;;
+          esac
+
   validate-prod:
     runs-on: ubuntu-latest
     steps:
