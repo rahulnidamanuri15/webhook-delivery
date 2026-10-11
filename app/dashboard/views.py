@@ -47,10 +47,13 @@ _DUMMY_LOGIN_HASH: str | None = None
 
 
 def is_cookie_secure() -> bool:
-    if settings.COOKIE_SECURE is not None:
-        return settings.COOKIE_SECURE
+    # Production always uses Secure cookies: the dashboard is served over
+    # HTTPS there, and Secure has no downside on TLS. COOKIE_SECURE may only
+    # relax this in non-production (local plain-HTTP dev).
     if str(settings.ENV or "").strip().lower() == "production":
         return True
+    if settings.COOKIE_SECURE is not None:
+        return settings.COOKIE_SECURE
     return not settings.DEBUG
 
 
@@ -356,7 +359,7 @@ def register_post(
             "auth/register.html",
             {
                 "request": request,
-                "error": f"Too many registrations. Try again in {int(_reg_wait)+1}s.",
+                "error": f"Too many registrations. Try again in {int(_reg_wait) + 1}s.",
                 "current_user": None,
             },
             status_code=429,
@@ -476,8 +479,7 @@ def logout(request: Request, csrf_token: str | None = Form(None)):
 def _forgot_generic_success(request, email: str, resend: bool = False):
     """Generic success response to prevent email enumeration."""
     msg = (
-        "If an account exists for this email, a verification code has been sent. "
-        "Can't find it? Check your spam folder."
+        "If an account exists for this email, a verification code has been sent. Can't find it? Check your spam folder."
     )
     if resend:
         msg = (
@@ -2007,10 +2009,7 @@ def send_test_event_post(
             )
             _status = 503
         else:
-            _msg = (
-                f"Event ingestion failed ({type(e).__name__}). "
-                f"Please try again. (Reference: {_req_id})"
-            )
+            _msg = f"Event ingestion failed ({type(e).__name__}). Please try again. (Reference: {_req_id})"
             _status = 400
         return templates.TemplateResponse(
             "events/send_test.html",
@@ -2459,7 +2458,7 @@ def invite_team_member(
 
     _inv_allowed, _inv_wait = check_invite_rate_limit(org.id)
     if not _inv_allowed:
-        raise HTTPException(status_code=429, detail=f"Too many invites. Try again in {int(_inv_wait)+1}s.")
+        raise HTTPException(status_code=429, detail=f"Too many invites. Try again in {int(_inv_wait) + 1}s.")
     from app.models.invitation import OrganizationInvitation
     from app.services.security import hash_invitation_token
     import secrets as _sec_inv
@@ -2725,7 +2724,7 @@ def accept_invitation_post(
     client_ip = get_client_ip(request)
     allowed, wait_sec = check_invitation_accept_rate_limit(client_ip)
     if not allowed:
-        raise HTTPException(status_code=429, detail=f"Too many invitation attempts. Please wait {int(wait_sec)+1}s.")
+        raise HTTPException(status_code=429, detail=f"Too many invitation attempts. Please wait {int(wait_sec) + 1}s.")
 
     from app.models.invitation import OrganizationInvitation
     from app.services.security import hash_invitation_token_candidates

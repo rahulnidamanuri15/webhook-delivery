@@ -140,6 +140,13 @@ except Exception as _e:
         _e,
     )
     redis_bucket = None
+    if str(getattr(settings, "ENV", "") or "").strip().lower() == "production":
+        raise RuntimeError(
+            "Redis is required in production: rate limiting, Celery transport, and "
+            "session revocation cannot coordinate across replicas without it. "
+            "Set REDIS_URL (e.g. redis://:password@redis:6379/0) and ensure Redis "
+            f"is reachable. Original error: {_e}"
+        ) from _e
 
 
 def check_endpoint_rate_limit(endpoint_id: str, rate_per_second: int) -> tuple[bool, float]:

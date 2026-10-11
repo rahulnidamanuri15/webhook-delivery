@@ -10,8 +10,42 @@ Falls back to plain logging if JSON serialization fails.
 
 import json
 import logging
+import re
 import sys
 from datetime import UTC, datetime
+
+# Keys whose values must never reach a log aggregator (case-insensitive
+# substring match on the extra field name).
+_SENSITIVE_KEY_PATTERN = re.compile(
+    r"password|passwd|secret|token|api[-_ ]?key|authorization|cookie|set-cookie"
+    r"|otp|one[-_ ]?time|session|csrf|private[-_ ]?key|signing",
+    re.IGNORECASE,
+)
+
+# Token shapes that may be embedded in free-text messages/values.
+_SENSITIVE_VALUE_PATTERNS = (
+    re.compile(r"wh_live_[A-Za-z0-9]+"),
+    re.compile(r"whsec_[A-Za-z0-9]+"),
+    re.compile(r"Bearer\s+[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE),
+)
+
+_REDACTED = "***REDACTED***"
+
+
+def _scrub_text(text: str) -> str:
+    """Replaces embedded credential shapes with a placeholder."""
+    for _rx in _SENSITIVE_VALUE_PATTERNS:
+        text = _rx.sub(_REDACTED, text)
+    return text
+
+
+def _redact_value(key: str, value):
+    """Redacts a structured extra by field name, then scrubs string contents."""
+    if _SENSITIVE_KEY_PATTERN.search(key or ""):
+        return _REDACTED
+    if isinstance(value, str):
+        return _scrub_text(value)
+    return value
 
 
 class JsonFormatter(logging.Formatter):
@@ -20,7 +54,7 @@ class JsonFormatter(logging.Formatter):
             "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": _scrub_text(record.getMessage()),
         }
         # Include structured extras passed via logger.info(..., extra={...})
         for key, value in getattr(record, "__dict__", {}).items():
@@ -49,9 +83,9 @@ class JsonFormatter(logging.Formatter):
                 continue
             try:
                 json.dumps(value)
-                payload[key] = value
+                payload[key] = _redact_value(key, value)
             except Exception:
-                payload[key] = str(value)
+                payload[key] = _redact_value(key, str(value))
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False)
