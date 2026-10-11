@@ -594,9 +594,7 @@ def _record_attempt_and_update_state(
                         f"Delivery {delivery_id} duplicate attempt_number race resolved: SUCCESS already recorded."
                     )
                     return True
-                logger.warning(
-                    f"Delivery {delivery_id} attempt_number conflict (lease race); recovery outcome wins."
-                )
+                logger.warning(f"Delivery {delivery_id} attempt_number conflict (lease race); recovery outcome wins.")
                 return False
         except Exception:
             pass
