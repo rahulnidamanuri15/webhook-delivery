@@ -21,6 +21,14 @@ def deliver_webhook_task(delivery_id: str) -> bool:
             return execute_delivery(db, delivery_id)
     except Exception as e:
         logger.error(f"Task delivery failed for {delivery_id}: {e}", exc_info=True)
+        # Explicit rollback so the pooled connection is reusable after
+        # OperationalError in claim_delivery (close() would roll back anyway).
+        # Return False (acked): durability is owned by PG lease + recovery,
+        # not Celery retry, so failures stay visible via attempts/DLQ.
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return False
     finally:
         try:
@@ -72,6 +80,10 @@ def dispatch_due_deliveries_task(batch_size: int = 100) -> int:
             return enqueued
     except Exception as e:
         logger.error(f"Error in dispatch_due_deliveries_task: {e}", exc_info=True)
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return 0
     finally:
         db.close()

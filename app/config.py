@@ -128,10 +128,11 @@ class Settings(BaseSettings):
     )
 
     # Trusted proxies for X-Forwarded-For evaluation (comma-separated IPs/CIDRs).
-    # Docker compose: nginx and the app share a bridge network, so the default
-    # covers RFC1918 peers. Never set this to "*".
+    # Secure-by-default narrow ranges (prefixlen >= 16): broad /8 defaults let
+    # any VPC/bridge peer forge XFF (rate-limit bypass, audit poisoning).
+    # Override with your actual proxy/bridge CIDR.
     TRUSTED_PROXIES: str = Field(
-        default="127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+        default="127.0.0.1,::1,172.18.0.0/24,10.0.0.0/24",
         description="Comma-separated trusted reverse-proxy IPs/CIDRs allowed to set the client IP",
     )
     # Public origin used in invitation emails. Empty = derive from the request.

@@ -308,6 +308,14 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
             dlv.lease_expires_at = None
             db.commit()
             logger.info(f"Delivery {delivery_id} deferred: endpoint {endpoint.id} is temporarily disabled.")
+        else:
+            # Release the FOR UPDATE row lock / failed txn so the pooled
+            # connection is reusable (mirrors rate-limit path above).
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            logger.warning(f"Delivery {delivery_id} lease lost before disabled-endpoint defer; dropping stale update.")
         return False
 
     # 3. Decrypt endpoint signing secret
@@ -474,10 +482,19 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
         error_code = "CONNECT_ERROR"
         outcome = "RETRYABLE_ERROR"
         response_excerpt = f"Connection error: {str(e)[:250]}"
-    except Exception as e:
+    except (httpx.HTTPError, OSError, TimeoutError) as e:
+        # Known transport failures: retryable, attributed to receiver/network.
         error_code = "REQUEST_FAILED"
         outcome = "RETRYABLE_ERROR"
         response_excerpt = f"Network failure: {str(e)[:250]}"
+    except Exception as e:
+        # Programming/unexpected errors: still retryable (lease recovery owns
+        # durability) but labeled distinctly so bugs don't masquerade as
+        # receiver errors in dashboards/alerts.
+        logger.error(f"Delivery {delivery_id} unexpected execution error: {e}", exc_info=True)
+        error_code = "UNEXPECTED_ERROR"
+        outcome = "RETRYABLE_ERROR"
+        response_excerpt = f"Internal delivery error: {str(e)[:250]}"
 
     duration_ms = int((time.perf_counter() - start_time) * 1000)
     finished_at = utc_now()
@@ -555,7 +572,36 @@ def _record_attempt_and_update_state(
         delivery.status = "DEAD"
         delivery.completed_at = now
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as commit_exc:
+        # Lease-race duplicate send (at-least-once): recovery inserted a
+        # LEASE_EXPIRED attempt with the same (delivery_id, attempt_number)
+        # just as this worker committed SUCCESS. Prefer the SUCCESS outcome:
+        # if the delivery is already terminally resolved, keep it; otherwise
+        # let recovery's RETRY_SCHEDULED win and drop this stale update.
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        try:
+            from sqlalchemy.exc import IntegrityError as _IntegrityError
+
+            if isinstance(commit_exc, _IntegrityError) or "uq_delivery_attempt_number" in str(commit_exc):
+                fresh = db.query(Delivery).filter(Delivery.id == delivery_id).first()
+                if fresh is not None and fresh.status == "SUCCEEDED":
+                    logger.info(
+                        f"Delivery {delivery_id} duplicate attempt_number race resolved: SUCCESS already recorded."
+                    )
+                    return True
+                logger.warning(
+                    f"Delivery {delivery_id} attempt_number conflict (lease race); recovery outcome wins."
+                )
+                return False
+        except Exception:
+            pass
+        logger.error(f"Delivery {delivery_id} commit failed: {commit_exc}", exc_info=True)
+        return False
     return True
 
 

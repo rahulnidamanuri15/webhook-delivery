@@ -43,6 +43,31 @@ def generate_prometheus_metrics(db: Session) -> str:
     for outcome, count in outcome_counts:
         lines.append(f'webhook_delivery_attempts_total{{outcome="{outcome}"}} {count}')
 
+    # Attempts by error_code (bounded, additive): makes UNEXPECTED_ERROR /
+    # programming bugs visible without masquerading as receiver errors.
+    # Bounded to 20 series to avoid cardinality explosion.
+    try:
+        lines.extend(
+            [
+                "# HELP webhook_delivery_attempts_by_error Total delivery attempts by error_code",
+                "# TYPE webhook_delivery_attempts_by_error counter",
+            ]
+        )
+        import re as _re2
+
+        err_counts = (
+            db.query(DeliveryAttempt.error_code, func.count(DeliveryAttempt.id))
+            .group_by(DeliveryAttempt.error_code)
+            .order_by(func.count(DeliveryAttempt.id).desc())
+            .limit(20)
+            .all()
+        )
+        for err_code, count in err_counts:
+            safe_err = _re2.sub(r"[^A-Za-z0-9_]", "_", str(err_code or "none"))[:64]
+            lines.append(f'webhook_delivery_attempts_by_error{{error_code="{safe_err}"}} {count}')
+    except Exception:
+        pass
+
     # Latency summary
     lines.extend(
         [

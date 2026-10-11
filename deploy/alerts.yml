@@ -34,3 +34,20 @@ groups:
           severity: warning
         annotations:
           summary: "Backlog not draining for 15m — check celery_beat / worker / Redis"
+      - alert: WebhookUnexpectedErrors
+        expr: increase(webhook_delivery_attempts_by_error{error_code="UNEXPECTED_ERROR"}[15m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Internal delivery errors rising (>5 in 15m) — check worker logs, not receivers"
+      - alert: WebhookLeasesStuck
+        expr: webhook_deliveries_total{status="IN_FLIGHT"} > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many IN_FLIGHT >10m — check workers / recovery / Redis"
+      # TLS cert expiry is checked out-of-band (no cert metric in /metrics).
+      # Run scripts/check_cert_expiry.sh from cron and alert on non-zero exit:
+      #   0 3 * * * /app/scripts/check_cert_expiry.sh --warn-days 14 || alert

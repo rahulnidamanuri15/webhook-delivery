@@ -309,6 +309,8 @@ def metrics(request: "Request" = None, db=Depends(get_db)):
                         return True
             return False
 
+        # NOTE: reachable only when METRICS_API_KEY is empty (dev/test).
+        # Prod validator requires >=16 chars, so this branch never runs in prod.
         if _IS_PROD:
             return False
 

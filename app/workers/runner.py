@@ -70,13 +70,23 @@ def run_dispatcher_loop(poll_interval: float = 1.0):
         pass
 
     while not stop_requested:
-        with start_trace_span("dispatcher.loop_cycle"):
-            processed = dispatch_once()
-        _maybe_run_retention()
-        if processed == 0:
-            time.sleep(poll_interval)
-        else:
-            time.sleep(0.1)  # small pause before next batch if busy
+        try:
+            with start_trace_span("dispatcher.loop_cycle"):
+                processed = dispatch_once()
+            _maybe_run_retention()
+            if processed == 0:
+                time.sleep(poll_interval)
+            else:
+                time.sleep(0.1)  # small pause before next batch if busy
+        except Exception as e:
+            # Never let a tracing/observability throw kill the loop silently
+            # (healthcheck pgrep would still pass while no work is done).
+            logger.error(f"Dispatcher loop cycle failed, continuing: {e}", exc_info=True)
+            try:
+                time.sleep(poll_interval)
+            except Exception:
+                pass
+            continue
 
     logger.info("Webhook dispatcher stopped cleanly.")
 

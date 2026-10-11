@@ -14,8 +14,10 @@ if settings.DATABASE_URL.startswith("sqlite"):
 else:
     # PostgreSQL connection pool: sized for dispatcher threads (each delivery
     # gets its own SessionLocal) + web + worker concurrency.
-    # 10 + 10 overflow = 20 per process; 4 processes ≈ 80 < max_connections=100.
-    # DISPATCH_MAX_WORKERS defaults to 10, matching pool capacity.
+    # 10 + 10 overflow = 20 per process; with CELERY_CONCURRENCY=2 (prod
+    # default) total ≈ web(20) + worker(2 procs × 20) + beat(20) ≈ 80
+    # < max_connections=100. Do NOT raise concurrency without raising PG
+    # max_connections or lowering pool_size.
     engine_kwargs.update(
         {
             "pool_size": 10,
@@ -70,5 +72,13 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        # Don't leak a failed-transaction session into follow-up queries
+        # on the same request; close() would roll back anyway.
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         db.close()

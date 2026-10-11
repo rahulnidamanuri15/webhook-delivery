@@ -5,7 +5,7 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.9-alpine
     container_name: webhook_postgres
     restart: unless-stopped
     environment:
@@ -23,7 +23,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.2-alpine
     container_name: webhook_redis
     restart: unless-stopped
     command: sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes --maxmemory 200mb --maxmemory-policy volatile-lru; else exec redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy volatile-lru; fi'
@@ -84,8 +84,8 @@ services:
       - HTTP_CONNECT_TIMEOUT_SECONDS=${HTTP_CONNECT_TIMEOUT_SECONDS:-3.0}
       - DISPATCH_MAX_WORKERS=${DISPATCH_MAX_WORKERS:-10}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
-      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-127.0.0.1,::1,172.18.0.0/24,10.0.0.0/24}
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,172.18.0.0/24,10.0.0.0/24}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -139,7 +139,7 @@ services:
     profiles: ["standalone-dispatcher"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'app.workers.runner' >/dev/null || python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/live', timeout=5)\" >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "pgrep -f 'app.workers.runner' >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -194,7 +194,7 @@ services:
         condition: service_healthy
       migrations:
         condition: service_completed_successfully
-    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info -c ${CELERY_CONCURRENCY:-4}
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info -c ${CELERY_CONCURRENCY:-2}
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery_app inspect ping -d celery@$$HOSTNAME | grep 'OK' || exit 1"]
       interval: 30s
@@ -206,6 +206,9 @@ services:
     image: webhook-delivery:latest
     container_name: webhook_beat
     restart: unless-stopped
+    # Single replica only: never --scale beat>1 (double-dispatch; claim/dedup only mitigates).
+    deploy:
+      replicas: 1
     environment:
       - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-webhook_platform}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
@@ -252,7 +255,7 @@ services:
     command: uvicorn demo_receiver.app:app --host 0.0.0.0 --port 8001
 
   reverse_proxy:
-    image: nginx:1.27-alpine
+    image: nginx:1.27.5-alpine
     container_name: webhook_proxy
     restart: unless-stopped
     ports:

@@ -179,6 +179,9 @@ services:
   celery_beat:
     mem_limit: 256m
     cpus: 0.5
+    # Single replica only: never --scale beat>1 (double-dispatch amplification).
+    deploy:
+      replicas: 1
     logging:
       driver: json-file
       options:
@@ -305,7 +308,7 @@ services:
   # $RENEWED_LINEAGE is expanded by certbot at hook time, never by compose
   # or the outer shell).
   certbot:
-    image: certbot/certbot:latest
+    image: certbot/certbot:v2.11.0
     restart: unless-stopped
     mem_limit: 256m
     cpus: 0.5

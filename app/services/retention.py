@@ -159,16 +159,32 @@ def purge_expired_data(
 
     db.commit()
 
-    logger.info(
-        "retention_purge",
-        extra={
-            "purged_attempts": purged_attempts,
-            "purged_deliveries": purged_deliveries,
-            "purged_events": purged_events,
-            "purged_audit_logs": purged_audit,
-            "cutoff": cutoff.isoformat(),
-        },
-    )
+    if purged_deliveries > 0:
+        # DLQ safety: this includes un-replayed DEAD older than retention_days.
+        # Operators must ensure a DLQ review SLO / export before enabling purge
+        # in prod (DATA_RETENTION_DAYS=0 disables). Legal hold already excluded.
+        logger.warning(
+            "retention_purge_deleted_terminal",
+            extra={
+                "purged_attempts": purged_attempts,
+                "purged_deliveries": purged_deliveries,
+                "purged_events": purged_events,
+                "purged_audit_logs": purged_audit,
+                "cutoff": cutoff.isoformat(),
+                "note": "includes un-replayed DEAD older than retention; verify DLQ SLO/legal hold",
+            },
+        )
+    else:
+        logger.info(
+            "retention_purge",
+            extra={
+                "purged_attempts": purged_attempts,
+                "purged_deliveries": purged_deliveries,
+                "purged_events": purged_events,
+                "purged_audit_logs": purged_audit,
+                "cutoff": cutoff.isoformat(),
+            },
+        )
     return {
         "purged_attempts": purged_attempts,
         "purged_deliveries": purged_deliveries,

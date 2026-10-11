@@ -20,7 +20,9 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_reject_on_worker_lost=True,
     broker_connection_retry_on_startup=True,
-    broker_connection_max_retries=10,
+    # Unbounded reconnect for prod: a transient Redis restart must not kill
+    # workers (previous max_retries=10 exited the process). None = retry forever.
+    broker_connection_max_retries=None,
     broker_transport_options={
         "visibility_timeout": max(int(settings.LEASE_DURATION_SECONDS * 2), 120),
     },

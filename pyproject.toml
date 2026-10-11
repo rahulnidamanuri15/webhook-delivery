@@ -34,11 +34,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0", "ruff", "black"]
+dev = ["pytest>=8.0.0", "pytest-timeout>=2.0.0", "ruff", "black"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# Fail-closed on hanging e2e/integration (Windows CI without live PG/Redis):
+# per-test timeout keeps full suite from stalling deploys.
+timeout = 60
+timeout_method = "thread"
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::starlette.testclient.StarletteDeprecationWarning"

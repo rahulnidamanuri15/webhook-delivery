@@ -257,8 +257,10 @@ def dispatch_batch(batch_size: int = 50, max_workers: int | None = None) -> int:
             try:
                 _execute_single(dlv_id)
                 count += 1
-            except Exception:
-                pass
+            except Exception as e:
+                # _execute_single already logs; keep outer visibility so
+                # counting errors don't disappear silently.
+                logger.warning(f"Single-worker dispatch failed for {dlv_id}: {e}", exc_info=True)
         return count
     processed_count = 0
     with start_trace_span("dispatch.execute_batch", {"batch.size": len(due_ids), "workers": workers}):

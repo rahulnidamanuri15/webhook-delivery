@@ -27,6 +27,25 @@ mkdir -p "${BACKUP_DIR}"
 echo "[$(date -u)] Starting database backup to ${BACKUP_FILE}..."
 pg_dump "${LIBPQ_URL}" | gzip -c > "${BACKUP_FILE}"
 
+# Restrict perms: dumps contain webhook payloads/PII + Fernet ciphertext.
+chmod 600 "${BACKUP_FILE}" || true
+
+# Optional encryption (recommended for prod): if AGE_RECIPIENT is set and
+# `age` is installed, produce an additional .age file and remove plaintext.
+# Offsite copy is still required (same-disk bind is SPOF).
+if [[ -n "${AGE_RECIPIENT:-}" ]]; then
+  if command -v age >/dev/null 2>&1; then
+    age -r "${AGE_RECIPIENT}" -o "${BACKUP_FILE}.age" "${BACKUP_FILE}" \
+      && rm -f "${BACKUP_FILE}" \
+      && BACKUP_FILE="${BACKUP_FILE}.age" \
+      && echo "[$(date -u)] Backup encrypted with age (recipient ${AGE_RECIPIENT:0:12}...)."
+  else
+    echo "[$(date -u)] WARNING: AGE_RECIPIENT set but 'age' not installed; leaving unencrypted." >&2
+  fi
+else
+  echo "[$(date -u)] NOTE: unencrypted backup — set AGE_RECIPIENT and copy offsite (see docs/BACKUP_AND_DISASTER_RECOVERY.md)." >&2
+fi
+
 # Generate cryptographic checksum for verification
 sha256sum "${BACKUP_FILE}" > "${CHECKSUM_FILE}"
 echo "[$(date -u)] Backup created and checksummed successfully."
@@ -47,4 +66,6 @@ fi
 # Prune old backups older than retention policy
 find "${BACKUP_DIR}" -name "webhook_db_*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete
 find "${BACKUP_DIR}" -name "webhook_db_*.sql.gz.sha256" -mtime +"${RETENTION_DAYS}" -delete
+find "${BACKUP_DIR}" -name "webhook_db_*.sql.gz.age" -mtime +"${RETENTION_DAYS}" -delete
+chmod 600 "${BACKUP_DIR}"/webhook_db_* 2>/dev/null || true
 echo "[$(date -u)] Retention cleanup completed (> ${RETENTION_DAYS} days removed)."
