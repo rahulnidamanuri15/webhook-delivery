@@ -54,7 +54,10 @@ def _resolve_password(args) -> str:
     if env_pw:
         return env_pw
     if args.password:
-        print("WARNING: --password is visible in ps/history; prefer --password-file or BOOTSTRAP_PASSWORD.", file=sys.stderr)
+        print(
+            "WARNING: --password is visible in ps/history; prefer --password-file or BOOTSTRAP_PASSWORD.",
+            file=sys.stderr,
+        )
         return args.password
     try:
         return _getpass.getpass("Owner password: ").strip()

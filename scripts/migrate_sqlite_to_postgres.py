@@ -160,7 +160,7 @@ def migrate(sqlite_path: str, pg_url: str, clean: bool = False, dry_run: bool = 
             placeholders = ", ".join(["%s"] * len(col_names))
 
             # Conflict handling: ON CONFLICT DO NOTHING if table has a primary key
-            insert_sql = f'INSERT INTO "{table}" ({cols_clause}) VALUES ({placeholders}) ' f"ON CONFLICT DO NOTHING"
+            insert_sql = f'INSERT INTO "{table}" ({cols_clause}) VALUES ({placeholders}) ON CONFLICT DO NOTHING'
 
             # Coerce rows
             batch_params = []

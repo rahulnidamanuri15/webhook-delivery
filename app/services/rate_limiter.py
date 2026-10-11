@@ -128,6 +128,7 @@ memory_bucket = MemoryTokenBucket()
 redis_bucket: RedisTokenBucket | None = None
 redis_unavailable_logged = False
 
+
 def _is_prod_env() -> bool:
     try:
         from app.config import is_production_env as _is_prod

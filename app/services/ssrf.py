@@ -51,7 +51,7 @@ def is_domain_allowed(hostname: str) -> tuple[bool, str | None]:
     for allowed in allowlist:
         if host == allowed or host.endswith("." + allowed):
             return True, None
-    return False, (f"Domain '{hostname}' is not in the configured receiver allowlist " f"({', '.join(allowlist)}).")
+    return False, (f"Domain '{hostname}' is not in the configured receiver allowlist ({', '.join(allowlist)}).")
 
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "demo_receiver", "webhook_demo_receiver", "host.docker.internal")

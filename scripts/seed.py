@@ -30,8 +30,7 @@ def seed():
         _prod = os.getenv("ENV", "development").strip().lower() in ("production", "prod", "live", "staging")
     if _prod:
         print(
-            "ERROR: refusing to seed demo credentials with ENV=production. "
-            "Run only in development (ENV=development)."
+            "ERROR: refusing to seed demo credentials with ENV=production. Run only in development (ENV=development)."
         )
         sys.exit(1)
     db = SessionLocal()

@@ -225,7 +225,7 @@ def validate_production_settings(s: Settings) -> None:
     _redis = str(s.REDIS_URL or "").strip()
     if _redis.startswith(("redis://", "rediss://")) and "@" not in _redis:
         raise RuntimeError(
-            "REDIS_URL must include authentication credentials " "(e.g., redis://:password@host:port/db) in production."
+            "REDIS_URL must include authentication credentials (e.g., redis://:password@host:port/db) in production."
         )
     if not (s.SMTP_HOST or "").strip() or not (s.SMTP_FROM_EMAIL or "").strip() or not (s.SMTP_PASSWORD or "").strip():
         raise RuntimeError(
@@ -234,17 +234,13 @@ def validate_production_settings(s: Settings) -> None:
         )
     if (s.TRUSTED_PROXIES or "").strip() in ("", "*"):
         raise RuntimeError("TRUSTED_PROXIES must list explicit proxy IPs or CIDRs in production. '*' is not allowed.")
-    if (
-        s.SECRET_KEY in _INSECURE_SECRET_DEFAULTS or len(s.SECRET_KEY) < 32 or _contains_placeholder(s.SECRET_KEY)
-    ):
+    if s.SECRET_KEY in _INSECURE_SECRET_DEFAULTS or len(s.SECRET_KEY) < 32 or _contains_placeholder(s.SECRET_KEY):
         raise RuntimeError(
             "SECRET_KEY must be set to a strong random value (>=32 chars) in production. "
             'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
         )
     primary_fernet_key = (s.SIGNING_SECRET_ENCRYPTION_KEY or "").split(",")[0].strip()
-    if primary_fernet_key in _INSECURE_FERNET_DEFAULTS or _contains_placeholder(
-        s.SIGNING_SECRET_ENCRYPTION_KEY
-    ):
+    if primary_fernet_key in _INSECURE_FERNET_DEFAULTS or _contains_placeholder(s.SIGNING_SECRET_ENCRYPTION_KEY):
         raise RuntimeError(
             "SIGNING_SECRET_ENCRYPTION_KEY uses the public dev default, a committed repository key, "
             "or an un-generated CHANGE_ME placeholder. "
