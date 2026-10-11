@@ -123,6 +123,7 @@ def test_production_fails_on_demo_retry_policy():
         API_KEY_PEPPER="pepper_is_long_enough",
         METRICS_API_KEY="metrics_key_is_long_enough",
         ALLOW_LOCAL_RECEIVERS=False,
+        ALLOW_OPEN_REGISTRATION=False,
         ALLOWED_RECEIVER_DOMAINS="example.com",
         USE_DEMO_RETRY_POLICY=True,
         REDIS_URL="redis://:secret@redis:6379/0",
@@ -131,6 +132,7 @@ def test_production_fails_on_demo_retry_policy():
         SMTP_PASSWORD="smtp-secret",
         SMTP_FROM_EMAIL="noreply@example.com",
         PUBLIC_BASE_URL="https://hooks.example.com",
+        TRUSTED_PROXIES="127.0.0.1,::1,172.18.0.0/24",
     )
     with pytest.raises(RuntimeError, match="USE_DEMO_RETRY_POLICY must be False in production"):
         validate_production_settings(s)

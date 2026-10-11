@@ -52,3 +52,20 @@ celery_app.conf.update(
 
 # Auto-import tasks to register them with the Celery app
 import app.workers.tasks  # noqa: F401
+
+# Prefork fork-safety: the SQLAlchemy engine is created at import time
+# (app/db/session.py). After fork, child processes must not share the parent's
+# pooled psycopg sockets. Dispose the pool in each worker child.
+try:
+    from celery.signals import worker_process_init as _wpi
+
+    @_wpi.connect
+    def _dispose_engine_on_fork(**kwargs):  # pragma: no cover - worker runtime only
+        try:
+            from app.db.session import engine as _eng
+
+            _eng.dispose()
+        except Exception:
+            pass
+except Exception:
+    pass

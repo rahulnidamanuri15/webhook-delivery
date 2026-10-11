@@ -128,6 +128,15 @@ memory_bucket = MemoryTokenBucket()
 redis_bucket: RedisTokenBucket | None = None
 redis_unavailable_logged = False
 
+def _is_prod_env() -> bool:
+    try:
+        from app.config import is_production_env as _is_prod
+
+        return bool(_is_prod(getattr(settings, "ENV", "")))
+    except Exception:
+        return str(getattr(settings, "ENV", "") or "").strip().lower() in ("production", "prod", "live", "staging")
+
+
 try:
     r = redis.from_url(settings.REDIS_URL, socket_connect_timeout=0.2)
     r.ping()
@@ -140,13 +149,32 @@ except Exception as _e:
         _e,
     )
     redis_bucket = None
-    if str(getattr(settings, "ENV", "") or "").strip().lower() == "production":
+    if _is_prod_env():
         raise RuntimeError(
             "Redis is required in production: rate limiting, Celery transport, and "
             "session revocation cannot coordinate across replicas without it. "
             "Set REDIS_URL (e.g. redis://:password@redis:6379/0) and ensure Redis "
             f"is reachable. Original error: {_e}"
         ) from _e
+
+
+def _redis_runtime_failed(exc: Exception) -> tuple[bool, float] | None:
+    """Fail-closed in prod on Redis runtime errors, else None (caller falls back).
+
+    Returns (False, wait) when production must not silently degrade to
+    per-process limiting; None means fall back to memory (dev/test).
+    """
+    try:
+        import logging as _logging
+
+        _logging.getLogger("webhook.rate_limiter").warning("Redis rate-limit error, fallback decision: %s", exc)
+    except Exception:
+        pass
+    if _is_prod_env():
+        # Fail closed: deny with short wait + let nginx limit_req be outer layer.
+        # Alert on `redis_bucket is None` / this warning in prod logs.
+        return False, 5.0
+    return None
 
 
 def check_endpoint_rate_limit(endpoint_id: str, rate_per_second: int) -> tuple[bool, float]:
@@ -158,8 +186,10 @@ def check_endpoint_rate_limit(endpoint_id: str, rate_per_second: int) -> tuple[b
     if redis_bucket:
         try:
             return redis_bucket.acquire(f"endpoint:{endpoint_id}", rate)
-        except Exception:
-            pass
+        except Exception as e:
+            denied = _redis_runtime_failed(e)
+            if denied is not None:
+                return denied
     return memory_bucket.acquire(f"endpoint:{endpoint_id}", rate)
 
 
@@ -171,18 +201,22 @@ def check_ingestion_rate_limit(project_id: str, max_per_second: float = 30.0) ->
     if redis_bucket:
         try:
             return redis_bucket.acquire(f"ingest:{project_id}", max_per_second)
-        except Exception:
-            pass
+        except Exception as e:
+            denied = _redis_runtime_failed(e)
+            if denied is not None:
+                return denied
     return memory_bucket.acquire(f"ingest:{project_id}", max_per_second)
 
 
 def _acquire_both(key: str, rate_per_sec: float, capacity: float) -> tuple[bool, float]:
-    """Try Redis first, fall back to in-memory. Single bucket helper."""
+    """Try Redis first; fail-closed in prod, fall back to in-memory in dev/test."""
     if redis_bucket:
         try:
             return redis_bucket.acquire(key, rate_per_sec, capacity)
-        except Exception:
-            pass
+        except Exception as e:
+            denied = _redis_runtime_failed(e)
+            if denied is not None:
+                return denied
     return memory_bucket.acquire(key, rate_per_sec, capacity)
 
 

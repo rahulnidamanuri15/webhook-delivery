@@ -109,14 +109,18 @@ services:
       # require HTTPS, so plain-HTTP registration/login cannot work). Create
       # the first owner with scripts/bootstrap_admin.py, then sign in over
       # HTTPS. Briefly opening registration is only meaningful behind TLS.
-      - ALLOW_OPEN_REGISTRATION=${ALLOW_OPEN_REGISTRATION:-False}
+      # Hardcoded False: even ALLOW_OPEN_REGISTRATION=True in .env cannot open
+      # prod (app/config.py also fail-fasts if True).
+      - ALLOW_OPEN_REGISTRATION=False
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:?ALLOWED_RECEIVER_DOMAINS is required in production}
       - USE_CELERY=True
       - ENABLE_INPROCESS_DISPATCHER=False
       - USE_DEMO_RETRY_POLICY=False
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
-      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      # Narrow defaults (prefixlen >= 16) so app/config.py broad-/8 guard passes.
+      # Override with your actual proxy/bridge CIDR, e.g. TRUSTED_PROXIES=127.0.0.1,::1,172.18.0.0/24
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-127.0.0.1,::1,172.18.0.0/24,10.0.0.0/24}
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,172.18.0.0/24,10.0.0.0/24}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required in production, e.g. https://hooks.example.com}
       - SMTP_HOST=${SMTP_HOST:?SMTP_HOST is required in production}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -278,7 +282,9 @@ services:
     command: >
       sh -c "(while true; do sleep 12h; nginx -s reload 2>/dev/null || true; done &) && nginx -g 'daemon off;'"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      # Proxy liveness + backend reachability: static /healthz proves nginx is up,
+      # http://web:8080/ready proves the app behind it is ready (migrations + DB).
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/healthz >/dev/null || exit 1; wget -q -O- http://web:8080/ready >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -335,9 +341,9 @@ services:
         max-size: "10m"
         max-file: "5"
     healthcheck:
-      # Dump presence probe (freshness alerting belongs in Prometheus; this
-      # only ensures the backup sidecar is alive and has written once).
-      test: ["CMD-SHELL", "ls /backups/*.gz >/dev/null 2>&1 || exit 1"]
+      # Presence + freshness: stale dumps (>48h) are unhealthy. Offsite encrypted
+      # copy is still required (same-disk bind is single-point-of-failure).
+      test: ["CMD-SHELL", "ls /backups/*.gz >/dev/null 2>&1 || exit 1; find /backups -maxdepth 1 -name '*.gz' -mtime -2 | grep -q . || exit 1"]
       interval: 300s
       timeout: 10s
       retries: 3
@@ -348,7 +354,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production}
       - POSTGRES_DB=${POSTGRES_DB:-webhook_platform}
       - SCHEDULE=@daily
-      - BACKUP_KEEP_DAYS=7
+      - BACKUP_KEEP_DAYS=14
     volumes:
       - ./backups:/backups
     depends_on:

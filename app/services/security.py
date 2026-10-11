@@ -171,9 +171,21 @@ def hash_invitation_token(raw_token: str) -> str:
 
 
 def hash_invitation_token_candidates(raw_token: str) -> list[str]:
-    """Returns candidate token representations (hashed first, legacy raw fallback)."""
-    clean = raw_token.strip()
-    return [hash_invitation_token(clean), clean]
+    """Returns hash-only candidate for lookup.
+
+    Raw-token fallback was removed: storing raw tokens means a DB dump equals
+    takeover. Legacy raw rows (created via model default before hashing) must be
+    backfilled to hashes via scripts/backfill_invitation_hashes.py; until then
+    those rows are intentionally not matchable.
+    """
+    clean = (raw_token or "").strip()
+    if not clean:
+        return []
+    # If caller already passes a 64-char hex digest, accept it directly so
+    # internal callers can query by stored value without double-hashing.
+    if len(clean) == 64 and all(c in "0123456789abcdefABCDEF" for c in clean):
+        return [clean.lower()]
+    return [hash_invitation_token(clean)]
 
 
 # --- Sessions & CSRF ---
@@ -190,6 +202,16 @@ _denied_session_hashes: dict[str, float] = {}
 _redis_denylist = None
 
 
+def _is_prod_env() -> bool:
+    try:
+        from app.config import is_production_env as _is_prod
+        from app.config import settings as _s
+
+        return bool(_is_prod(getattr(_s, "ENV", "")))
+    except Exception:
+        return False
+
+
 def _get_redis_client():
     global _redis_denylist
     if _redis_denylist is not None:
@@ -203,7 +225,15 @@ def _get_redis_client():
         _r.ping()
         _redis_denylist = _r
         return _redis_denylist
-    except Exception:
+    except Exception as e:
+        if _is_prod_env():
+            import logging as _logging
+
+            _logging.getLogger("webhook.security").error(
+                "Redis unavailable for session denylist in production (revocation is in-memory only "
+                "on this replica until Redis recovers): %s",
+                e,
+            )
         return None
 
 

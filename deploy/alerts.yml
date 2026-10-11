@@ -23,3 +23,14 @@ groups:
           severity: warning
         annotations:
           summary: "Transactional email failures rising"
+      # Backup freshness cannot be scraped from /metrics (db_backup is a sidecar).
+      # Monitor via compose healthcheck (unhealthy after 48h without dump) plus
+      # an external cron that checks ./backups age and offsite copy. Example:
+      #   find ./backups -maxdepth 1 -name '*.gz' -mtime -1 | grep -q . || alert
+      - alert: WebhookDispatchStalled
+        expr: webhook_backlog_total > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backlog not draining for 15m — check celery_beat / worker / Redis"

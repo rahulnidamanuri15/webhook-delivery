@@ -20,6 +20,21 @@ from app.models import Delivery, DeliveryAttempt, Event, utc_now
 logger = logging.getLogger("webhook.retention")
 
 
+def get_legal_hold_ids(raw: str | set[str] | list[str] | None) -> set[str] | None:
+    """Parses LEGAL_HOLD_PROJECT_IDS from settings or env into a set.
+
+    Centralizes parsing so tasks.py / runner.py honor settings.LEGAL_HOLD_PROJECT_IDS
+    (including *_FILE secrets) instead of reading os.getenv directly.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (set, list, tuple)):
+        hold = {str(p).strip() for p in raw if str(p).strip()}
+        return hold or None
+    hold = {p.strip() for p in str(raw or "").split(",") if p.strip()}
+    return hold or None
+
+
 def purge_expired_data(
     db: Session,
     retention_days: int | None = None,
@@ -54,13 +69,24 @@ def purge_expired_data(
 
     # 1. Batched delete: attempts then deliveries for old terminal deliveries.
     # Uses keyset batches (no unbounded IN list, short transactions).
+    # Uses completed_at (terminal time); legacy rows with NULL completed_at
+    # fall back to created_at so they are still purged exactly once.
+    from sqlalchemy import and_ as _and
+    from sqlalchemy import or_ as _or
+
     while True:
         query = db.query(Delivery.id)
         if hold_set:
             query = query.join(Event, Delivery.event_id == Event.id).filter(Event.project_id.notin_(hold_set))
         batch_ids = [
             r[0]
-            for r in query.filter(Delivery.status.in_(["SUCCEEDED", "DEAD"]), Delivery.created_at < cutoff)
+            for r in query.filter(
+                Delivery.status.in_(["SUCCEEDED", "DEAD"]),
+                _or(
+                    Delivery.completed_at < cutoff,
+                    _and(Delivery.completed_at.is_(None), Delivery.created_at < cutoff),
+                ),
+            )
             .limit(batch_size)
             .all()
         ]
@@ -96,15 +122,28 @@ def purge_expired_data(
             break
 
     # 3. Trim old audit logs (separate longer retention) in batches.
+    # Legal hold applies here too: audit rows for orgs containing held
+    # projects are excluded. AuditLog is org-scoped, hold_set is project-scoped,
+    # so resolve held org ids first.
     try:
         from app.models.audit_log import AuditLog
 
+        hold_org_ids: set[str] = set()
+        if hold_set:
+            try:
+                from app.models import Project as _Project
+
+                rows = db.query(_Project.organization_id).filter(_Project.id.in_(list(hold_set))).all()
+                hold_org_ids = {r[0] for r in rows if r[0]}
+            except Exception:
+                hold_org_ids = set()
+
         if audit_cutoff is not None:
             while True:
-                audit_ids = [
-                    r[0]
-                    for r in db.query(AuditLog.id).filter(AuditLog.created_at < audit_cutoff).limit(batch_size).all()
-                ]
+                _aq = db.query(AuditLog.id).filter(AuditLog.created_at < audit_cutoff)
+                if hold_org_ids:
+                    _aq = _aq.filter(AuditLog.organization_id.notin_(hold_org_ids))
+                audit_ids = [r[0] for r in _aq.limit(batch_size).all()]
                 if not audit_ids:
                     break
                 purged_audit += db.query(AuditLog).filter(AuditLog.id.in_(audit_ids)).delete(synchronize_session=False)
@@ -112,6 +151,10 @@ def purge_expired_data(
                 if len(audit_ids) < batch_size:
                     break
     except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
         purged_audit = 0
 
     db.commit()

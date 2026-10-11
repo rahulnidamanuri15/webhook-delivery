@@ -4,6 +4,8 @@ __pycache__/
 *.pyo
 *.pyd
 .env
+.env.*
+!.env.example
 .pytest_cache/
 .ruff_cache/
 *.db
@@ -15,7 +17,12 @@ node_modules/
 *.egg-info/
 *.bak
 *.pem
+*.key
 deploy/tls/*.pem
+deploy/tls/*.key
+deploy/tls/live/
+deploy/tls/archive/
+deploy/tls/renewal/
 !deploy/tls/.gitkeep
 backups/*
 !backups/.gitkeep

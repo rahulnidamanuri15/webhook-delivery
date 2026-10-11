@@ -64,9 +64,11 @@ def _reserve_dispatch_ids(ids: list[str]) -> list[str]:
             # Reservation TTL matches Celery visibility timeout so a queued-but-
             # slow task cannot expire its reservation and be re-enqueued while
             # the original is still waiting (queue amplification).
-            ttl = max(int(settings.LEASE_DURATION_SECONDS * 2), 60)
+            # Must equal broker_transport_options.visibility_timeout
+            # = max(LEASE*2, 120) in celery_app.py.
+            ttl = max(int(settings.LEASE_DURATION_SECONDS * 2), 120)
         except Exception:
-            ttl = 60
+            ttl = 120
         pipe = client.pipeline(transaction=False)
         for did in ids:
             pipe.set(f"{_DISPATCH_RESERVE_PREFIX}{did}", "1", ex=ttl, nx=True)
@@ -77,7 +79,12 @@ def _reserve_dispatch_ids(ids: list[str]) -> list[str]:
 
 
 def _release_dispatch_ids(ids: list[str]) -> None:
-    """Clears reservations for IDs that failed to enqueue (prevents 30s blackout)."""
+    """Clears reservations for IDs that failed to enqueue or finished execution.
+
+    Dispatcher reserves on enqueue; the Celery worker releases on completion
+    (see tasks.deliver_webhook_task). Without release, RETRY_SCHEDULED rows
+    with next_attempt in 10s stay reserved for the full TTL and retries stall.
+    """
     if not ids:
         return
     try:

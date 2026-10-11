@@ -2484,7 +2484,13 @@ def invite_team_member(
         # Fail closed in production: deriving links from Host: header allows
         # Host-header poisoning (attacker Host -> emailed credential link).
         # PUBLIC_BASE_URL is required in prod compose + config validator.
-        if str(settings.ENV or "").strip().lower() == "production":
+        try:
+            from app.config import is_production_env as _is_prod_env
+
+            _is_prod = bool(_is_prod_env(getattr(settings, "ENV", "")))
+        except Exception:
+            _is_prod = False
+        if _is_prod:
             raise HTTPException(
                 status_code=500,
                 detail="PUBLIC_BASE_URL is not configured. Set PUBLIC_BASE_URL=https://hooks.example.com.",

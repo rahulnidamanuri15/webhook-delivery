@@ -199,6 +199,16 @@ _INSECURE_FERNET_DEFAULTS = {
     "d2hfc2VjcmV0X2Zlcm5ldF9rZXlfMTIzNDU2Nzg5MDEyMzQ=",
 }
 _INSECURE_DB_SUBSTRINGS = ("postgrespassword", "postgres:postgres@")
+# Any value copied from .env.example without generation must fail closed,
+# even when it happens to satisfy length checks.
+_PLACEHOLDER_SUBSTRINGS = ("change_me", "changeme", "replace_me", "example.com")
+
+
+def _contains_placeholder(value: str | None) -> bool:
+    if not value:
+        return False
+    lowered = str(value).strip().lower()
+    return any(marker in lowered for marker in _PLACEHOLDER_SUBSTRINGS)
 
 
 def is_production_env(env_value: str | None) -> bool:
@@ -224,23 +234,32 @@ def validate_production_settings(s: Settings) -> None:
         )
     if (s.TRUSTED_PROXIES or "").strip() in ("", "*"):
         raise RuntimeError("TRUSTED_PROXIES must list explicit proxy IPs or CIDRs in production. '*' is not allowed.")
-    if s.SECRET_KEY in _INSECURE_SECRET_DEFAULTS or len(s.SECRET_KEY) < 32:
+    if (
+        s.SECRET_KEY in _INSECURE_SECRET_DEFAULTS or len(s.SECRET_KEY) < 32 or _contains_placeholder(s.SECRET_KEY)
+    ):
         raise RuntimeError(
             "SECRET_KEY must be set to a strong random value (>=32 chars) in production. "
             'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
         )
     primary_fernet_key = (s.SIGNING_SECRET_ENCRYPTION_KEY or "").split(",")[0].strip()
-    if primary_fernet_key in _INSECURE_FERNET_DEFAULTS:
+    if primary_fernet_key in _INSECURE_FERNET_DEFAULTS or _contains_placeholder(
+        s.SIGNING_SECRET_ENCRYPTION_KEY
+    ):
         raise RuntimeError(
-            "SIGNING_SECRET_ENCRYPTION_KEY uses the public dev default or a committed repository key. "
+            "SIGNING_SECRET_ENCRYPTION_KEY uses the public dev default, a committed repository key, "
+            "or an un-generated CHANGE_ME placeholder. "
             'Generate one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
         )
-    if not s.API_KEY_PEPPER or len(s.API_KEY_PEPPER) < 16:
+    if not s.API_KEY_PEPPER or len(s.API_KEY_PEPPER) < 16 or _contains_placeholder(s.API_KEY_PEPPER):
         raise RuntimeError(
             "API_KEY_PEPPER must be set to a strong random value (>=16 chars) in production. "
             'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))"'
         )
-    if any(substr in s.DATABASE_URL for substr in _INSECURE_DB_SUBSTRINGS):
+    if (
+        any(substr in s.DATABASE_URL for substr in _INSECURE_DB_SUBSTRINGS)
+        or _contains_placeholder(s.DATABASE_URL)
+        or _contains_placeholder((s.DATABASE_URL.split("@")[0] if "@" in s.DATABASE_URL else s.DATABASE_URL))
+    ):
         raise RuntimeError("DATABASE_URL uses dev default credentials in production. Set a strong POSTGRES_PASSWORD.")
     # SQLite and other non-PostgreSQL backends are never valid in production
     # (no concurrency, no SKIP LOCKED, data loss on ephemeral disk).
@@ -253,8 +272,13 @@ def validate_production_settings(s: Settings) -> None:
     # suppresses HSTS, weakens cookie flags).
     if s.DEBUG:
         raise RuntimeError("DEBUG must be False in production. Unset DEBUG or set DEBUG=False.")
-    if not s.METRICS_API_KEY or len(s.METRICS_API_KEY) < 16:
+    if not s.METRICS_API_KEY or len(s.METRICS_API_KEY) < 16 or _contains_placeholder(s.METRICS_API_KEY):
         raise RuntimeError("METRICS_API_KEY must be set (>=16 chars) in production to protect /metrics.")
+    if _contains_placeholder(s.SMTP_PASSWORD) or _contains_placeholder(_redis):
+        raise RuntimeError(
+            "Production secrets still contain CHANGE_ME/example placeholders. "
+            "Generate real values (see .env.example) and re-deploy."
+        )
     if s.ALLOW_LOCAL_RECEIVERS:
         import os as _os
 
@@ -307,6 +331,69 @@ def validate_production_settings(s: Settings) -> None:
     _hold_raw = getattr(s, "LEGAL_HOLD_PROJECT_IDS", "") or ""
     if isinstance(_hold_raw, str) and len(_hold_raw) > 4096:
         raise RuntimeError("LEGAL_HOLD_PROJECT_IDS is too long (max 4096 chars).")
+    # Registration must stay closed in production. The prod overlay hardcodes
+    # False; this validator is defense-in-depth if env is injected directly.
+    if bool(getattr(s, "ALLOW_OPEN_REGISTRATION", False)):
+        raise RuntimeError(
+            "ALLOW_OPEN_REGISTRATION must be False in production. "
+            "Create the first owner with scripts/bootstrap_admin.py instead."
+        )
+    # Redis dual-password drift: compose uses REDIS_PASSWORD for the server and
+    # REDIS_URL for the app. Mismatch = boot loop. Validate when both are set.
+    try:
+        import os as _os_red
+        import urllib.parse as _up
+
+        _env_redis_pw = (_os_red.getenv("REDIS_PASSWORD", "") or "").strip()
+        if _env_redis_pw:
+            _parsed = _up.urlparse(_redis)
+            _url_pw = (_parsed.password or "").strip() if hasattr(_parsed, "password") else ""
+            # URL-encoded passwords must match after decoding.
+            try:
+                _url_pw = _up.unquote(_url_pw)
+            except Exception:
+                pass
+            if _url_pw and _url_pw != _env_redis_pw:
+                raise RuntimeError(
+                    "REDIS_URL password does not match REDIS_PASSWORD. "
+                    "Set REDIS_URL=redis://:<REDIS_PASSWORD>@redis:6379/0 consistently."
+                )
+    except RuntimeError:
+        raise
+    except Exception:
+        pass
+    # Trusted proxies must be explicit and narrow. Broad /8 + /12 defaults let
+    # any VPC/bridge peer forge X-Forwarded-For (rate-limit bypass, audit poisoning).
+    # Require prefixlen >= 16 and reject the legacy broad default combo.
+    try:
+        import ipaddress as _ip
+
+        _tp_raw = (s.TRUSTED_PROXIES or "").strip()
+        _tp_parts = [p.strip() for p in _tp_raw.split(",") if p.strip()]
+        if "10.0.0.0/8" in _tp_parts:
+            raise RuntimeError(
+                "TRUSTED_PROXIES contains 10.0.0.0/8 which is too broad (any 10/8 peer can spoof XFF). "
+                "Set narrow CIDRs, e.g. TRUSTED_PROXIES=127.0.0.1,::1,172.18.0.0/24 "
+                "(docker bridge / nginx IP)."
+            )
+        for _part in _tp_parts:
+            if _part == "*" or _part in ("127.0.0.1", "::1", "localhost"):
+                continue
+            try:
+                if "/" in _part:
+                    _net = _ip.ip_network(_part, strict=False)
+                    if _net.prefixlen < 16:
+                        raise RuntimeError(
+                            f"TRUSTED_PROXIES entry '{_part}' is too broad (prefixlen < 16). "
+                            "Use /16 or narrower (e.g. /24 or /32 for the proxy IP)."
+                        )
+            except ValueError:
+                # Non-CIDR single IPs are fine (exact match).
+                pass
+    except RuntimeError:
+        raise
+    except Exception:
+        pass
 
 
 _IS_PRODUCTION = is_production_env(settings.ENV)

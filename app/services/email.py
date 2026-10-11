@@ -177,7 +177,13 @@ def send_invitation_email(to_email: str, invite_url: str, org_name: str, role: s
     if not clean_to or not invite_url:
         return False
     if not is_email_configured():
-        if str(settings.ENV or "").strip().lower() == "production":
+        try:
+            from app.config import is_production_env as _is_prod
+
+            _prod = bool(_is_prod(getattr(settings, "ENV", "")))
+        except Exception:
+            _prod = False
+        if _prod:
             logger.error("SMTP not configured; refusing to fake an invitation delivery")
         else:
             logger.info("SMTP not configured; invitation email not sent to %s", _mask_email(clean_to))

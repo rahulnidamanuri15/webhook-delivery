@@ -1,7 +1,8 @@
 """Forgot-password OTP lifecycle (generation, verification, reset tokens).
 
 Security properties:
-- Only SHA-256 hashes of OTPs are stored (never plaintext).
+- Only HMAC-SHA256 (peppered) hashes of OTPs are stored when API_KEY_PEPPER
+  is set (required in prod); legacy plain SHA-256 rows still verify for rotation.
 - OTPs are single-use, time-boxed, and invalidated after N failed attempts.
 - Only the newest valid OTP per user is usable; older rows are marked used.
 - The post-OTP reset credential is a short-lived signed token
@@ -34,8 +35,45 @@ def generate_otp(length: int | None = None) -> str:
     return f"{secrets.randbelow(10**n):0{n}d}"
 
 
+def _otp_pepper() -> str:
+    try:
+        from app.config import settings as _s
+
+        return (_s.API_KEY_PEPPER or "").strip()
+    except Exception:
+        return ""
+
+
 def hash_otp(otp: str) -> str:
-    return hashlib.sha256((otp or "").strip().encode("utf-8")).hexdigest()
+    """HMAC-SHA256 with server pepper when configured, else legacy plain SHA-256.
+
+    6-digit OTPs have ~1M entropy: plain SHA-256 falls to instant offline
+    cracking on DB leak. HMAC with API_KEY_PEPPER (required in prod) makes
+    offline cracking require the pepper.
+    """
+    raw = (otp or "").strip().encode("utf-8")
+    pepper = _otp_pepper()
+    if pepper:
+        return hmac.new(pepper.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+    return hashlib.sha256(raw).hexdigest()
+
+
+def hash_otp_candidates(otp: str) -> list[str]:
+    """All hashes to try on verify (peppered + legacy) for zero-downtime rotation."""
+    raw = (otp or "").strip().encode("utf-8")
+    pepper = _otp_pepper()
+    out: list[str] = []
+    if pepper:
+        out.append(hmac.new(pepper.encode("utf-8"), raw, hashlib.sha256).hexdigest())
+    out.append(hashlib.sha256(raw).hexdigest())
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for h in out:
+        if h not in seen:
+            seen.add(h)
+            uniq.append(h)
+    return uniq
 
 
 def _constant_time_compare(a: str, b: str) -> bool:
@@ -111,7 +149,10 @@ def verify_otp(db: Session, user_id: str, otp: str) -> tuple[bool, str, Password
         except Exception:
             db.rollback()
         return False, "locked", row
-    if _constant_time_compare(hash_otp(candidate), row.otp_hash):
+    # Accept peppered (new) or legacy plain hash so rotation does not lock users out.
+    _candidates = hash_otp_candidates(candidate)
+    _matched = any(_constant_time_compare(c, row.otp_hash or "") for c in _candidates)
+    if _matched:
         return True, "ok", row
     # Wrong code: count attempt, lock on exhaustion.
     try:

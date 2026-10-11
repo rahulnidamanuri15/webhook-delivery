@@ -22,7 +22,13 @@ from app.services.security import encrypt_secret, hash_api_key, hash_password
 
 def seed():
     # Fail closed in production: demo seed must never create known credentials.
-    if os.getenv("ENV", "development").lower() == "production":
+    try:
+        from app.config import is_production_env as _is_prod
+
+        _prod = bool(_is_prod(os.getenv("ENV", "development")))
+    except Exception:
+        _prod = os.getenv("ENV", "development").strip().lower() in ("production", "prod", "live", "staging")
+    if _prod:
         print(
             "ERROR: refusing to seed demo credentials with ENV=production. "
             "Run only in development (ENV=development)."

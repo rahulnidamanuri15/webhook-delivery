@@ -23,7 +23,18 @@ def deliver_webhook_task(delivery_id: str) -> bool:
         logger.error(f"Task delivery failed for {delivery_id}: {e}", exc_info=True)
         return False
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass
+        # Release the pre-dispatch reservation so the next retry (e.g. +10s)
+        # becomes visible on schedule instead of stalling until TTL.
+        try:
+            from app.workers.dispatcher import _release_dispatch_ids as _rel
+
+            _rel([delivery_id])
+        except Exception:
+            pass
 
 
 @celery_app.task(name="tasks.dispatch_due_deliveries")
@@ -76,15 +87,13 @@ def recover_abandoned_leases_task() -> int:
 @celery_app.task(name="tasks.purge_expired_data")
 def purge_expired_data_task() -> dict:
     """Periodic retention purge (see DATA_RETENTION_DAYS). Honors legal hold."""
-    import os as _os
-
-    from app.services.retention import purge_expired_data
+    from app.config import settings as _settings
+    from app.services.retention import get_legal_hold_ids, purge_expired_data
 
     db = SessionLocal()
     try:
         with start_trace_span("retention.purge"):
-            raw = (_os.getenv("LEGAL_HOLD_PROJECT_IDS", "") or "").strip()
-            hold = {p.strip() for p in raw.split(",") if p.strip()} or None
+            hold = get_legal_hold_ids(_settings.LEGAL_HOLD_PROJECT_IDS)
             return purge_expired_data(db, legal_hold_project_ids=hold)
     except Exception as e:
         logger.error(f"Retention purge failed: {e}", exc_info=True)

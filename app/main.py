@@ -210,7 +210,7 @@ def healthcheck():
 
 @app.get("/ready", tags=["Health"])
 def readiness():
-    """Readiness probe: DB (+ Redis when Celery) must be reachable."""
+    """Readiness probe: DB (+ Redis when Celery) must be reachable and schema current."""
     from sqlalchemy import text as _text
     from fastapi.responses import JSONResponse
 
@@ -218,6 +218,17 @@ def readiness():
     try:
         with engine.connect() as conn:
             conn.execute(_text("SELECT 1"))
+            # Verify migrations have run: alembic_version must exist. A partially
+            # migrated schema passes SELECT 1 but fails at runtime (e.g. missing
+            # uq_active_replay_per_delivery). Fail readiness until migrated.
+            try:
+                conn.execute(_text("SELECT version_num FROM alembic_version LIMIT 1"))
+                checks["schema"] = "ok"
+            except Exception as se:
+                logger.warning("readiness schema version check failed: %s", se)
+                return JSONResponse(
+                    status_code=503, content={"status": "not_ready", "database": "ok", "schema": "migrating"}
+                )
         checks["database"] = "ok"
     except Exception as e:
         logger.warning("readiness database check failed: %s", e)
@@ -239,13 +250,18 @@ def readiness():
 
 @app.get("/startup", tags=["Health"])
 def startup_probe():
-    """Startup probe: verifies database schema tables exist and config is loaded."""
+    """Startup probe: verifies database schema tables exist and migrations are current."""
     from sqlalchemy import text as _text
     from fastapi.responses import JSONResponse
 
     try:
         with engine.connect() as conn:
             conn.execute(_text("SELECT 1 FROM events LIMIT 1"))
+            try:
+                conn.execute(_text("SELECT version_num FROM alembic_version LIMIT 1"))
+            except Exception as se:
+                logger.warning("startup schema version check failed: %s", se)
+                return JSONResponse(status_code=503, content={"status": "starting", "schema": "migrating"})
         return {"status": "started", "version": "1.0.0"}
     except Exception as e:
         logger.warning("startup check failed: %s", e)

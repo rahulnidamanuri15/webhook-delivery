@@ -9,7 +9,8 @@ from app.models import generate_id, utc_now
 class PasswordResetOTP(Base):
     """One-time passcode for forgot-password flow.
 
-    Only a SHA-256 hash of the OTP is stored. A row is single-use
+    Only an HMAC-SHA256 (peppered) hash of the OTP is stored when
+    API_KEY_PEPPER is configured. A row is single-use
     (``used``) and time-boxed (``expires_at``). Failed verifications
     increment ``attempts``; the row is invalidated after
     ``PASSWORD_RESET_OTP_MAX_ATTEMPTS`` failures.

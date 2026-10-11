@@ -12,13 +12,14 @@ engine_kwargs = {
 if settings.DATABASE_URL.startswith("sqlite"):
     connect_args["check_same_thread"] = False
 else:
-    # PostgreSQL connection pool: kept small per process because web + worker
-    # (x concurrency) + beat + dispatcher each create their own engine.
-    # 5 + 5 overflow = 10 per process; 4 processes ≈ 40 < default max_connections=100.
+    # PostgreSQL connection pool: sized for dispatcher threads (each delivery
+    # gets its own SessionLocal) + web + worker concurrency.
+    # 10 + 10 overflow = 20 per process; 4 processes ≈ 80 < max_connections=100.
+    # DISPATCH_MAX_WORKERS defaults to 10, matching pool capacity.
     engine_kwargs.update(
         {
-            "pool_size": 5,
-            "max_overflow": 5,
+            "pool_size": 10,
+            "max_overflow": 10,
             "pool_timeout": 30,
             "pool_recycle": 1800,
         }

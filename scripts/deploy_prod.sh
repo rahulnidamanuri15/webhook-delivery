@@ -152,6 +152,55 @@ if [[ "${needs_tls}" -eq 1 && "${DEPLOY_PROD_ALLOW_MISSING_TLS:-0}" != "1" ]]; t
   fi
 fi
 
-# --- 7. Deploy with the fixed prod overlay -----------------------------------------
+# --- 7. Placeholder + consistency guards (fail closed on copy-paste .env.example) --
+for var in SECRET_KEY API_KEY_PEPPER METRICS_API_KEY POSTGRES_PASSWORD REDIS_URL REDIS_PASSWORD SMTP_PASSWORD SIGNING_SECRET_ENCRYPTION_KEY; do
+  val="${!var:-}"
+  if [[ "${val,,}" == *"change_me"* ]]; then
+    echo "ERROR: ${var} still contains CHANGE_ME placeholder — generate a real value (see .env.example)." >&2
+    exit 1
+  fi
+done
+if [[ "${ALLOW_OPEN_REGISTRATION:-False}" == "True" || "${ALLOW_OPEN_REGISTRATION:-False}" == "true" || "${ALLOW_OPEN_REGISTRATION:-}" == "1" ]]; then
+  echo "ERROR: ALLOW_OPEN_REGISTRATION='${ALLOW_OPEN_REGISTRATION}' — must be False in production." >&2
+  exit 1
+fi
+if [[ -n "${REDIS_PASSWORD:-}" && -n "${REDIS_URL:-}" ]]; then
+  # REDIS_URL is URL-encoded; decode %xx before comparing.
+  _url_pw="$(python3 -c "import urllib.parse,os; print(urllib.parse.unquote(urllib.parse.urlparse(os.environ.get('REDIS_URL','')).password or ''))" 2>/dev/null || true)"
+  if [[ -n "${_url_pw}" && "${_url_pw}" != "${REDIS_PASSWORD}" ]]; then
+    echo "ERROR: REDIS_URL password does not match REDIS_PASSWORD — set REDIS_URL=redis://:<REDIS_PASSWORD>@redis:6379/0." >&2
+    exit 1
+  fi
+fi
+if [[ "${TRUSTED_PROXIES:-}" == *"10.0.0.0/8"* ]]; then
+  echo "ERROR: TRUSTED_PROXIES contains 10.0.0.0/8 (too broad for XFF). Set narrow CIDRs, e.g. TRUSTED_PROXIES=127.0.0.1,::1,172.18.0.0/24." >&2
+  exit 1
+fi
+
+# --- 8. Pre-migration backup gate for mutating commands ---------------------------
+needs_mutating=0
+for arg in "$@"; do
+  case "${arg}" in
+    up|start|restart|create|migrate)
+      needs_mutating=1
+      ;;
+  esac
+done
+if [[ "${needs_mutating}" -eq 1 && "${DEPLOY_PROD_SKIP_BACKUP_CHECK:-0}" != "1" ]]; then
+  if [[ -d "./backups" ]]; then
+    if ! ls ./backups/*.gz >/dev/null 2>&1; then
+      echo "WARNING: no ./backups/*.gz found — run a DB backup before migrating (see docs/BACKUP_AND_DISASTER_RECOVERY.md)." >&2
+      echo "Set DEPLOY_PROD_SKIP_BACKUP_CHECK=1 to bypass after taking an offsite backup." >&2
+    elif ! find ./backups -maxdepth 1 -name '*.gz' -mtime -2 2>/dev/null | grep -q .; then
+      echo "WARNING: latest ./backups/*.gz is older than 48h — take a fresh backup before migrating." >&2
+    else
+      echo "Pre-migration backup check: fresh dump present."
+    fi
+  fi
+  echo "Reminder: migrations run via 'migrations' service (alembic upgrade head) and gate web/workers."
+  echo "Check pending migrations with: docker compose -f ${BASE_FILE} -f ${PROD_FILE} run --rm web alembic check"
+fi
+
+# --- 9. Deploy with the fixed prod overlay -----------------------------------------
 echo "Deploying production with overlay: -f ${BASE_FILE} -f ${PROD_FILE} (ENV=production)"
 exec docker compose -f "${BASE_FILE}" -f "${PROD_FILE}" "$@"

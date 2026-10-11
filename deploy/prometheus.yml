@@ -1,10 +1,13 @@
 # Prometheus scrape example for webhook-delivery prod.
 # The app exposes /metrics on web:8080 (Bearer METRICS_API_KEY).
-# Run alongside compose.prod.yaml, e.g.:
+# NOTE: docker -v mounts do NOT interpolate ${VAR}. Generate the rendered file
+# with envsubst before starting Prometheus:
+#   METRICS_API_KEY=... envsubst < deploy/prometheus.yml > /tmp/prometheus.rendered.yml
 #   docker run -d --network webhook-delivery-prod_default \
-#     -v ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml \
-#     -v ./deploy/alerts.yml:/etc/prometheus/alerts.yml \
+#     -v /tmp/prometheus.rendered.yml:/etc/prometheus/prometheus.yml:ro \
+#     -v ./deploy/alerts.yml:/etc/prometheus/alerts.yml:ro \
 #     prom/prometheus --config.file=/etc/prometheus/prometheus.yml
+# Or use scripts/render_prometheus.sh which fail-fasts when METRICS_API_KEY is unset.
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -18,5 +21,6 @@ scrape_configs:
     static_configs:
       - targets: ['web:8080']
     authorization:
+      type: Bearer
       credentials: ${METRICS_API_KEY}
     scrape_timeout: 10s
