@@ -14,10 +14,13 @@ set -eu
 if [ "$#" -eq 0 ]; then
   trap 'exit 0' TERM INT
   while :; do
+    # Heartbeat for compose healthcheck (liveness of renewal loop).
+    date +%s > /tmp/certbot_alive 2>/dev/null || true
     # Invoke the deploy-hook via /bin/sh explicitly so no exec bit is required
     # on the mounted script (Windows checkouts strip +x).
     certbot renew --webroot -w /var/www/certbot \
       --deploy-hook "/bin/sh /usr/local/bin/certbot-deploy-hook.sh" || true
+    date +%s > /tmp/certbot_alive 2>/dev/null || true
     # Sleep in background so TERM/INT interrupts it promptly; `wait` keeps
     # the container as PID 1's child and propagates the signal.
     sleep 12h & wait ${!} || true

@@ -56,6 +56,12 @@ def get_matching_endpoints(db: Session, project_id: str, event_type: str) -> lis
     (bounded by MAX_ENDPOINTS_PER_PROJECT) so prefix semantics stay exact
     across SQLite and PostgreSQL without LIKE escaping pitfalls.
     """
+    from app.config import settings as _settings
+
+    try:
+        _limit = int(getattr(_settings, "MAX_ENDPOINTS_PER_PROJECT", 20) or 20)
+    except Exception:
+        _limit = 20
     candidates = (
         db.query(Endpoint)
         .join(EndpointSubscription, Endpoint.id == EndpointSubscription.endpoint_id)
@@ -64,6 +70,7 @@ def get_matching_endpoints(db: Session, project_id: str, event_type: str) -> lis
             Endpoint.enabled == True,
         )
         .distinct()
+        .limit(_limit)
         .all()
     )
     if not candidates:

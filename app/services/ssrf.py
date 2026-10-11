@@ -80,7 +80,13 @@ def _validate_url_syntax_and_domain(url: str):
             parsed,
         )
 
-    is_prod = str(getattr(settings, "ENV", "") or "").strip().lower() == "production"
+    is_prod = False
+    try:
+        from app.config import is_production_env as _is_prod_env
+
+        is_prod = bool(_is_prod_env(getattr(settings, "ENV", "")))
+    except Exception:
+        is_prod = str(getattr(settings, "ENV", "") or "").strip().lower() == "production"
     allow_http = bool(settings.DEBUG or settings.ALLOW_LOCAL_RECEIVERS or not is_prod)
     allowed_schemes = ("http", "https") if allow_http else ("https",)
     if scheme not in allowed_schemes:
@@ -164,19 +170,42 @@ def validate_webhook_url(url: str) -> tuple[bool, str | None]:
 
 class PinnedResolutionResult(tuple):
     """Result tuple supporting 4-tuple unpacking (is_safe, error, url, headers)
-    for backward-compatibility, while also exposing pinned_ip."""
+    for backward-compatibility, while also exposing pinned_ip and error_kind.
 
-    def __new__(cls, is_safe: bool, error: str | None, url: str, headers: dict[str, str], pinned_ip: str | None = None):
+    error_kind: None when safe, else "transient" (DNS timeout/unresolved —
+    safe to retry) or "permanent" (SSRF forbidden / config — dead-letter).
+    """
+
+    def __new__(
+        cls,
+        is_safe: bool,
+        error: str | None,
+        url: str,
+        headers: dict[str, str],
+        pinned_ip: str | None = None,
+        error_kind: str | None = None,
+    ):
         return super().__new__(cls, (is_safe, error, url, headers))
 
     def __init__(
-        self, is_safe: bool, error: str | None, url: str, headers: dict[str, str], pinned_ip: str | None = None
+        self,
+        is_safe: bool,
+        error: str | None,
+        url: str,
+        headers: dict[str, str],
+        pinned_ip: str | None = None,
+        error_kind: str | None = None,
     ):
         self.is_safe = is_safe
         self.error = error
         self.url = url
         self.headers = headers
         self.pinned_ip = pinned_ip
+        self.error_kind = error_kind
+
+    @property
+    def is_transient(self) -> bool:
+        return not self.is_safe and self.error_kind == "transient"
 
 
 def resolve_and_pin_destination(url: str) -> PinnedResolutionResult:
@@ -191,7 +220,7 @@ def resolve_and_pin_destination(url: str) -> PinnedResolutionResult:
     url = url.strip()
     ok, err, parsed = _validate_url_syntax_and_domain(url)
     if not ok:
-        return PinnedResolutionResult(False, err, url, {})
+        return PinnedResolutionResult(False, err, url, {}, error_kind="permanent")
 
     hostname = parsed.hostname
     if settings.ALLOW_LOCAL_RECEIVERS and hostname and hostname.lower() in LOCAL_HOSTS:
@@ -201,14 +230,18 @@ def resolve_and_pin_destination(url: str) -> PinnedResolutionResult:
         # Resolve addresses ONCE right before outbound request (bounded timeout)
         addr_info = _getaddrinfo_timeout(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
         if not addr_info:
-            return PinnedResolutionResult(False, "Could not resolve destination IP.", url, {})
+            return PinnedResolutionResult(False, "Could not resolve destination IP.", url, {}, error_kind="transient")
 
         # Validate all addresses from this single resolution
         for family, _, _, _, sockaddr in addr_info:
             ip_str = sockaddr[0]
             if is_ip_prohibited(ip_str):
                 return PinnedResolutionResult(
-                    False, f"Destination IP {ip_str} is within a restricted or private network range.", url, {}
+                    False,
+                    f"Destination IP {ip_str} is within a restricted or private network range.",
+                    url,
+                    {},
+                    error_kind="permanent",
                 )
 
         # Pin to the first verified IP
@@ -217,7 +250,13 @@ def resolve_and_pin_destination(url: str) -> PinnedResolutionResult:
         headers = {"Host": parsed.netloc}
         return PinnedResolutionResult(True, None, url, headers, pinned_ip=first_ip)
 
-    except socket.gaierror:
-        return PinnedResolutionResult(False, f"Hostname '{hostname}' could not be resolved.", url, {})
+    except socket.gaierror as e:
+        msg = str(e) or ""
+        # DNS timeouts / transient resolver blips are retryable; unknown-host
+        # for a well-formed public name is usually transient too (DNS propagation).
+        # Truly forbidden destinations are already rejected above via IP checks.
+        if "timed out" in msg or "could not be resolved" in msg.lower() or "temporary" in msg.lower():
+            return PinnedResolutionResult(False, f"DNS transient failure for '{hostname}': {e}", url, {}, error_kind="transient")
+        return PinnedResolutionResult(False, f"Hostname '{hostname}' could not be resolved.", url, {}, error_kind="transient")
     except Exception as e:
-        return PinnedResolutionResult(False, f"DNS resolution failed: {e}", url, {})
+        return PinnedResolutionResult(False, f"DNS resolution failed: {e}", url, {}, error_kind="transient")

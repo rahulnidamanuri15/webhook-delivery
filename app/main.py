@@ -48,7 +48,13 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Webhook Delivery Platform...")
 
 
-_IS_PROD = str(settings.ENV or "").strip().lower() == "production"
+_IS_PROD = False
+try:
+    from app.config import is_production_env as _is_prod_env
+
+    _IS_PROD = bool(_is_prod_env(settings.ENV))
+except Exception:
+    _IS_PROD = str(settings.ENV or "").strip().lower() == "production"
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -70,6 +76,17 @@ async def request_id_middleware(request: Request, call_next):
     else:
         req_id = uuid.uuid4().hex
     request.state.request_id = req_id
+    try:
+        from app.services.logging_util import set_request_context
+        from app.services.security import get_client_ip as _get_ip
+
+        try:
+            _cip = _get_ip(request)
+        except Exception:
+            _cip = ""
+        set_request_context(req_id, _cip or "")
+    except Exception:
+        pass
     response = await call_next(request)
     response.headers["X-Request-ID"] = req_id
     return response

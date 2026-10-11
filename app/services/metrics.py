@@ -84,6 +84,7 @@ def generate_prometheus_metrics(db: Session) -> str:
     lines.append(f"webhook_delivery_duration_ms_sum {_sum}")
 
     # Per-endpoint breakdown — bounded to 200 series to avoid cardinality explosion.
+    # Ordered for deterministic series across scrapes (no churn).
     try:
         lines.extend(
             [
@@ -94,6 +95,7 @@ def generate_prometheus_metrics(db: Session) -> str:
         per_ep = (
             db.query(Delivery.endpoint_id, Delivery.status, func.count(Delivery.id))
             .group_by(Delivery.endpoint_id, Delivery.status)
+            .order_by(Delivery.endpoint_id.asc(), Delivery.status.asc())
             .limit(200)
             .all()
         )
@@ -116,5 +118,13 @@ def generate_prometheus_metrics(db: Session) -> str:
     )
     backlog = all_statuses["PENDING"] + all_statuses["RETRY_SCHEDULED"]
     lines.append(f"webhook_backlog_total {backlog}")
+
+    # Email delivery (in-process counters; per-process — scrape all replicas).
+    try:
+        from app.services.email import generate_email_metrics_text
+
+        lines.append(generate_email_metrics_text().strip())
+    except Exception:
+        pass
 
     return "\n".join(lines) + "\n"

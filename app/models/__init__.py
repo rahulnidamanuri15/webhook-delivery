@@ -175,6 +175,12 @@ class Delivery(Base):
     __table_args__ = (
         Index("ix_deliveries_status_next_attempt", "status", "next_attempt_at"),
         Index("ix_deliveries_endpoint_created", "endpoint_id", "created_at"),
+        Index("ix_deliveries_status_lease_expires", "status", "lease_expires_at"),
+        # NOTE: active-replay uniqueness (one non-terminal replay per source) is
+        # enforced by partial unique index uq_active_replay_per_delivery in
+        # migration f5a1c9d3e7b2 (WHERE status NOT IN ...). Not mirrored in ORM
+        # so terminal replays can accumulate for audit; app check + IntegrityError
+        # handling in replay_delivery() covers the race.
     )
 
 

@@ -1,17 +1,26 @@
 # Backup and Disaster Recovery Strategy
 
 ## Operational Objectives
-* **Recovery Point Objective (RPO):** < 5 minutes (via automated WAL archiving / continuous replication, or daily logical dump for low-throughput environments).
+* **Recovery Point Objective (RPO):** 24 hours by default (daily logical dump via
+  `db_backup` service, `SCHEDULE=@daily`, `BACKUP_KEEP_DAYS=7`). < 5 minutes
+  ONLY when WAL archiving / streaming replica (§4) is additionally configured —
+  it is NOT enabled by default.
 * **Recovery Time Objective (RTO):** < 15 minutes (fully restored instance and running services).
+* **Offsite:** host `./backups` alone is single-disk. Copy daily dumps off-host
+  (S3/object storage) — RPO assumes offsite copy exists. Dumps are gzip only
+  (not encrypted at rest): encrypt before upload or use encrypted bucket.
 
 ---
 
 ## 1. Automated Logical Backups
-Nightly logical backups are created via `scripts/backup_postgres.sh`:
+Nightly logical backups are created via the `db_backup` sidecar
+(`prodrigestivill/postgres-backup-local`, `SCHEDULE=@daily`,
+`BACKUP_KEEP_DAYS=7` in `compose.prod.yaml`) or manually via `scripts/backup_postgres.sh`:
 * Creates gzip-compressed SQL dumps (`pg_dump | gzip`).
 * Calculates SHA-256 checksums (`sha256sum`).
-* Validates archive integrity (`gzip -t`).
-* Prunes backups exceeding the retention policy (`RETENTION_DAYS=14`).
+* Validates archive integrity (`gzip -t` + recommended `pg_restore --list` dry-run).
+* Prunes backups exceeding the retention policy (7 days in compose; script default
+  `RETENTION_DAYS=14` for manual runs — align before relying on either).
 
 To run manually (SQLAlchemy `postgresql+psycopg://` URLs are normalized to
 libpq `postgresql://` automatically for pg_dump/psql):

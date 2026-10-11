@@ -26,12 +26,15 @@ MAX_RESPONSE_READ_BYTES = 64 * 1024
 class PinnedSyncBackend(sync_backend.SyncBackend):
     def __init__(self, pinned_host_map: dict[str, str]):
         super().__init__()
-        self.pinned_host_map = pinned_host_map
+        # Normalize keys once (IPv6 bracket + case): urlparse strips brackets
+        # from .hostname but httpcore may pass them through on connect_tcp.
+        self.pinned_host_map = {(k or "").strip("[]").lower(): v for k, v in pinned_host_map.items()}
 
     def connect_tcp(
         self, host: str, port: int, timeout: float | None = None, local_address: str | None = None, socket_options=None
     ):
-        connect_host = self.pinned_host_map.get(host, host)
+        lookup = (host or "").strip("[]").lower()
+        connect_host = self.pinned_host_map.get(lookup, self.pinned_host_map.get(host, host))
         return super().connect_tcp(connect_host, port, timeout, local_address, socket_options)
 
 
@@ -155,9 +158,10 @@ def calculate_backoff_seconds(attempt_number: int, retry_after_header: str | Non
                 if retry_dt.tzinfo is None:
                     retry_dt = retry_dt.replace(tzinfo=UTC)
                 delay_s = int((retry_dt - now_dt).total_seconds())
-                if delay_s < 1:
-                    delay_s = 1
-                return max(1, min(MAX_RETRY_AFTER_CAP, delay_s))
+                if delay_s >= 1:
+                    return max(1, min(MAX_RETRY_AFTER_CAP, delay_s))
+                # Past dates fall through to exponential backoff below so a
+                # receiver returning a stale date cannot force a 1s hot loop.
         except Exception:
             pass
 
@@ -172,7 +176,13 @@ def calculate_backoff_seconds(attempt_number: int, retry_after_header: str | Non
 
 
 def is_retryable_http_status(status_code: int) -> bool:
-    """HTTP 408 (Request Timeout), 429 (Too Many Requests), and 5xx are retryable."""
+    """HTTP 408 (Request Timeout), 429 (Too Many Requests), and retryable 5xx are retryable.
+
+    501 Not Implemented and 505 Version Not Supported will never succeed on
+    retry, so they are permanent.
+    """
+    if status_code in (501, 505):
+        return False
     return status_code in (408, 429) or (500 <= status_code <= 599)
 
 
@@ -236,15 +246,23 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
 
         allowed, wait_seconds = check_endpoint_rate_limit(endpoint.id, endpoint.rate_limit_per_second)
         if not allowed:
-            # Defer without consuming attempt budget
+            # Defer without consuming attempt budget. Re-verify lease ownership
+            # under row lock so a concurrent recovery cannot be overwritten.
             now = utc_now()
-            delivery.status = "RETRY_SCHEDULED"
-            delivery.attempt_count = max(0, delivery.attempt_count - 1)  # Restore attempt count
-            delivery.next_attempt_at = now + timedelta(seconds=max(1.0, wait_seconds))
-            delivery.lease_token = None
-            delivery.lease_expires_at = None
-            db.commit()
-            logger.info(f"Delivery {delivery_id} deferred by {wait_seconds:.2f}s due to endpoint rate limit.")
+            dlv = db.query(Delivery).filter(Delivery.id == delivery_id).with_for_update().first()
+            if dlv and dlv.lease_token == claimed_lease_token:
+                dlv.status = "RETRY_SCHEDULED"
+                dlv.attempt_count = max(0, dlv.attempt_count - 1)  # Restore attempt count
+                # wait_seconds can be fractional (e.g. 0.2s); clamp to >=1s so
+                # the dispatcher poll (1-2s) does not hot-loop on the same row.
+                dlv.next_attempt_at = now + timedelta(seconds=max(1.0, wait_seconds))
+                dlv.lease_token = None
+                dlv.lease_expires_at = None
+                db.commit()
+                logger.info(f"Delivery {delivery_id} deferred by {wait_seconds:.2f}s due to endpoint rate limit.")
+            else:
+                db.rollback()
+                logger.warning(f"Delivery {delivery_id} lease lost before rate-limit defer; dropping stale update.")
             return False
 
     # 2. SSRF & DNS Rebinding Protection
@@ -252,7 +270,29 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
 
     pin_res = resolve_and_pin_destination(delivery.target_url_snapshot)
     if not pin_res.is_safe or not endpoint:
-        reason = pin_res.error if not pin_res.is_safe else "Endpoint deleted"
+        if not endpoint:
+            _save_terminal_failure(db, delivery_id, claimed_lease_token, "Endpoint deleted")
+            return False
+        # Transient DNS failures (timeout / resolver blip) are retryable so one
+        # blip does not permanently kill pending retries. Forbidden destinations
+        # (private IP, allowlist, scheme) are terminal.
+        if getattr(pin_res, "is_transient", False):
+            logger.warning(f"Delivery {delivery_id} transient DNS failure, scheduling retry: {pin_res.error}")
+            _record_attempt_and_update_state(
+                db=db,
+                delivery_id=delivery_id,
+                lease_token=claimed_lease_token,
+                attempt_number=delivery.attempt_count,
+                started_at=utc_now(),
+                finished_at=utc_now(),
+                http_status=None,
+                duration_ms=0,
+                error_code="DNS_TRANSIENT",
+                response_excerpt=(pin_res.error or "transient DNS failure")[: settings.RESPONSE_EXCERPT_MAX_BYTES],
+                outcome="RETRYABLE_ERROR",
+            )
+            return False
+        reason = pin_res.error or "SSRF forbidden"
         _save_terminal_failure(db, delivery_id, claimed_lease_token, reason)
         return False
 
@@ -273,18 +313,42 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
     try:
         secret = decrypt_secret(endpoint.encrypted_signing_secret)
         # Opportunistic rotation: if ciphertext was encrypted with a fallback key,
-        # upgrade it in the database to the current primary key
+        # upgrade it in a SEPARATE session so we never commit the delivery's
+        # leased session mid-flight (avoids persisting stale delivery state if
+        # the lease was concurrently recovered).
         try:
             rotated_ct, was_rotated = rotate_secret_ciphertext(endpoint.encrypted_signing_secret)
             if was_rotated:
-                endpoint.encrypted_signing_secret = rotated_ct
-                db.commit()
-                logger.info(f"Opportunistically rotated secret ciphertext to primary key for endpoint {endpoint.id}")
+                from app.db.session import SessionLocal as _SessionLocal
+
+                _rs = _SessionLocal()
+                try:
+                    from app.models import Endpoint as _Endpoint
+
+                    _ep = _rs.query(_Endpoint).filter(_Endpoint.id == endpoint.id).first()
+                    if _ep:
+                        _ep.encrypted_signing_secret = rotated_ct
+                        _rs.commit()
+                        logger.info(
+                            f"Opportunistically rotated secret ciphertext to primary key for endpoint {endpoint.id}"
+                        )
+                except Exception:
+                    try:
+                        _rs.rollback()
+                    except Exception:
+                        pass
+                finally:
+                    try:
+                        _rs.close()
+                    except Exception:
+                        pass
         except Exception:
             pass
     except Exception as e:
         err_msg = f"Secret decryption error: {e}"
         logger.error(f"Failed to decrypt endpoint secret for {endpoint.id}: {err_msg}")
+        # Config error (wrong/rotated Fernet key) will never succeed on retry —
+        # dead-letter immediately instead of burning the retry budget.
         _record_attempt_and_update_state(
             db=db,
             delivery_id=delivery_id,
@@ -296,7 +360,7 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
             duration_ms=0,
             error_code="FERNET_DECRYPT_ERROR",
             response_excerpt=err_msg[: settings.RESPONSE_EXCERPT_MAX_BYTES],
-            outcome="RETRYABLE_ERROR",
+            outcome="PERMANENT_ERROR",
         )
         return False
 
@@ -322,7 +386,10 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
     client_kwargs: dict = {"timeout": _build_timeout(), "follow_redirects": False}
     transport = None
     if getattr(pin_res, "pinned_ip", None) and parsed_target.hostname:
-        transport = PinnedIPTransport({parsed_target.hostname: pin_res.pinned_ip})
+        # Strip IPv6 brackets just in case (urlparse usually already does):
+        # keeps the pinning dict key consistent with connect_tcp normalization.
+        hostname_key = parsed_target.hostname.strip("[]") if parsed_target.hostname else None
+        transport = PinnedIPTransport({hostname_key: pin_res.pinned_ip})
         if not transport.pinning_active:
             # Fail closed: refusing to send without verified IP pinning
             # (DNS-rebinding TOCTOU). Retryable so a fixed worker can deliver.
@@ -556,50 +623,75 @@ def recover_abandoned_leases(db: Session, batch_size: int | None = None) -> int:
 
     recovered_count = 0
     for dlv in abandoned:
-        # Close the history gap left by the crashed worker before it could record.
+        # Per-row savepoint: one conflicting (delivery_id, attempt_number) must
+        # not abort the whole 500-row batch when beat + dispatcher recovery race.
         try:
-            terminal = dlv.attempt_count >= settings.MAX_DELIVERY_ATTEMPTS
-            att_num = max(1, dlv.attempt_count)
-            # Guard against duplicate attempt_number if worker already committed before crash
-            existing_att = (
-                db.query(DeliveryAttempt.id)
-                .filter(
-                    DeliveryAttempt.delivery_id == dlv.id,
-                    DeliveryAttempt.attempt_number == att_num,
-                )
-                .first()
-            )
-            if not existing_att:
-                attempt = DeliveryAttempt(
-                    delivery_id=dlv.id,
-                    attempt_number=att_num,
-                    started_at=(
-                        dlv.lease_expires_at - timedelta(seconds=settings.LEASE_DURATION_SECONDS)
-                        if dlv.lease_expires_at
-                        else now
-                    ),
-                    finished_at=now,
-                    http_status=None,
-                    duration_ms=0,
-                    error_code="LEASE_EXPIRED",
-                    response_excerpt="Worker lease expired before result was recorded (crash or hang); rescheduled.",
-                    outcome="PERMANENT_ERROR" if terminal else "RETRYABLE_ERROR",
-                )
-                db.add(attempt)
-        except Exception:
-            pass
-        dlv.lease_token = None
-        dlv.lease_expires_at = None
-        if dlv.attempt_count < settings.MAX_DELIVERY_ATTEMPTS:
-            dlv.status = "RETRY_SCHEDULED"
-            dlv.next_attempt_at = now
-        else:
-            dlv.status = "DEAD"
-            dlv.completed_at = now
-        recovered_count += 1
+            with db.begin_nested():
+                # Close the history gap left by the crashed worker before it could record.
+                try:
+                    terminal = dlv.attempt_count >= settings.MAX_DELIVERY_ATTEMPTS
+                    att_num = max(1, dlv.attempt_count)
+                    # Guard against duplicate attempt_number if worker already committed before crash
+                    existing_att = (
+                        db.query(DeliveryAttempt.id)
+                        .filter(
+                            DeliveryAttempt.delivery_id == dlv.id,
+                            DeliveryAttempt.attempt_number == att_num,
+                        )
+                        .first()
+                    )
+                    if not existing_att:
+                        attempt = DeliveryAttempt(
+                            delivery_id=dlv.id,
+                            attempt_number=att_num,
+                            started_at=(
+                                dlv.lease_expires_at - timedelta(seconds=settings.LEASE_DURATION_SECONDS)
+                                if dlv.lease_expires_at
+                                else now
+                            ),
+                            finished_at=now,
+                            http_status=None,
+                            duration_ms=0,
+                            error_code="LEASE_EXPIRED",
+                            response_excerpt="Worker lease expired before result was recorded (crash or hang); rescheduled.",
+                            outcome="PERMANENT_ERROR" if terminal else "RETRYABLE_ERROR",
+                        )
+                        db.add(attempt)
+                except Exception:
+                    pass
+                dlv.lease_token = None
+                dlv.lease_expires_at = None
+                if dlv.attempt_count < settings.MAX_DELIVERY_ATTEMPTS:
+                    dlv.status = "RETRY_SCHEDULED"
+                    # Honor exponential backoff instead of immediate retry so a
+                    # mass crash does not thundering-herd sick receivers.
+                    try:
+                        backoff_secs = calculate_backoff_seconds(dlv.attempt_count)
+                    except Exception:
+                        backoff_secs = 30
+                    dlv.next_attempt_at = now + timedelta(seconds=max(1, backoff_secs))
+                else:
+                    dlv.status = "DEAD"
+                    dlv.completed_at = now
+                recovered_count += 1
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            logger.warning(f"Recovery skipped delivery {getattr(dlv, 'id', '?')}: {e}")
+            continue
 
     if recovered_count > 0:
-        db.commit()
+        try:
+            db.commit()
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            logger.error(f"Recovery batch commit failed, rolled back {recovered_count} rows: {e}")
+            return 0
         logger.info(f"Recovered {recovered_count} abandoned delivery leases.")
     return recovered_count
 
@@ -626,6 +718,9 @@ def replay_delivery(db: Session, delivery_id: str) -> Delivery | None:
 
     # Prevent unlimited replays: only one active replay per DEAD delivery.
     # If a non-terminal replay already exists, block the duplicate.
+    # NOTE: check-then-insert races without a DB constraint; a partial unique
+    # index (see migrations/*_replay_active_unique.py) makes the second commit
+    # raise IntegrityError, handled below.
     existing_replay = (
         db.query(Delivery)
         .filter(
@@ -652,6 +747,14 @@ def replay_delivery(db: Session, delivery_id: str) -> Delivery | None:
         created_at=now,
     )
     db.add(new_delivery)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        # Concurrent replay won the race (partial unique index) — block duplicate.
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
     db.refresh(new_delivery)
     return new_delivery

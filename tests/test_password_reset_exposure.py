@@ -160,7 +160,7 @@ def test_reset_page_without_cookie_is_rejected(http):
 
 def test_send_otp_email_never_logs_plaintext_otp(caplog, monkeypatch):
     """Unconfigured SMTP must not write the live OTP to application logs,
-    regardless of ENV. The dev fallback used to log it at INFO."""
+    regardless of ENV. Fail-closed: returns False without logging the OTP."""
     from app.config import Settings, settings
     from app.services.email import send_otp_email
 
@@ -171,7 +171,7 @@ def test_send_otp_email_never_logs_plaintext_otp(caplog, monkeypatch):
 
     otp = "654321"
     with caplog.at_level(logging.DEBUG, logger="webhook.email"):
-        assert send_otp_email("person@example.com", otp) is True
+        assert send_otp_email("person@example.com", otp) is False
 
     assert otp not in caplog.text
     assert "person@example.com" not in caplog.text
@@ -190,7 +190,8 @@ def test_otp_capture_requires_explicit_test_setting(monkeypatch):
     monkeypatch.setattr(settings, "PASSWORD_RESET_OTP_CAPTURE", False)
     email_mod.clear_captured_otps()
     send = email_mod.send_otp_email
-    assert send("hidden@example.com", "111222") is True
+    # Fail-closed when SMTP unconfigured and no capture sink: no fake success.
+    assert send("hidden@example.com", "111222") is False
     assert email_mod.captured_otps() == []
 
     monkeypatch.setattr(settings, "PASSWORD_RESET_OTP_CAPTURE", True)

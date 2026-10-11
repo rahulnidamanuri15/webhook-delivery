@@ -12,7 +12,22 @@ import json
 import logging
 import re
 import sys
+from contextvars import ContextVar
 from datetime import UTC, datetime
+
+# Request correlation (set by middleware per request; empty outside requests).
+request_id_var: ContextVar[str] = ContextVar("request_id", default="")
+client_ip_var: ContextVar[str] = ContextVar("client_ip", default="")
+
+
+def set_request_context(request_id: str = "", client_ip: str = "") -> None:
+    try:
+        if request_id:
+            request_id_var.set(request_id)
+        if client_ip:
+            client_ip_var.set(client_ip)
+    except Exception:
+        pass
 
 # Keys whose values must never reach a log aggregator (case-insensitive
 # substring match on the extra field name).
@@ -56,6 +71,16 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": _scrub_text(record.getMessage()),
         }
+        # Request correlation (never fails the log line).
+        try:
+            _rid = request_id_var.get("")
+            if _rid:
+                payload["request_id"] = _rid
+            _cip = client_ip_var.get("")
+            if _cip:
+                payload["client_ip"] = _cip
+        except Exception:
+            pass
         # Include structured extras passed via logger.info(..., extra={...})
         for key, value in getattr(record, "__dict__", {}).items():
             if key in (

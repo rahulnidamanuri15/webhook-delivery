@@ -33,3 +33,7 @@ backups/*
 *.pem
 *.key
 deploy/tls/*.pem
+deploy/tls/live/
+deploy/tls/archive/
+deploy/tls/*.key
+**/*.pem

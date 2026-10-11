@@ -22,11 +22,16 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     broker_connection_max_retries=10,
     broker_transport_options={
-        "visibility_timeout": max(int(settings.LEASE_DURATION_SECONDS * 2), 60),
+        "visibility_timeout": max(int(settings.LEASE_DURATION_SECONDS * 2), 120),
     },
-    task_time_limit=settings.LEASE_DURATION_SECONDS,
+    # Hard limit stays strictly below lease (30s) so SIGKILL races recovery less;
+    # soft limit (HTTP+5) lets httpx errors surface as retryable first.
+    task_time_limit=max(int(settings.LEASE_DURATION_SECONDS - 5), 20),
     task_soft_time_limit=int(settings.HTTP_TIMEOUT_SECONDS + 5),
     result_expires=3600,
+    # Delivery/dispatch tasks only return bool/count for chaining; results would
+    # otherwise pile in Redis (256MB prod) with no consumer.
+    task_ignore_result=True,
     worker_cancel_long_running_tasks_on_connection_loss=True,
     beat_schedule={
         "dispatch-due-deliveries-every-2s": {

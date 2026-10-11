@@ -63,11 +63,25 @@ fi
 TARGET_URL="$(normalize_db_url "${TARGET_URL_RAW}")"
 DISPLAY_TARGET="$(redact_url "${TARGET_URL}")"
 
+# Canonicalize for in-place guard: compare host + dbname (not raw string, so
+# trailing `/`, ?sslmode=, or +driver variants cannot bypass the LIVE check).
+canonical_target_key() {
+    local url="$1"
+    url="${url%%\?*}"
+    url="${url%%\#*}"
+    local hostpart="${url#*://}"
+    hostpart="${hostpart#*@}"
+    local host="${hostpart%%/*}"
+    local db="${url##*/}"
+    db="${db%%\?*}"
+    printf '%s/%s' "$(printf '%s' "${host}" | tr '[:upper:]' '[:lower:]')" "${db}"
+}
+
 # Guard: restoring into the live app database must be a deliberate operator
 # decision, never a forgotten second argument.
 if [ -n "${DATABASE_URL:-}" ]; then
     LIVE_URL="$(normalize_db_url "${DATABASE_URL}")"
-    if [ "${TARGET_URL}" = "${LIVE_URL}" ]; then
+    if [ "$(canonical_target_key "${TARGET_URL}")" = "$(canonical_target_key "${LIVE_URL}")" ]; then
         if [ "${ASSUME_YES}" -ne 1 ] && [ "${ALLOW_RESTORE_INPLACE:-0}" != "1" ]; then
             echo "ERROR: target is the live DATABASE_URL (${DISPLAY_TARGET})." >&2
             echo "Refusing to overwrite it without --yes (or ALLOW_RESTORE_INPLACE=1)." >&2
@@ -82,7 +96,14 @@ if [ -f "${CHECKSUM_FILE}" ]; then
     echo "Verifying SHA-256 checksum..."
     sha256sum -c "${CHECKSUM_FILE}"
 else
-    echo "Warning: Checksum file not found, verifying gzip integrity only..."
+    # Fail closed unless explicitly allowed: a missing .sha256 means the dump
+    # is unverified (bit-rot / partial copy passes gzip -t).
+    if [ "${ALLOW_MISSING_CHECKSUM:-0}" != "1" ]; then
+        echo "ERROR: Checksum file ${CHECKSUM_FILE} not found. Refusing to restore unverified dump." >&2
+        echo "Re-run with ALLOW_MISSING_CHECKSUM=1 to allow gzip-only verification." >&2
+        exit 1
+    fi
+    echo "Warning: Checksum file not found (ALLOW_MISSING_CHECKSUM=1), verifying gzip integrity only..."
     gzip -t "${BACKUP_FILE}"
 fi
 

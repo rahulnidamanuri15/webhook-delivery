@@ -37,6 +37,8 @@ def _maybe_run_retention() -> None:
         return
     _last_retention_run = now
     try:
+        import os as _os
+
         from app.db.session import SessionLocal
         from app.services.retention import purge_expired_data
         from app.services.tracing import start_trace_span as _span
@@ -44,7 +46,9 @@ def _maybe_run_retention() -> None:
         db = SessionLocal()
         try:
             with _span("retention.purge"):
-                result = purge_expired_data(db)
+                raw = (_os.getenv("LEGAL_HOLD_PROJECT_IDS", "") or "").strip()
+                hold = {p.strip() for p in raw.split(",") if p.strip()} or None
+                result = purge_expired_data(db, legal_hold_project_ids=hold)
             logger.info("retention_purge_completed", extra=result)
         finally:
             db.close()

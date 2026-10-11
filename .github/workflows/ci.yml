@@ -183,6 +183,7 @@ jobs:
           ALLOWED_RECEIVER_DOMAINS=example.com \
           PUBLIC_BASE_URL=https://example.com \
           SMTP_HOST=smtp.example.com \
+          SMTP_USERNAME=noreply@example.com \
           SMTP_PASSWORD=dummy_smtp_password \
           SMTP_FROM_EMAIL=noreply@example.com \
           docker compose -f compose.yaml -f compose.prod.yaml config -q

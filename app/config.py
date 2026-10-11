@@ -139,6 +139,11 @@ class Settings(BaseSettings):
         default="",
         description="Public https origin for links in email (e.g. https://hooks.example.com). No trailing slash.",
     )
+    # Compliance hold: comma-separated project IDs excluded from retention purge.
+    LEGAL_HOLD_PROJECT_IDS: str = Field(
+        default="",
+        description="Comma-separated project IDs excluded from retention purge (legal hold).",
+    )
 
     def __init__(self, **values):
         super().__init__(**values)
@@ -196,9 +201,15 @@ _INSECURE_FERNET_DEFAULTS = {
 _INSECURE_DB_SUBSTRINGS = ("postgrespassword", "postgres:postgres@")
 
 
+def is_production_env(env_value: str | None) -> bool:
+    """True for production AND common aliases (prod/live) so ENV=prod cannot
+    bypass fail-fasts. Staging is treated as prod-like (strict) too."""
+    return str(env_value or "").strip().lower() in ("production", "prod", "live", "staging")
+
+
 def validate_production_settings(s: Settings) -> None:
-    # Normalized prod check (ENV is case-insensitive; "Production" must not bypass).
-    is_prod = str(s.ENV or "").strip().lower() == "production"
+    # Normalized prod check (ENV is case-insensitive; "Production"/"prod" must not bypass).
+    is_prod = is_production_env(s.ENV)
     if not is_prod:
         return
     _redis = str(s.REDIS_URL or "").strip()
@@ -268,9 +279,37 @@ def validate_production_settings(s: Settings) -> None:
             "ALLOWED_RECEIVER_DOMAINS must be configured in production (e.g. 'api.partner.com,webhooks.acme.com'). "
             "An explicit allowlist is required to prevent arbitrary outbound SSRF connections."
         )
+    # Email transport sanity: both TLS and SSL on is a common 465 mistake that
+    # silently takes the SSL branch; both off sends creds in plaintext.
+    if s.SMTP_USE_TLS and s.SMTP_USE_SSL:
+        raise RuntimeError(
+            "SMTP_USE_TLS and SMTP_USE_SSL cannot both be True (port 465 = SSL True/TLS False; "
+            "port 587 = TLS True/SSL False)."
+        )
+    if (s.SMTP_PASSWORD or "").strip() and not (s.SMTP_USERNAME or "").strip():
+        raise RuntimeError(
+            "SMTP_USERNAME is required when SMTP_PASSWORD is set (password would otherwise be silently ignored)."
+        )
+    # Invitation links are built from PUBLIC_BASE_URL; empty falls back to Host:
+    # header (poisonable). Require explicit https origin in production.
+    _base = (s.PUBLIC_BASE_URL or "").strip()
+    if not _base:
+        raise RuntimeError(
+            "PUBLIC_BASE_URL must be set in production (e.g. https://hooks.example.com) "
+            "so invitation emails cannot be Host-header poisoned."
+        )
+    if not _base.lower().startswith("https://"):
+        raise RuntimeError("PUBLIC_BASE_URL must be an https:// origin in production.")
+    # Test-only OTP sink must never hold live codes in prod memory.
+    if s.PASSWORD_RESET_OTP_CAPTURE:
+        raise RuntimeError("PASSWORD_RESET_OTP_CAPTURE must be False in production (holds live OTPs in memory).")
+    # LEGAL_HOLD_PROJECT_IDS is parsed as CSV; validate shape early.
+    _hold_raw = getattr(s, "LEGAL_HOLD_PROJECT_IDS", "") or ""
+    if isinstance(_hold_raw, str) and len(_hold_raw) > 4096:
+        raise RuntimeError("LEGAL_HOLD_PROJECT_IDS is too long (max 4096 chars).")
 
 
-_IS_PRODUCTION = str(settings.ENV or "").strip().lower() == "production"
+_IS_PRODUCTION = is_production_env(settings.ENV)
 validate_production_settings(settings)
 
 

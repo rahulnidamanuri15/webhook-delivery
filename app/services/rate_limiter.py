@@ -188,10 +188,12 @@ def _acquire_both(key: str, rate_per_sec: float, capacity: float) -> tuple[bool,
 
 def check_login_rate_limit(client_ip: str, email: str = "") -> tuple[bool, float]:
     """
-    Dual-bucket login throttle (fixes email-rotation bypass):
-    - per-IP bucket: 20 attempts / 60s (burst 20) — stops distributed guessing
+    Triple-bucket login throttle:
+    - per-IP bucket: 20 attempts / 60s (burst 20) — stops single-source guessing
     - per-IP+email bucket: 5 attempts / 60s (burst 5) — stops targeted guessing
-    Both must allow; returns longest wait on denial.
+    - per-email global bucket: 20 attempts / 60s (burst 20) — stops distributed
+      botnet rotation across IPs (all must allow).
+    Returns longest wait on denial.
     """
     ip = (client_ip or "unknown").strip() or "unknown"
     em = (email or "").strip().lower()
@@ -202,6 +204,10 @@ def check_login_rate_limit(client_ip: str, email: str = "") -> tuple[bool, float
         em_allowed, em_wait = _acquire_both(f"login:ip-email:{ip}:{em}", 5.0 / 60.0, 5.0)
         if not em_allowed:
             return False, em_wait
+        # Global per-email bucket: distributed guessing across a botnet.
+        glob_allowed, glob_wait = _acquire_both(f"login:email:{em}", 20.0 / 60.0, 20.0)
+        if not glob_allowed:
+            return False, glob_wait
     else:
         # No email supplied: apply stricter per-IP email-less bucket
         em_allowed, em_wait = _acquire_both(f"login:ip:{ip}:noemail", 5.0 / 60.0, 5.0)
@@ -241,7 +247,9 @@ def check_password_reset_request_rate_limit(client_ip: str, email: str = "") -> 
     """Forgot-password request throttle (anti email-bombing / enumeration):
     - per-IP bucket: 20 requests / hour (burst 20)
     - per-IP+email bucket: 5 requests / hour (burst 5)
-    Both must allow; returns longest wait on denial.
+    - per-email global bucket: 10 requests / hour (burst 10) — stops distributed
+      fleet from invalidating the victim's OTP / spamming inbox across IPs.
+    All must allow; returns longest wait on denial.
     """
     ip = (client_ip or "unknown").strip() or "unknown"
     em = (email or "").strip().lower()
@@ -252,6 +260,9 @@ def check_password_reset_request_rate_limit(client_ip: str, email: str = "") -> 
         em_allowed, em_wait = _acquire_both(f"pwdreset-req:ip-email:{ip}:{em}", 5.0 / 3600.0, 5.0)
         if not em_allowed:
             return False, em_wait
+        glob_allowed, glob_wait = _acquire_both(f"pwdreset-req:email:{em}", 10.0 / 3600.0, 10.0)
+        if not glob_allowed:
+            return False, glob_wait
     return True, 0.0
 
 

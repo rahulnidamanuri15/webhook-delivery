@@ -22,6 +22,7 @@ Engineering a reliable distributed system requires honest boundaries. This docum
 
 ### 1.4 Production safety rails
 - `ENV=production` refuses insecure `SECRET_KEY` defaults and `ALLOW_LOCAL_RECEIVERS=True` unless `I_UNDERSTAND_ALLOW_LOCAL_RISK=1`.
+- DEPLOY WARNING: never set `I_UNDERSTAND_ALLOW_LOCAL_RISK=1` in a production `.env` or CI/CD secrets, even during a rushed deploy — it re-opens loopback SSRF. Closed demos only; production stays `ALLOW_LOCAL_RECEIVERS=False` with an explicit `ALLOWED_RECEIVER_DOMAINS`.
 - `ALLOWED_RECEIVER_DOMAINS` allowlist is enforced at registration **and** at send time with IP-pinned DNS (no rebinding gap).
 - Session cookies are `HttpOnly/SameSite=Lax/Secure(prod)`; project selector is now `HttpOnly`; sessions rotate on login/project-switch/invitation-accept and are denylisted on logout.
 - Replay is restricted to `DEAD` dead-letters only; recovery writes a `LEASE_EXPIRED` attempt so timelines have no gap.

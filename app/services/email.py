@@ -21,6 +21,25 @@ logger = logging.getLogger("webhook.email")
 # so tests can read a code without it ever reaching a log line.
 _captured_otps: list[dict[str, str]] = []
 
+# Best-effort in-process email counters (surfaced via /metrics note; full
+# Prometheus RED metrics live in metrics.py which queries DB — email has no DB
+# table, so we keep process counters here and expose via generate_email_metrics).
+_email_sent_total: int = 0
+_email_failed_total: int = 0
+
+
+def email_counters() -> dict[str, int]:
+    return {"sent": _email_sent_total, "failed": _email_failed_total}
+
+
+def generate_email_metrics_text() -> str:
+    return (
+        "# HELP webhook_email_send_total Transactional emails accepted for delivery\n"
+        "# TYPE webhook_email_send_total counter\n"
+        f"webhook_email_send_total{{result=\"sent\"}} {_email_sent_total}\n"
+        f"webhook_email_send_total{{result=\"failed\"}} {_email_failed_total}\n"
+    )
+
 
 def captured_otps() -> list[dict[str, str]]:
     """Copies of OTPs held by the test-only capture sink."""
@@ -93,9 +112,10 @@ def send_otp_email(to_email: str, otp: str, expire_minutes: int | None = None) -
 
     Never raises: SMTP failures are logged and return False so callers can
     keep the user-facing response generic (no account enumeration, no 500s).
-    When SMTP is unconfigured, returns True without logging the OTP so the
-    flow stays usable offline. With PASSWORD_RESET_OTP_CAPTURE enabled the
-    OTP is held in an in-process sink for tests; it is never logged.
+    When SMTP is unconfigured, returns False (fail-closed) unless the test-only
+    PASSWORD_RESET_OTP_CAPTURE sink is enabled — callers show a generic
+    "if an account exists" message either way, so dev without SMTP does not
+    silently pretend delivery succeeded. The OTP is never logged.
     """
     exp_min = int(expire_minutes if expire_minutes is not None else settings.PASSWORD_RESET_OTP_EXPIRE_MINUTES)
     clean_to = (to_email or "").strip()
@@ -104,24 +124,20 @@ def send_otp_email(to_email: str, otp: str, expire_minutes: int | None = None) -
 
     if not is_email_configured():
         if settings.PASSWORD_RESET_OTP_CAPTURE:
-            _captured_otps.append({"to": clean_to, "otp": otp})
+            if len(_captured_otps) < 1000:
+                _captured_otps.append({"to": clean_to, "otp": otp})
             return True
-        # Production must not pretend the code was sent. Dev/test stays quiet
-        # so local flows work without an SMTP server, and the OTP is never logged.
-        if str(settings.ENV or "").strip().lower() == "production":
-            logger.error("SMTP not configured; refusing to fake a password-reset delivery")
-            return False
-        logger.info(
-            "SMTP not configured; password-reset email not sent (request expires in %sm)",
-            exp_min,
-        )
-        return True
+        # Fail closed in every ENV: returning True here masked SMTP outages
+        # (staging showed "code sent" with nothing delivered while prod failed).
+        logger.error("SMTP not configured; refusing to fake a password-reset delivery to %s", _mask_email(clean_to))
+        return False
 
     return _send_message(_build_otp_message(clean_to, otp, exp_min), clean_to)
 
 
 def _send_message(msg: EmailMessage, to_email: str) -> bool:
     """Delivers one message. Never raises and never logs message contents."""
+    global _email_sent_total, _email_failed_total
     host = (settings.SMTP_HOST or "").strip()
     port = int(settings.SMTP_PORT or 587)
     username = (settings.SMTP_USERNAME or "").strip()
@@ -142,9 +158,11 @@ def _send_message(msg: EmailMessage, to_email: str) -> bool:
                 if username:
                     server.login(username, password)
                 server.send_message(msg)
+        _email_sent_total += 1
         logger.info("Email accepted for %s via %s:%s", _mask_email(to_email), host, port)
         return True
     except Exception as e:
+        _email_failed_total += 1
         logger.warning("Failed to send email to %s via %s:%s: %s", _mask_email(to_email), host, port, e)
         return False
 

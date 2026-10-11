@@ -1,0 +1,25 @@
+groups:
+  - name: webhook-delivery
+    interval: 30s
+    rules:
+      - alert: WebhookBacklogHigh
+        expr: webhook_backlog_total > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Webhook delivery backlog > 1000 for 5m"
+      - alert: WebhookDeadLetterSurge
+        expr: increase(webhook_deliveries_total{status="DEAD"}[15m]) > 50
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DEAD deliveries surging (>50 in 15m)"
+      - alert: EmailSendFailures
+        expr: increase(webhook_email_send_total{result="failed"}[15m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Transactional email failures rising"

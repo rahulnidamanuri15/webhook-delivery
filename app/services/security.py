@@ -179,10 +179,13 @@ def hash_invitation_token_candidates(raw_token: str) -> list[str]:
 # --- Sessions & CSRF ---
 # Server-side logout invalidation via token denylist.
 # Stateless signed cookies cannot be revoked without server state, so logout
-# adds the token hash to a denylist (Redis when available, else in-memory)
-# until its natural 7-day expiry.
+# adds the token hash to a denylist (Redis when available AND in-memory) until
+# its natural 7-day expiry. Both stores are always written and both are checked
+# so a Redis flap or single-replica restart does not silently revive sessions.
+# In-memory is bounded with TTL eviction (see _sweep_denied_hashes).
 import time as _time
 
+_DENYLIST_MAX_ENTRIES = 10000
 _denied_session_hashes: dict[str, float] = {}
 _redis_denylist = None
 
@@ -211,20 +214,41 @@ def _hash_token(token: str) -> str:
 _denied_user_session_timestamps: dict[str, float] = {}
 
 
+def _sweep_denied_hashes(now: float | None = None) -> None:
+    """Evicts expired denylist entries and caps memory under logout-spam."""
+    try:
+        ts = float(now) if now is not None else _time.time()
+        expired = [k for k, exp in _denied_session_hashes.items() if ts > float(exp)]
+        for k in expired:
+            _denied_session_hashes.pop(k, None)
+        if len(_denied_session_hashes) > _DENYLIST_MAX_ENTRIES:
+            # Evict oldest-expiring first.
+            for k in sorted(_denied_session_hashes, key=lambda k: _denied_session_hashes[k])[
+                : len(_denied_session_hashes) - _DENYLIST_MAX_ENTRIES
+            ]:
+                _denied_session_hashes.pop(k, None)
+    except Exception:
+        pass
+
+
 def invalidate_session_token(token: str) -> None:
     """Adds a session token to the logout denylist until its max_age elapses."""
     if not token:
         return
     h = _hash_token(token)
-    expiry = int(_time.time()) + 86400 * 7
+    expiry = _time.time() + 86400 * 7
+    # Always populate in-memory so this replica stays revoked even if Redis
+    # is down; Redis covers other replicas + restarts.
+    _denied_session_hashes[h] = float(expiry)
+    _sweep_denied_hashes()
     r = _get_redis_client()
     if r is not None:
         try:
             r.setex(f"session_denylist:{h}", 86400 * 7, "1")
-            return
-        except Exception:
-            pass
-    _denied_session_hashes[h] = float(expiry)
+        except Exception as e:
+            import logging as _logging
+
+            _logging.getLogger("webhook.security").warning("session denylist Redis write failed, in-memory only: %s", e)
 
 
 def invalidate_all_user_sessions(user_id: str) -> None:
@@ -232,13 +256,27 @@ def invalidate_all_user_sessions(user_id: str) -> None:
     if not user_id:
         return
     now_ts = _time.time()
+    _denied_user_session_timestamps[user_id] = float(now_ts)
+    # Bound companion map.
+    try:
+        if len(_denied_user_session_timestamps) > _DENYLIST_MAX_ENTRIES:
+            oldest = sorted(_denied_user_session_timestamps, key=lambda k: _denied_user_session_timestamps[k])[
+                : len(_denied_user_session_timestamps) - _DENYLIST_MAX_ENTRIES
+            ]
+            for k in oldest:
+                _denied_user_session_timestamps.pop(k, None)
+    except Exception:
+        pass
     r = _get_redis_client()
     if r is not None:
         try:
             r.setex(f"user_session_revoked_at:{user_id}", 86400 * 7, str(now_ts))
-        except Exception:
-            pass
-    _denied_user_session_timestamps[user_id] = float(now_ts)
+        except Exception as e:
+            import logging as _logging
+
+            _logging.getLogger("webhook.security").warning(
+                "user session revocation Redis write failed, in-memory only: %s", e
+            )
 
 
 def is_user_session_revoked(user_id: str, token_timestamp: float) -> bool:
@@ -267,6 +305,8 @@ def is_session_token_denied(token: str) -> bool:
     if not token:
         return False
     h = _hash_token(token)
+    # Check Redis first (cross-replica + survives restart), then in-memory.
+    # Redis errors never fail open to "not denied": fall through to memory.
     r = _get_redis_client()
     if r is not None:
         try:
@@ -370,7 +410,11 @@ def _is_trusted_proxy(ip_str: str) -> bool:
     trusted_raw = getattr(settings, "TRUSTED_PROXIES", "127.0.0.1,::1") or "127.0.0.1,::1"
     trusted_list = [p.strip() for p in trusted_raw.split(",") if p.strip()]
     for pattern in trusted_list:
-        if pattern == "*" or pattern == ip_str:
+        # Never honor "*" — prod validator forbids it, and this is defense in
+        # depth if config is ever mis-set (would allow XFF spoofing).
+        if pattern == "*":
+            continue
+        if pattern == ip_str:
             return True
         try:
             if "/" in pattern:

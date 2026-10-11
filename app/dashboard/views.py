@@ -47,10 +47,12 @@ _DUMMY_LOGIN_HASH: str | None = None
 
 
 def is_cookie_secure() -> bool:
-    # Production always uses Secure cookies: the dashboard is served over
-    # HTTPS there, and Secure has no downside on TLS. COOKIE_SECURE may only
-    # relax this in non-production (local plain-HTTP dev).
-    if str(settings.ENV or "").strip().lower() == "production":
+    # Production (incl. prod/staging aliases) always uses Secure cookies: the
+    # dashboard is served over HTTPS there, and Secure has no downside on TLS.
+    # COOKIE_SECURE may only relax this in non-production (local plain-HTTP dev).
+    from app.config import is_production_env as _is_prod
+
+    if _is_prod(settings.ENV):
         return True
     if settings.COOKIE_SECURE is not None:
         return settings.COOKIE_SECURE
@@ -563,15 +565,12 @@ def forgot_password_post(
         )
 
     if not send_otp_email(user.email, plain_otp):
-        return templates.TemplateResponse(
-            "auth/forgot_password.html",
-            {
-                "request": request,
-                "current_user": None,
-                "error": "Unable to deliver verification code email. Please check server SMTP configuration or try again.",
-                "email": clean_email,
-            },
-            status_code=500,
+        # Never distinguish SMTP failures (would let attackers enumerate
+        # registered emails via 500 vs 200). Log internally, show generic success.
+        import logging as _logging
+
+        _logging.getLogger("webhook.auth").warning(
+            "password-reset email delivery failed for known user (generic response shown)"
         )
     return _forgot_generic_success(request, clean_email)
 
@@ -710,15 +709,10 @@ def forgot_password_resend_post(
             status_code=500,
         )
     if not send_otp_email(user.email, plain_otp):
-        return templates.TemplateResponse(
-            "auth/verify_otp.html",
-            {
-                "request": request,
-                "current_user": None,
-                "email": clean_email,
-                "error": "Unable to deliver verification code email. Please check server SMTP configuration or try again.",
-            },
-            status_code=500,
+        import logging as _logging
+
+        _logging.getLogger("webhook.auth").warning(
+            "password-reset resend delivery failed for known user (generic response shown)"
         )
     return _forgot_generic_success(request, clean_email, resend=True)
 
@@ -2487,15 +2481,58 @@ def invite_team_member(
 
     base = (settings.PUBLIC_BASE_URL or "").strip().rstrip("/")
     if not base:
+        # Fail closed in production: deriving links from Host: header allows
+        # Host-header poisoning (attacker Host -> emailed credential link).
+        # PUBLIC_BASE_URL is required in prod compose + config validator.
+        if str(settings.ENV or "").strip().lower() == "production":
+            raise HTTPException(
+                status_code=500,
+                detail="PUBLIC_BASE_URL is not configured. Set PUBLIC_BASE_URL=https://hooks.example.com.",
+            )
         base = str(request.base_url).rstrip("/")
     invite_url = f"{base}/auth/invitations/{raw_token}"
     sent = send_invitation_email(email_clean, invite_url, org.name, invitation.role)
-    # The raw token is never stored. If email could not be sent, keep it only
-    # for this one redirect so the inviter can still hand the link over.
+    # Never place the raw token in the redirect Location (browser history,
+    # nginx/uvicorn access logs, aggregators). On SMTP failure render the link
+    # once in the response BODY so the inviter can copy it; the URL stays clean.
     if not sent:
-        notice = quote(
-            "Email could not be sent. Copy this invite link now — it will not be shown again: " + invite_url,
-            safe="",
+        from app.services.audit import log_audit_event as _log_invite_fail
+
+        client_ip = get_client_ip(request)
+        _log_invite_fail(
+            db=db,
+            organization_id=org.id,
+            user_id=user.id,
+            action="team.invite",
+            resource_type="invitation",
+            resource_id=invitation.id,
+            ip_address=client_ip,
+            details={"invitee_email": email_clean, "role": invitation.role, "emailed": False},
+        )
+        return templates.TemplateResponse(
+            "team/index.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": project,
+                "current_org": org,
+                "members": db.query(OrganizationMember)
+                .options(joinedload(OrganizationMember.user))
+                .filter(OrganizationMember.organization_id == org.id)
+                .all(),
+                "invitations": db.query(OrganizationInvitation)
+                .filter(OrganizationInvitation.organization_id == org.id)
+                .order_by(OrganizationInvitation.created_at.desc())
+                .all(),
+                "is_manager": True,
+                "actor_role": cur_membership.role if cur_membership else None,
+                "message": None,
+                "message_type": "success",
+                "invite_link": invite_url,
+                "invite_email": email_clean,
+                "error": "Email could not be sent. Copy this invite link now — it will not be shown again.",
+            },
+            status_code=200,
         )
     else:
         notice = quote(f"Invitation emailed to {email_clean}. If not visible, Check your spam folder too!", safe="")
@@ -2686,8 +2723,18 @@ def remove_member(member_id: str, request: Request, csrf_token: str | None = For
 @router.get("/auth/invitations/{token}", response_class=HTMLResponse)
 def accept_invitation_page(token: str, request: Request, db: Session = Depends(get_db)):
     from app.models.invitation import OrganizationInvitation
-    from app.services.security import hash_invitation_token_candidates
+    from app.services.security import get_client_ip, hash_invitation_token_candidates
 
+    # Throttle the GET oracle too (POST alone is not enough — valid/invalid
+    # pages differ, so unthrottled GET is a token oracle).
+    from app.services.rate_limiter import check_invitation_accept_rate_limit
+
+    _allowed, _wait = check_invitation_accept_rate_limit(get_client_ip(request))
+    if not _allowed:
+        return HTMLResponse(
+            "<p style='padding:40px;text-align:center;font-family:sans-serif;'>Too many attempts. Please try again later.</p>",
+            status_code=429,
+        )
     candidates = hash_invitation_token_candidates(token)
     invitation = db.query(OrganizationInvitation).filter(OrganizationInvitation.token.in_(candidates)).first()
     if not invitation or not invitation.is_valid:

@@ -61,6 +61,13 @@ services:
     build: .
     image: webhook-delivery:latest
     command: alembic upgrade head
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       - ENV=production
       - DEBUG=False
@@ -74,9 +81,6 @@ services:
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:?ALLOWED_RECEIVER_DOMAINS is required in production}
       - USE_DEMO_RETRY_POLICY=False
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required in production, e.g. https://hooks.example.com}
-      - SMTP_HOST=${SMTP_HOST:?SMTP_HOST is required in production}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:?SMTP_PASSWORD is required in production}
-      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:?SMTP_FROM_EMAIL is required in production}
     depends_on:
       postgres:
         condition: service_healthy
@@ -215,6 +219,13 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+    healthcheck:
+      # Standalone runner serves no HTTP; liveness = process alive + recent DB progress.
+      test: ["CMD-SHELL", "pgrep -f 'app.workers.runner' >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     environment:
       - ENV=production
       - DEBUG=False
@@ -234,6 +245,13 @@ services:
   # Fail-closed guard for dev-only seed: refuses production in scripts/seed.py.
   # Kept so `--profile seed` can never run silently against prod DB.
   seed:
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       - ENV=${ENV:?ENV must be explicitly set to run seed (refuses production in scripts/seed.py)}
 
@@ -299,6 +317,13 @@ services:
     # Empty command: `up` runs the renewal loop; `run --rm certbot <args>`
     # appends <args> as entrypoint parameters for one-shot issuance.
     command: []
+    healthcheck:
+      # Renewal loop liveness: entrypoint touches a heartbeat file each cycle.
+      test: ["CMD-SHELL", "test -f /tmp/certbot_alive || exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
   db_backup:
     image: prodrigestivill/postgres-backup-local:16
     restart: unless-stopped
@@ -309,10 +334,18 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+    healthcheck:
+      # Dump presence probe (freshness alerting belongs in Prometheus; this
+      # only ensures the backup sidecar is alive and has written once).
+      test: ["CMD-SHELL", "ls /backups/*.gz >/dev/null 2>&1 || exit 1"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production}
       - POSTGRES_DB=${POSTGRES_DB:-webhook_platform}
       - SCHEDULE=@daily
       - BACKUP_KEEP_DAYS=7

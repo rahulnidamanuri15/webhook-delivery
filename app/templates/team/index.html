@@ -6,6 +6,18 @@
 {% block content %}
 <div class="space-y-6">
 
+  {% if error %}
+  <div class="bg-rose-50 border border-rose-200 text-rose-800 text-sm rounded-xl px-4 py-3" role="alert">
+    {{ error }}
+  </div>
+  {% endif %}
+  {% if invite_link %}
+  <div class="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900" role="alert">
+    <p class="font-semibold mb-1">Email failed — copy this invite link now (shown once, never in URL/logs):</p>
+    <p class="break-all font-mono text-xs bg-white border border-amber-200 rounded px-2 py-2">{{ invite_link }}</p>
+  </div>
+  {% endif %}
+
   <!-- Invite Member Card (Allowed for Owner/Admin) -->
   {% if is_manager %}
   <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
