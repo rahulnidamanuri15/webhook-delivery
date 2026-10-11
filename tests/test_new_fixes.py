@@ -127,8 +127,10 @@ def test_production_fails_on_demo_retry_policy():
         USE_DEMO_RETRY_POLICY=True,
         REDIS_URL="redis://:secret@redis:6379/0",
         SMTP_HOST="smtp.example.com",
+        SMTP_USERNAME="noreply@example.com",
         SMTP_PASSWORD="smtp-secret",
         SMTP_FROM_EMAIL="noreply@example.com",
+        PUBLIC_BASE_URL="https://hooks.example.com",
     )
     with pytest.raises(RuntimeError, match="USE_DEMO_RETRY_POLICY must be False in production"):
         validate_production_settings(s)

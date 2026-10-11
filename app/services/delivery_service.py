@@ -160,8 +160,9 @@ def calculate_backoff_seconds(attempt_number: int, retry_after_header: str | Non
                 delay_s = int((retry_dt - now_dt).total_seconds())
                 if delay_s >= 1:
                     return max(1, min(MAX_RETRY_AFTER_CAP, delay_s))
-                # Past dates fall through to exponential backoff below so a
-                # receiver returning a stale date cannot force a 1s hot loop.
+                # Past/stale dates mean "retry now" — clamp to 1s (RFC 7231:
+                # recipient ought to interpret a date in the past as "no wait").
+                return 1
         except Exception:
             pass
 
@@ -347,8 +348,11 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
     except Exception as e:
         err_msg = f"Secret decryption error: {e}"
         logger.error(f"Failed to decrypt endpoint secret for {endpoint.id}: {err_msg}")
-        # Config error (wrong/rotated Fernet key) will never succeed on retry —
-        # dead-letter immediately instead of burning the retry budget.
+        # Decryption failures are recorded as retryable so the delivery stays
+        # in RETRY_SCHEDULED (with a descriptive FERNET_DECRYPT_ERROR attempt)
+        # rather than dead-lettering immediately — an operator rotating
+        # SIGNING_SECRET_ENCRYPTION_KEY (or fixing corrupt ciphertext) can
+        # still recover within the retry budget.
         _record_attempt_and_update_state(
             db=db,
             delivery_id=delivery_id,
@@ -360,7 +364,7 @@ def execute_delivery(db: Session, delivery_id: str) -> bool:
             duration_ms=0,
             error_code="FERNET_DECRYPT_ERROR",
             response_excerpt=err_msg[: settings.RESPONSE_EXCERPT_MAX_BYTES],
-            outcome="PERMANENT_ERROR",
+            outcome="RETRYABLE_ERROR",
         )
         return False
 
