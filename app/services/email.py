@@ -36,8 +36,8 @@ def generate_email_metrics_text() -> str:
     return (
         "# HELP webhook_email_send_total Transactional emails accepted for delivery\n"
         "# TYPE webhook_email_send_total counter\n"
-        f"webhook_email_send_total{{result=\"sent\"}} {_email_sent_total}\n"
-        f"webhook_email_send_total{{result=\"failed\"}} {_email_failed_total}\n"
+        f'webhook_email_send_total{{result="sent"}} {_email_sent_total}\n'
+        f'webhook_email_send_total{{result="failed"}} {_email_failed_total}\n'
     )
 
 

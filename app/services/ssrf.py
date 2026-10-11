@@ -256,7 +256,11 @@ def resolve_and_pin_destination(url: str) -> PinnedResolutionResult:
         # for a well-formed public name is usually transient too (DNS propagation).
         # Truly forbidden destinations are already rejected above via IP checks.
         if "timed out" in msg or "could not be resolved" in msg.lower() or "temporary" in msg.lower():
-            return PinnedResolutionResult(False, f"DNS transient failure for '{hostname}': {e}", url, {}, error_kind="transient")
-        return PinnedResolutionResult(False, f"Hostname '{hostname}' could not be resolved.", url, {}, error_kind="transient")
+            return PinnedResolutionResult(
+                False, f"DNS transient failure for '{hostname}': {e}", url, {}, error_kind="transient"
+            )
+        return PinnedResolutionResult(
+            False, f"Hostname '{hostname}' could not be resolved.", url, {}, error_kind="transient"
+        )
     except Exception as e:
         return PinnedResolutionResult(False, f"DNS resolution failed: {e}", url, {}, error_kind="transient")

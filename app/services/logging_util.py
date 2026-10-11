@@ -29,6 +29,7 @@ def set_request_context(request_id: str = "", client_ip: str = "") -> None:
     except Exception:
         pass
 
+
 # Keys whose values must never reach a log aggregator (case-insensitive
 # substring match on the extra field name).
 _SENSITIVE_KEY_PATTERN = re.compile(

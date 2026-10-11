@@ -45,6 +45,7 @@ if not settings.DATABASE_URL.startswith("sqlite"):
         except Exception:
             pass
 
+
 # Enable foreign keys + busy timeout + WAL for SQLite (reduces
 # "database is locked" under in-process dispatcher threads).
 if settings.DATABASE_URL.startswith("sqlite"):
