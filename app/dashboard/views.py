@@ -155,6 +155,16 @@ def get_user_and_project(request: Request, db: Session):
         request.state.sidebar_dead_count = get_sidebar_dead_count(db, project.id if project else None)
     except Exception:
         pass
+    # Same for the superadmin "Approvals" badge (pending registration count).
+    try:
+        if getattr(user, "is_superadmin", False):
+            request.state.sidebar_pending_count = (
+                db.query(func.count(User.id)).filter(User.status == "pending").scalar() or 0
+            )
+        else:
+            request.state.sidebar_pending_count = None
+    except Exception:
+        pass
 
     return user, org, project
 

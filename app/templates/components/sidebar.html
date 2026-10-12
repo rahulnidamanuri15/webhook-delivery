@@ -1,4 +1,5 @@
 <!-- Hookflow Sidebar — visual restyle only, all routes preserved -->
+<style>.hookflow-nav{scrollbar-width:none;-ms-overflow-style:none;}.hookflow-nav::-webkit-scrollbar{display:none;}</style>
 {% set cur_path = request.url.path if request is defined and request.url is defined else '' %}
 <div class="hidden md:flex md:w-[260px] md:flex-col md:fixed md:inset-y-0 bg-[#1c2f24] border-r border-white/5" style="background:linear-gradient(180deg,#1e3227 0%,#182720 100%)">
   <div class="flex-1 flex flex-col min-h-0">
@@ -29,7 +30,7 @@
     </div>
 
     <!-- Navigation Links -->
-    <nav class="mt-2 flex-1 px-3 space-y-1 overflow-y-auto pb-4">
+    <nav class="hookflow-nav mt-2 flex-1 px-3 space-y-1 overflow-y-auto pb-4">
       <p class="px-3 pt-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/35">Monitor</p>
       <a href="/dashboard" class="relative flex items-center px-3 py-2 text-[14px] font-medium rounded-lg transition {% if cur_path == '/dashboard' or cur_path == '/dashboard/' %}bg-white/[0.08] text-white relay-nav-active{% else %}text-white/70 hover:bg-white/[0.06] hover:text-white{% endif %}">
         {% if cur_path == '/dashboard' or cur_path == '/dashboard/' %}<span class="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-full bg-[#2fd180]"></span>{% endif %}
@@ -106,7 +107,20 @@
             <svg class="mr-3 h-5 w-5 text-white/45" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
               <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
             </svg>
-            Approvals
+            <span class="flex-1">Approvals</span>
+            {% set _pend = none %}
+            {% if request is defined and request.state is defined and request.state.sidebar_pending_count is defined %}
+              {% set _pend = request.state.sidebar_pending_count %}
+            {% elif pending_count is defined %}
+              {% set _pend = pending_count %}
+            {% endif %}
+            {% if _pend is not none %}
+              {% if _pend > 0 %}
+                <span class="ml-2 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2fd180]/20 text-[#7be3a8] text-[11px] font-bold">{{ _pend }}</span>
+              {% else %}
+                <span class="ml-2 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-white/10 text-white/40 text-[11px] font-bold">0</span>
+              {% endif %}
+            {% endif %}
           </a>
           {% endif %}
           <a href="/dashboard/audit-logs" class="flex items-center px-3 py-2 text-[14px] font-medium rounded-lg text-white/70 hover:bg-white/[0.06] hover:text-white transition {% if 'audit' in cur_path %}bg-white/[0.08] text-white{% endif %}">
