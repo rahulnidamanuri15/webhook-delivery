@@ -120,6 +120,8 @@ services:
       # Hardcoded False: even ALLOW_OPEN_REGISTRATION=True in .env cannot open
       # prod (app/config.py also fail-fasts if True).
       - ALLOW_OPEN_REGISTRATION=False
+      # Approval queue: pending-only signups, no instant access (safe in prod).
+      - ALLOW_PENDING_REGISTRATION=${ALLOW_PENDING_REGISTRATION:-True}
       - ALLOWED_RECEIVER_DOMAINS=${ALLOWED_RECEIVER_DOMAINS:?ALLOWED_RECEIVER_DOMAINS is required in production}
       - USE_CELERY=True
       - ENABLE_INPROCESS_DISPATCHER=False

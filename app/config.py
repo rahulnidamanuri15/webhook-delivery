@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     ALLOW_OPEN_REGISTRATION: bool = Field(
         default=False, description="Allow anyone to register. MUST be False in production."
     )
+    # Registration approval queue: when True, /auth/register accepts signups
+    # even while ALLOW_OPEN_REGISTRATION is False, but creates PENDING users
+    # (no org, no session) for superadmin approve/reject. Safe for production:
+    # pending users get zero access until approved.
+    ALLOW_PENDING_REGISTRATION: bool = Field(
+        default=False, description="Accept registrations into pending approval queue (no instant access)"
+    )
 
     # Delivery Engine & Workers
     REDIS_URL: str = "redis://localhost:6379/0"

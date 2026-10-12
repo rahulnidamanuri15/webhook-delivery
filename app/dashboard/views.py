@@ -312,6 +312,21 @@ def login_post(
             status_code=400,
         )
 
+    # Approval queue: pending/rejected users cannot sign in.
+    _login_status = getattr(user, "status", "approved") or "approved"
+    if _login_status == "pending":
+        return templates.TemplateResponse(
+            "auth/login.html",
+            {"request": request, "error": "Account awaiting admin approval.", "current_user": None},
+            status_code=400,
+        )
+    if _login_status == "rejected":
+        return templates.TemplateResponse(
+            "auth/login.html",
+            {"request": request, "error": "Registration was not approved. Contact an administrator.", "current_user": None},
+            status_code=400,
+        )
+
     membership = db.query(OrganizationMember).filter(OrganizationMember.user_id == user.id).first()
     org_id = membership.organization_id if membership else None
 
@@ -354,7 +369,10 @@ def register_post(
     _reg_allowed, _reg_wait = check_registration_rate_limit(_reg_ip)
 
     if not settings.ALLOW_OPEN_REGISTRATION:
-        raise HTTPException(status_code=403, detail="Open registration is disabled. Contact an administrator.")
+        # Approval queue: accept signups as PENDING (no org, no session) when
+        # enabled. Safe for production — pending users get zero access.
+        if not getattr(settings, "ALLOW_PENDING_REGISTRATION", False):
+            raise HTTPException(status_code=403, detail="Open registration is disabled. Contact an administrator.")
 
     if not _reg_allowed:
         return templates.TemplateResponse(
@@ -375,10 +393,38 @@ def register_post(
         )
     existing = db.query(User).filter(User.email == email).first()
     if existing:
+        _st = getattr(existing, "status", "approved") or "approved"
+        if _st == "pending":
+            return templates.TemplateResponse(
+                "auth/register.html",
+                {
+                    "request": request,
+                    "error": "This email is awaiting admin approval. You will be able to sign in once approved.",
+                    "current_user": None,
+                },
+                status_code=400,
+            )
+        if _st != "rejected":
+            return templates.TemplateResponse(
+                "auth/register.html",
+                {"request": request, "error": "Email is already registered. Please sign in.", "current_user": None},
+                status_code=400,
+            )
+        # Rejected users may re-apply: reset to pending with the new password.
+        existing.password_hash = hash_password(password)
+        existing.status = "pending"
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
         return templates.TemplateResponse(
             "auth/register.html",
-            {"request": request, "error": "Email is already registered. Please sign in.", "current_user": None},
-            status_code=400,
+            {
+                "request": request,
+                "success": "Re-application received. An admin will review your account.",
+                "current_user": None,
+            },
         )
 
     if len(password) < 8 or len(password) > 128:
@@ -417,9 +463,42 @@ def register_post(
             status_code=400,
         )
 
+    # Approval-queue mode (open registration off): create a PENDING user with
+    # no organization and no session. Superadmin approves/rejects later.
+    if not settings.ALLOW_OPEN_REGISTRATION:
+        try:
+            user = User(email=email, password_hash=hash_password(password), status="pending")
+            # is_superadmin defaults False; never settable via signup.
+            user.is_superadmin = False
+            db.add(user)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            from sqlalchemy.exc import IntegrityError as _IE
+
+            if isinstance(e, _IE) or "UNIQUE" in str(type(e).__name__).upper() or "unique" in str(e).lower():
+                return templates.TemplateResponse(
+                    "auth/register.html",
+                    {
+                        "request": request,
+                        "error": "This email is awaiting admin approval. You will be able to sign in once approved.",
+                        "current_user": None,
+                    },
+                    status_code=400,
+                )
+            raise
+        return templates.TemplateResponse(
+            "auth/register.html",
+            {
+                "request": request,
+                "success": "Application received. An admin will review your account before you can sign in.",
+                "current_user": None,
+            },
+        )
+
     # Atomically create user, organization, membership, and initial project
     try:
-        user = User(email=email, password_hash=hash_password(password))
+        user = User(email=email, password_hash=hash_password(password), status="approved")
         db.add(user)
         db.flush()
 
@@ -2368,6 +2447,125 @@ def list_audit_logs(request: Request, page: int = 1, db: Session = Depends(get_d
             "total_pages": total_pages,
             "total_count": total_count,
         },
+    )
+
+
+# ================= SUPERADMIN APPROVAL QUEUE =================
+
+
+def require_superadmin(user):
+    """Global admins who approve/reject queued registrations."""
+    if not user or not getattr(user, "is_superadmin", False):
+        raise HTTPException(status_code=403, detail="Requires superadmin")
+    return user
+
+
+@router.get("/dashboard/admin/pending", response_class=HTMLResponse)
+def list_pending_approvals(
+    request: Request, db: Session = Depends(get_db), notice: str | None = None, notice_type: str | None = None
+):
+    user, org, project = get_user_and_project(request, db)
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
+    require_superadmin(user)
+    pending = db.query(User).filter(User.status == "pending").order_by(User.created_at.asc()).limit(200).all()
+    return templates.TemplateResponse(
+        "team/pending.html",
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "pending_users": pending,
+            "pending_count": len(pending),
+            "message": (notice or "").strip()[:500] or None,
+            "message_type": "error" if notice_type == "error" else "success",
+        },
+    )
+
+
+@router.post("/dashboard/admin/approve")
+def approve_pending_user(
+    request: Request,
+    user_id: str = Form(...),
+    csrf_token: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    assert_csrf(request, csrf_token)
+    actor, actor_org, _ = get_user_and_project(request, db)
+    if not actor:
+        return RedirectResponse(url="/auth/login", status_code=302)
+    require_superadmin(actor)
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target or (getattr(target, "status", None) or "approved") != "pending":
+        return RedirectResponse(url="/dashboard/admin/pending?notice=User+not+pending&notice_type=error", status_code=303)
+    try:
+        org_name = (target.email.split("@")[0].capitalize() or "User") + "'s Org"
+        org = Organization(name=org_name[:255])
+        db.add(org)
+        db.flush()
+        db.add(OrganizationMember(organization_id=org.id, user_id=target.id, role="owner"))
+        db.add(Project(organization_id=org.id, name="Default Project"))
+        target.status = "approved"
+        db.flush()
+        from app.services.audit import log_audit_event
+
+        log_audit_event(
+            db,
+            organization_id=org.id,
+            user_id=actor.id,
+            action="user.approved",
+            resource_type="user",
+            resource_id=target.id,
+            ip_address=get_client_ip(request),
+            details={"email": target.email},
+            commit=False,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        return RedirectResponse(url="/dashboard/admin/pending?notice=Approve+failed&notice_type=error", status_code=303)
+    return RedirectResponse(
+        url="/dashboard/admin/pending?notice=User+approved&notice_type=success", status_code=303
+    )
+
+
+@router.post("/dashboard/admin/reject")
+def reject_pending_user(
+    request: Request,
+    user_id: str = Form(...),
+    csrf_token: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    assert_csrf(request, csrf_token)
+    actor, actor_org, _ = get_user_and_project(request, db)
+    if not actor:
+        return RedirectResponse(url="/auth/login", status_code=302)
+    require_superadmin(actor)
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target or (getattr(target, "status", None) or "approved") != "pending":
+        return RedirectResponse(url="/dashboard/admin/pending?notice=User+not+pending&notice_type=error", status_code=303)
+    try:
+        target.status = "rejected"
+        if actor_org is not None:
+            from app.services.audit import log_audit_event
+
+            log_audit_event(
+                db,
+                organization_id=actor_org.id,
+                user_id=actor.id,
+                action="user.rejected",
+                resource_type="user",
+                resource_id=target.id,
+                ip_address=get_client_ip(request),
+                details={"email": target.email},
+                commit=False,
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        return RedirectResponse(url="/dashboard/admin/pending?notice=Reject+failed&notice_type=error", status_code=303)
+    return RedirectResponse(
+        url="/dashboard/admin/pending?notice=User+rejected&notice_type=success", status_code=303
     )
 
 

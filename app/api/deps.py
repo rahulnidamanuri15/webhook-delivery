@@ -94,6 +94,10 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
+    # Approval queue: only approved users hold sessions.
+    if (getattr(user, "status", "approved") or "approved") != "approved":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not approved")
+
     if _is_session_stale_from_pwd_change(token, user.password_changed_at):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -112,6 +116,8 @@ def get_optional_user(request: Request, db: Session = Depends(get_db)) -> User |
         return None
     user = db.query(User).filter(User.id == data["user_id"]).first()
     if not user:
+        return None
+    if (getattr(user, "status", "approved") or "approved") != "approved":
         return None
     if _is_session_stale_from_pwd_change(token, user.password_changed_at):
         return None

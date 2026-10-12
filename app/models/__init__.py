@@ -23,6 +23,9 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     password_changed_at = Column(DateTime(timezone=True), nullable=True)
+    # Registration approval queue: 'approved' (default, legacy), 'pending', 'rejected'.
+    status = Column(String(16), nullable=False, default="approved")
+    is_superadmin = Column(Boolean, nullable=False, default=False)
 
     memberships = relationship("OrganizationMember", back_populates="user", cascade="all, delete-orphan")
 

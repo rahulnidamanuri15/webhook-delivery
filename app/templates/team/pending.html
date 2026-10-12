@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Pending Approvals{% endblock %}
+{% block header_title %}Pending Approvals{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  {% if message %}
+  <div class="rounded-xl px-4 py-3 text-sm {% if message_type == 'error' %}bg-rose-50 border border-rose-200 text-rose-800{% else %}bg-emerald-50 border border-emerald-200 text-emerald-800{% endif %}" role="alert">
+    {{ message }}
+  </div>
+  {% endif %}
+
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200">
+      <h3 class="text-base font-bold text-slate-900">Awaiting review ({{ pending_users|length }})</h3>
+      <p class="text-xs text-slate-500 mt-1">Approving creates their organization, owner membership, and default project. They can sign in immediately after.</p>
+    </div>
+
+    {% if pending_users|length == 0 %}
+    <div class="px-6 py-8 text-sm text-slate-500">No pending registrations.</div>
+    {% else %}
+    <div class="divide-y divide-slate-200">
+      {% for u in pending_users %}
+      <div class="px-6 py-4 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold text-slate-900 truncate">{{ u.email }}</p>
+          <p class="text-xs text-slate-500 font-mono">Requested {{ u.created_at }}</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <form action="/dashboard/admin/approve" method="POST" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <button type="submit" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-sm transition">
+              Approve
+            </button>
+          </form>
+          <form action="/dashboard/admin/reject" method="POST" class="inline" onsubmit="return confirm('Reject this registration?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <button type="submit" class="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold rounded-lg border border-rose-200 transition">
+              Reject
+            </button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
