@@ -323,7 +323,11 @@ def login_post(
     if _login_status == "rejected":
         return templates.TemplateResponse(
             "auth/login.html",
-            {"request": request, "error": "Registration was not approved. Contact an administrator.", "current_user": None},
+            {
+                "request": request,
+                "error": "Registration was not approved. Contact an administrator.",
+                "current_user": None,
+            },
             status_code=400,
         )
 
@@ -2497,7 +2501,9 @@ def approve_pending_user(
     require_superadmin(actor)
     target = db.query(User).filter(User.id == user_id).first()
     if not target or (getattr(target, "status", None) or "approved") != "pending":
-        return RedirectResponse(url="/dashboard/admin/pending?notice=User+not+pending&notice_type=error", status_code=303)
+        return RedirectResponse(
+            url="/dashboard/admin/pending?notice=User+not+pending&notice_type=error", status_code=303
+        )
     try:
         org_name = (target.email.split("@")[0].capitalize() or "User") + "'s Org"
         org = Organization(name=org_name[:255])
@@ -2524,9 +2530,7 @@ def approve_pending_user(
     except Exception:
         db.rollback()
         return RedirectResponse(url="/dashboard/admin/pending?notice=Approve+failed&notice_type=error", status_code=303)
-    return RedirectResponse(
-        url="/dashboard/admin/pending?notice=User+approved&notice_type=success", status_code=303
-    )
+    return RedirectResponse(url="/dashboard/admin/pending?notice=User+approved&notice_type=success", status_code=303)
 
 
 @router.post("/dashboard/admin/reject")
@@ -2543,7 +2547,9 @@ def reject_pending_user(
     require_superadmin(actor)
     target = db.query(User).filter(User.id == user_id).first()
     if not target or (getattr(target, "status", None) or "approved") != "pending":
-        return RedirectResponse(url="/dashboard/admin/pending?notice=User+not+pending&notice_type=error", status_code=303)
+        return RedirectResponse(
+            url="/dashboard/admin/pending?notice=User+not+pending&notice_type=error", status_code=303
+        )
     try:
         target.status = "rejected"
         if actor_org is not None:
@@ -2564,9 +2570,7 @@ def reject_pending_user(
     except Exception:
         db.rollback()
         return RedirectResponse(url="/dashboard/admin/pending?notice=Reject+failed&notice_type=error", status_code=303)
-    return RedirectResponse(
-        url="/dashboard/admin/pending?notice=User+rejected&notice_type=success", status_code=303
-    )
+    return RedirectResponse(url="/dashboard/admin/pending?notice=User+rejected&notice_type=success", status_code=303)
 
 
 # ================= TEAM & INVITATIONS =================

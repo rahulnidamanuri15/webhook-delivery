@@ -28,9 +28,7 @@ def _authed_csrf(session_token: str):
 
 
 def _make_superadmin(db, uid: str) -> tuple[User, str]:
-    admin = User(
-        email=f"super_{uid}@example.com", password_hash=hash_password("SuperPassword123!"), status="approved"
-    )
+    admin = User(email=f"super_{uid}@example.com", password_hash=hash_password("SuperPassword123!"), status="approved")
     admin.is_superadmin = True
     db.add(admin)
     db.flush()
