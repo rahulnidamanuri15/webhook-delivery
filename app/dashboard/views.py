@@ -165,6 +165,11 @@ def get_user_and_project(request: Request, db: Session):
             request.state.sidebar_pending_count = None
     except Exception:
         pass
+    # Sidebar Settings (audit trail) is manager-only; hide for plain members.
+    try:
+        request.state.sidebar_is_manager = bool(membership and membership.role in ("owner", "admin"))
+    except Exception:
+        request.state.sidebar_is_manager = True
 
     return user, org, project
 
@@ -2518,6 +2523,8 @@ def list_audit_logs(request: Request, page: int = 1, db: Session = Depends(get_d
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
+    # Security trail is manager-only: members must not see admin actions.
+    require_manager(db, org, user)
 
     from app.models.audit_log import AuditLog
 

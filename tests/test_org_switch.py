@@ -94,5 +94,28 @@ def test_audit_log_shows_superadmin_pill():
         page = client.get("/dashboard/audit-logs", cookies={"wh_session": tok})
         assert page.status_code == 200
         assert "Superadmin" in page.text
+        # Superadmin actor email is hidden (only pill); footer shows it once.
+        assert page.text.count(admin.email) == 1
+    finally:
+        db.close()
+
+
+def test_audit_logs_require_manager():
+    db = SessionLocal()
+    client = TestClient(app)
+    uid = uuid.uuid4().hex[:8]
+    try:
+        owner, org = _user_with_org(db, f"own2_{uid}@example.com", f"Org Own {uid}")
+        plain = User(email=f"mem2_{uid}@example.com", password_hash=hash_password("Password123!"), status="approved")
+        db.add(plain)
+        db.flush()
+        db.add(OrganizationMember(organization_id=org.id, user_id=plain.id, role="member"))
+        db.commit()
+        tok = create_session_token(plain.id, org_id=org.id)
+        page = client.get("/dashboard/audit-logs", cookies={"wh_session": tok})
+        assert page.status_code == 403
+        # Settings link hidden for plain members
+        dash = client.get("/dashboard", cookies={"wh_session": tok})
+        assert "/dashboard/audit-logs" not in dash.text
     finally:
         db.close()
