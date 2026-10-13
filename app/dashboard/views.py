@@ -261,7 +261,7 @@ def root(request: Request, db: Session = Depends(get_db)):
     user, org, prj = get_user_and_project(request, db)
     if user:
         return RedirectResponse(url="/dashboard", status_code=302)
-    return RedirectResponse(url="/auth/login", status_code=302)
+    return templates.TemplateResponse("landing.html", {"request": request, "current_user": None})
 
 
 @router.get("/auth/login", response_class=HTMLResponse)

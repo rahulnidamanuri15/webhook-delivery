@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Reliable webhook delivery{% endblock %}
+
+{% block public_content %}
+<div class="min-h-screen flex flex-col" style="background:linear-gradient(180deg,#1e3227 0%,#15251d 100%)">
+  <!-- Nav -->
+  <nav class="max-w-6xl w-full mx-auto flex items-center justify-between px-6 py-5">
+    <span class="flex items-center gap-2">
+      <svg class="h-7 w-7 text-[#2fd180]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6.5a3.5 3.5 0 0 0-5.2 4.6L3 16.4a2.5 2.5 0 0 0 3.5 3.5l5.3-5.3a3.5 3.5 0 0 0 4.6-5.2l-2.6 2.6-2.4-.7-.7-2.4 3.2-2.4z" />
+      </svg>
+      <span class="text-white font-bold text-xl tracking-tight">Hook<span class="text-[#2fd180]">flow</span></span>
+    </span>
+    <span class="flex items-center gap-3">
+      <a href="/auth/login" class="text-sm font-semibold text-white/70 hover:text-white transition">Log in</a>
+      <a href="/auth/register" class="text-sm font-semibold text-[#0b3d24] bg-[#2fd180] hover:bg-[#25b86e] transition px-4 py-2 rounded-xl">Get started</a>
+    </span>
+  </nav>
+
+  <!-- Hero -->
+  <header class="max-w-6xl w-full mx-auto px-6 pt-10 pb-12 text-center">
+    <p class="text-xs font-bold uppercase tracking-[0.2em] text-[#2fd180]">Webhook delivery, done right</p>
+    <h1 class="mt-3 text-4xl sm:text-5xl font-extrabold text-white tracking-tight">Your app emits it.<br>We make sure it lands.</h1>
+    <p class="mt-4 text-base sm:text-lg text-white/60 max-w-2xl mx-auto">Publish an event once. Hookflow signs, delivers, retries with backoff, and keeps a full attempt timeline — with a dead-letter queue and one-click replay when receivers fail.</p>
+    <div class="mt-7 flex items-center justify-center gap-3">
+      <a href="/auth/register" class="px-5 py-2.5 rounded-xl text-sm font-semibold text-[#0b3d24] bg-[#2fd180] hover:bg-[#25b86e] transition">Create an account</a>
+      <a href="/auth/login" class="px-5 py-2.5 rounded-xl text-sm font-semibold text-white border border-white/20 hover:bg-white/10 transition">Log in</a>
+    </div>
+    <p class="mt-3 text-xs text-white/40">New accounts are reviewed by an admin before access.</p>
+  </header>
+
+  <!-- Features -->
+  <section class="max-w-6xl w-full mx-auto px-6 pb-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="bg-white/[0.06] border border-white/10 rounded-2xl p-5">
+      <h3 class="text-white font-bold text-sm">HMAC-signed</h3>
+      <p class="mt-1.5 text-[13px] text-white/55">Every delivery carries a verifiable signature and fresh timestamp.</p>
+    </div>
+    <div class="bg-white/[0.06] border border-white/10 rounded-2xl p-5">
+      <h3 class="text-white font-bold text-sm">Retries that back off</h3>
+      <p class="mt-1.5 text-[13px] text-white/55">Exponential backoff with jitter, honoring Retry-After.</p>
+    </div>
+    <div class="bg-white/[0.06] border border-white/10 rounded-2xl p-5">
+      <h3 class="text-white font-bold text-sm">Dead letters + replay</h3>
+      <p class="mt-1.5 text-[13px] text-white/55">Exhausted deliveries wait in the DLQ for one-click replay.</p>
+    </div>
+    <div class="bg-white/[0.06] border border-white/10 rounded-2xl p-5">
+      <h3 class="text-white font-bold text-sm">Crash-safe</h3>
+      <p class="mt-1.5 text-[13px] text-white/55">Lease-based workers recover orphaned deliveries automatically.</p>
+    </div>
+  </section>
+
+  <!-- How it works -->
+  <section class="max-w-6xl w-full mx-auto px-6 pb-14">
+    <div class="bg-white rounded-2xl p-6 sm:p-8 grid grid-cols-1 sm:grid-cols-3 gap-6">
+      <div><p class="text-xs font-bold text-[#0f7a4d]">1 · PUBLISH</p><p class="mt-1 text-sm font-semibold text-slate-900">POST /api/v1/events</p><p class="text-[13px] text-slate-500">Idempotent ingestion fans out to subscribed endpoints.</p></div>
+      <div><p class="text-xs font-bold text-[#0f7a4d]">2 · DELIVER</p><p class="mt-1 text-sm font-semibold text-slate-900">Signed POST + timeline</p><p class="text-[13px] text-slate-500">Each attempt records status, latency, and a bounded excerpt.</p></div>
+      <div><p class="text-xs font-bold text-[#0f7a4d]">3 · RECOVER</p><p class="mt-1 text-sm font-semibold text-slate-900">Retry or replay</p><p class="text-[13px] text-slate-500">Failures back off, then wait in Issues for replay.</p></div>
+    </div>
+  </section>
+
+  <footer class="max-w-6xl w-full mx-auto px-6 pb-8 text-center text-xs text-white/35">
+    Hookflow · <a href="/auth/login" class="underline hover:text-white/60">Log in</a> · <a href="/auth/register" class="underline hover:text-white/60">Register</a>
+  </footer>
+</div>
+{% endblock %}

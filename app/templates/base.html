@@ -54,11 +54,14 @@
     </header>
 
 
-    <!-- Flash messages -->
+    <!-- Flash messages (auto-dismiss) -->
     {% if message %}
-    <div class="px-6 lg:px-8 pt-4">
-      <div class="p-4 rounded-2xl text-sm font-medium {% if message_type == 'error' %}bg-red-50 text-red-800 border border-red-200{% else %}bg-[#e6f5ec] text-[#0f7a4d] border border-[#bfe6d2]{% endif %}">
-        {{ message }}
+    <div class="px-6 lg:px-8 pt-4" data-flash-wrap>
+      <div data-flash role="status" class="p-4 rounded-2xl text-sm font-medium transition-opacity duration-500 {% if message_type == 'error' %}bg-red-50 text-red-800 border border-red-200{% else %}bg-[#e6f5ec] text-[#0f7a4d] border border-[#bfe6d2]{% endif %}">
+        <span class="flex items-start gap-3">
+          <span class="flex-1">{{ message }}</span>
+          <button type="button" data-flash-close aria-label="Dismiss" class="shrink-0 opacity-60 hover:opacity-100 font-bold leading-none text-lg px-1">×</button>
+        </span>
       </div>
     </div>
     {% endif %}
@@ -171,6 +174,23 @@
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') closeInspectorDrawer();
   });
+
+  // Auto-dismiss flash banners so approve/reject/register notices don't stick.
+  (function() {
+    var flashes = document.querySelectorAll('[data-flash]');
+    flashes.forEach(function(el) {
+      var wrap = el.closest('[data-flash-wrap]') || el;
+      var done = false;
+      function dismiss() {
+        if (done) return; done = true;
+        el.classList.add('opacity-0');
+        setTimeout(function() { wrap.remove(); }, 500);
+      }
+      setTimeout(dismiss, 4500);
+      var btn = el.querySelector('[data-flash-close]');
+      if (btn) btn.addEventListener('click', dismiss);
+    });
+  })();
 </script>
 </body>
 </html>
