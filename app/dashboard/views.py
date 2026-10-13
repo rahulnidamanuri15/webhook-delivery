@@ -1367,13 +1367,33 @@ def list_projects(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url="/auth/login", status_code=302)
     if not org:
         return templates.TemplateResponse(
-            "projects/index.html", {"request": request, "current_user": user, "current_project": None, "projects": []}
+            "projects/index.html",
+            {
+                "request": request,
+                "current_user": user,
+                "current_project": None,
+                "current_org": None,
+                "projects": [],
+                "orgs": [],
+            },
         )
 
     projects = db.query(Project).filter(Project.organization_id == org.id).order_by(Project.created_at.desc()).all()
+    # All orgs this login belongs to (invited members hold several) so they
+    # can switch workspaces — project switching alone stays within one org.
+    memberships = db.query(OrganizationMember).filter(OrganizationMember.user_id == user.id).all()
+    org_ids = [m.organization_id for m in memberships]
+    orgs = db.query(Organization).filter(Organization.id.in_(org_ids)).all() if org_ids else []
     return templates.TemplateResponse(
         "projects/index.html",
-        {"request": request, "current_user": user, "current_project": project, "projects": projects},
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "current_org": org,
+            "projects": projects,
+            "orgs": orgs,
+        },
     )
 
 
@@ -1452,6 +1472,66 @@ def switch_project(
     response.set_cookie(
         "wh_active_project_id", project.id, httponly=True, max_age=86400 * 30, samesite="lax", secure=is_cookie_secure()
     )
+    return response
+
+
+@router.post("/dashboard/orgs/switch")
+def switch_organization(
+    request: Request,
+    organization_id: str = Form(...),
+    csrf_token: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Switch workspace between organizations this login is a member of."""
+    assert_csrf(request, csrf_token)
+    user, _, _ = get_user_and_project(request, db)
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
+
+    membership = (
+        db.query(OrganizationMember)
+        .filter(OrganizationMember.user_id == user.id, OrganizationMember.organization_id == organization_id)
+        .first()
+    )
+    if not membership:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    project = (
+        db.query(Project).filter(Project.organization_id == organization_id).order_by(Project.created_at.desc()).first()
+    )
+
+    from app.services.security import invalidate_session_token as _inv3
+
+    _old3 = request.cookies.get("wh_session")
+    if _old3:
+        try:
+            _inv3(_old3)
+        except Exception:
+            pass
+    _new_token3 = create_session_token(user.id, org_id=organization_id, project_id=project.id if project else None)
+    response = RedirectResponse(url="/dashboard", status_code=303)
+    response.set_cookie(
+        "wh_session", _new_token3, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_cookie_secure()
+    )
+    response.set_cookie(
+        "wh_active_org_id",
+        organization_id,
+        httponly=True,
+        max_age=86400 * 30,
+        samesite="lax",
+        secure=is_cookie_secure(),
+    )
+    if project:
+        response.set_cookie(
+            "wh_active_project_id",
+            project.id,
+            httponly=True,
+            max_age=86400 * 30,
+            samesite="lax",
+            secure=is_cookie_secure(),
+        )
+    else:
+        response.delete_cookie("wh_active_project_id")
     return response
 
 
@@ -2449,6 +2529,26 @@ def list_audit_logs(request: Request, page: int = 1, db: Session = Depends(get_d
     total_pages = max(1, (total_count + per_page - 1) // per_page)
     logs = query.offset((page - 1) * per_page).limit(per_page).all()
 
+    # Actor role pills: membership role in this org, Superadmin flag wins.
+    actor_roles: dict[str, str] = {}
+    try:
+        _uids = {entry.user_id for entry in logs if entry.user_id}
+        if _uids:
+            _mems = (
+                db.query(OrganizationMember)
+                .filter(OrganizationMember.organization_id == org.id, OrganizationMember.user_id.in_(list(_uids)))
+                .all()
+            )
+            _role_by_uid = {m.user_id: (m.role or "member") for m in _mems}
+            _users = db.query(User).filter(User.id.in_(list(_uids))).all()
+            for u in _users:
+                if getattr(u, "is_superadmin", False):
+                    actor_roles[u.id] = "superadmin"
+                elif u.id in _role_by_uid:
+                    actor_roles[u.id] = _role_by_uid[u.id]
+    except Exception:
+        actor_roles = {}
+
     return templates.TemplateResponse(
         "audit_logs/index.html",
         {
@@ -2456,6 +2556,7 @@ def list_audit_logs(request: Request, page: int = 1, db: Session = Depends(get_d
             "current_user": user,
             "current_project": project,
             "audit_logs": logs,
+            "actor_roles": actor_roles,
             "page": page,
             "per_page": per_page,
             "total_pages": total_pages,

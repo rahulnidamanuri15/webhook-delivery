@@ -61,6 +61,16 @@
             </td>
             <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
               {{ log.user.email if log.user else "System" }}
+              {% set _role = actor_roles.get(log.user_id) if log.user_id else none %}
+              {% if _role == 'superadmin' %}
+                <span class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">Superadmin</span>
+              {% elif _role == 'owner' %}
+                <span class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">Owner</span>
+              {% elif _role == 'admin' %}
+                <span class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200">Admin</span>
+              {% elif _role %}
+                <span class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">Member</span>
+              {% endif %}
             </td>
             <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-500 font-mono truncate max-w-xs" title="{{ log.details_json }}">
               {{ log.details_json or "—" }}

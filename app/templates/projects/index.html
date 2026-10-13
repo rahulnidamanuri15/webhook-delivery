@@ -56,5 +56,43 @@
     </div>
   </div>
 
+  <!-- Organizations List -->
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-200">
+      <h3 class="text-base font-bold text-slate-900">Your Organizations</h3>
+      <p class="text-xs text-slate-500 mt-0.5">Invited workspaces appear here — switch to read and monitor their projects.</p>
+    </div>
+
+    <div class="divide-y divide-slate-200">
+      {% for o in orgs %}
+      <div class="p-6 hover:bg-slate-50 transition flex items-center justify-between">
+        <div>
+          <div class="flex items-center space-x-2">
+            <h4 class="text-sm font-bold text-slate-900">{{ o.name }}</h4>
+            {% if current_org and current_org.id == o.id %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800">
+                Active workspace
+              </span>
+            {% endif %}
+          </div>
+          <p class="text-xs text-slate-500 font-mono mt-0.5">ID: {{ o.id }}</p>
+        </div>
+
+        <div>
+          {% if not current_org or current_org.id != o.id %}
+          <form action="/dashboard/orgs/switch" method="POST" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="organization_id" value="{{ o.id }}">
+            <button type="submit" class="px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold rounded-md shadow-sm transition">
+              Switch to this workspace
+            </button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
 </div>
 {% endblock %}
