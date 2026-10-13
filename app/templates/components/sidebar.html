@@ -144,7 +144,7 @@
     <div class="flex-shrink-0 p-4">
       <div class="rounded-xl bg-white/[0.04] border border-white/10 p-3.5 text-center">
         <p class="mt-2 text-[15px] text-white truncate">{{ current_user.email if current_user else '' }}</p>
-        <form method="post" action="/auth/logout" style="display:inline;">
+        <form method="post" action="/" style="display:inline;">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="mt-1 text-[12px] font-semibold text-white/40 hover:text-[#ff8fa0] transition bg-transparent border-none cursor-pointer p-0">Sign out →</button>
         </form>
