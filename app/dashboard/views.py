@@ -565,7 +565,7 @@ def logout(request: Request, csrf_token: str | None = Form(None)):
     token = request.cookies.get("wh_session")
     if token:
         invalidate_session_token(token)
-    response = RedirectResponse(url="/auth/login", status_code=303)
+    response = RedirectResponse(url="/", status_code=303)
     response.delete_cookie("wh_session")
     response.delete_cookie("wh_active_project_id")
     response.delete_cookie("wh_active_org_id")
