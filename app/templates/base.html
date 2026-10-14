@@ -178,6 +178,16 @@
   // Auto-dismiss flash banners so approve/reject/register notices don't stick.
   (function() {
     var flashes = document.querySelectorAll('[data-flash]');
+    // Drop one-time ?notice= params from the URL on first paint so refresh
+    // never resurrects an already-shown banner.
+    try {
+      var url = new URL(window.location.href);
+      if (url.searchParams.has('notice') || url.searchParams.has('notice_type')) {
+        url.searchParams.delete('notice');
+        url.searchParams.delete('notice_type');
+        window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+      }
+    } catch (e) { /* non-fatal: banner still auto-dismisses below */ }
     flashes.forEach(function(el) {
       var wrap = el.closest('[data-flash-wrap]') || el;
       var done = false;
