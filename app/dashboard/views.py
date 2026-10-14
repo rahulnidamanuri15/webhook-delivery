@@ -1354,9 +1354,7 @@ def dashboard_metrics_chart_fragment(
         for i in range(6, -1, -1):
             day = (now_ist - _td(days=i)).date()
             labels.append(day.strftime("%m-%d"))
-            events_per_bucket.append(
-                sum(1 for c in all_events if _utc_naive_to_ist_naive(c).date() == day)
-            )
+            events_per_bucket.append(sum(1 for c in all_events if _utc_naive_to_ist_naive(c).date() == day))
             succeeded_per_bucket.append(
                 sum(1 for c, s in all_dlv if _utc_naive_to_ist_naive(c).date() == day and s == "SUCCEEDED")
             )
@@ -1364,8 +1362,7 @@ def dashboard_metrics_chart_fragment(
                 sum(
                     1
                     for c, s in all_dlv
-                    if _utc_naive_to_ist_naive(c).date() == day
-                    and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT")
+                    if _utc_naive_to_ist_naive(c).date() == day and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT")
                 )
             )
             dead_per_bucket.append(
@@ -1377,17 +1374,11 @@ def dashboard_metrics_chart_fragment(
             labels.append(day.strftime("%m-%d"))
             _win_start = day - _td(days=4)
             events_per_bucket.append(
-                sum(
-                    1
-                    for c in all_events
-                    if _win_start <= _utc_naive_to_ist_naive(c).date() <= day
-                )
+                sum(1 for c in all_events if _win_start <= _utc_naive_to_ist_naive(c).date() <= day)
             )
             succeeded_per_bucket.append(
                 sum(
-                    1
-                    for c, s in all_dlv
-                    if _win_start <= _utc_naive_to_ist_naive(c).date() <= day and s == "SUCCEEDED"
+                    1 for c, s in all_dlv if _win_start <= _utc_naive_to_ist_naive(c).date() <= day and s == "SUCCEEDED"
                 )
             )
             retrying_per_bucket.append(
@@ -1399,11 +1390,7 @@ def dashboard_metrics_chart_fragment(
                 )
             )
             dead_per_bucket.append(
-                sum(
-                    1
-                    for c, s in all_dlv
-                    if _win_start <= _utc_naive_to_ist_naive(c).date() <= day and s == "DEAD"
-                )
+                sum(1 for c, s in all_dlv if _win_start <= _utc_naive_to_ist_naive(c).date() <= day and s == "DEAD")
             )
     else:  # 24h default
         for i in range(5, -1, -1):
