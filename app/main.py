@@ -66,6 +66,74 @@ app = FastAPI(
 )
 
 
+_ERROR_TITLES = {
+    400: "Bad request",
+    401: "Sign-in required",
+    403: "Not allowed",
+    404: "Not found",
+    429: "Slow down",
+    413: "Too large",
+    500: "Something went wrong",
+}
+
+
+def _error_page(status_code: int, message: str):
+    """Standalone branded error page (no dashboard context needed)."""
+    from fastapi.responses import HTMLResponse
+    from fastapi.templating import Jinja2Templates
+
+    templates = Jinja2Templates(directory="app/templates")
+    safe_message = (message or "Something went wrong.").strip()[:500] or "Something went wrong."
+    html = templates.get_template("error.html").render(
+        code=status_code, title=_ERROR_TITLES.get(status_code, "Error"), message=safe_message
+    )
+    return HTMLResponse(content=html, status_code=status_code)
+
+
+from fastapi.exceptions import HTTPException as FastAPIHTTPException
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+@app.exception_handler(StarletteHTTPException)
+@app.exception_handler(FastAPIHTTPException)
+@app.exception_handler(RequestValidationError)
+async def _http_exception_handler(request: Request, exc: Exception):
+    """Branded HTML error pages for human routes; JSON contract kept for APIs."""
+    from fastapi.responses import JSONResponse
+    from fastapi.responses import RedirectResponse
+
+    # NOTE: registered for both HTTPException classes because Starlette looks
+    # handlers up by exception MRO — a single registration can lose to the
+    # built-in default. RequestValidationError rides along so dashboard form
+    # posts never leak raw JSON/422 payloads.
+    if isinstance(exc, RequestValidationError):
+        if request.url.path.startswith("/api/"):
+            from fastapi.encoders import jsonable_encoder
+
+            return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
+        return _error_page(400, "Something you submitted looks invalid. Please check and try again.")
+    status_code = int(getattr(exc, "status_code", 500) or 500)
+    detail = str(getattr(exc, "detail", "") or "")
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(status_code=status_code, content={"detail": detail or "Error"})
+    # Unauthenticated dashboard access goes to login instead of an error page.
+    if status_code == 401:
+        return RedirectResponse(url="/auth/login", status_code=302)
+    return _error_page(status_code, detail)
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    """Last-resort 500s: logged, JSON for APIs, friendly page otherwise."""
+    from fastapi.responses import JSONResponse
+
+    logger.error(f"Unhandled error on {request.url.path}: {exc}", exc_info=True)
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    return _error_page(500, "Something went wrong. Please try again.")
+
+
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     raw_req_id = (request.headers.get("x-request-id") or "").strip()
