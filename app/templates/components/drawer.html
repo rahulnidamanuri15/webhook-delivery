@@ -138,7 +138,7 @@
           <div class="bg-slate-50 p-3.5 rounded-lg border border-slate-200 space-y-1">
             <div class="flex items-center justify-between">
               <span class="font-bold text-slate-900 text-xs">Attempt #{{ att.attempt_number }}</span>
-              <span class="text-[11px] text-slate-400 font-mono">{{ att.started_at.strftime('%H:%M:%S UTC') }}</span>
+              <span class="text-[11px] text-slate-400 font-mono">{{ att.started_at|ist('%H:%M:%S') }} IST</span>
             </div>
             <p class="text-xs text-slate-600">
               Outcome: <strong class="{% if att.outcome == 'SUCCESS' %}text-emerald-700{% elif att.outcome == 'RETRYABLE_ERROR' %}text-amber-700{% else %}text-rose-700{% endif %}">{{ att.outcome }}</strong>

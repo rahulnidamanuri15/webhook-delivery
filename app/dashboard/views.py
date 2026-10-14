@@ -103,6 +103,30 @@ templates = CompatibleJinja2Templates(directory="app/templates")
 router = APIRouter()
 
 
+# IST (UTC+5:30, no DST) for human timelines. Storage, APIs, signatures and
+# logs stay UTC — this filter is display-only.
+from datetime import timedelta as _td
+from datetime import timezone as _tz
+
+_IST = _tz(_td(hours=5, minutes=30))
+
+
+def _ist_display(value, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """Jinja filter: render a UTC datetime in IST. Empty string for None."""
+    if value is None:
+        return ""
+    try:
+        dt = value
+        if getattr(dt, "tzinfo", None) is None:
+            dt = dt.replace(tzinfo=_tz.utc)
+        return dt.astimezone(_IST).strftime(fmt)
+    except Exception:
+        return ""
+
+
+templates.env.filters["ist"] = _ist_display
+
+
 def get_user_and_project(request: Request, db: Session):
     user = get_optional_user(request, db)
     if not user:

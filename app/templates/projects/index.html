@@ -39,7 +39,7 @@
               </span>
             {% endif %}
           </div>
-          <p class="text-xs text-slate-500 font-mono mt-0.5">ID: {{ prj.id }} | Created: {{ prj.created_at.strftime('%Y-%m-%d') }}</p>
+          <p class="text-xs text-slate-500 font-mono mt-0.5">ID: {{ prj.id }} | Created: {{ prj.created_at|ist('%Y-%m-%d') }}</p>
         </div>
 
         <div>

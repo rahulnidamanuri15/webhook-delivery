@@ -78,13 +78,13 @@
         <!-- Next Attempt / Timestamp -->
         <td class="px-4 py-3.5 whitespace-nowrap text-xs text-slate-500 font-mono">
           {% if dlv.status == 'SUCCEEDED' %}
-            <span class="text-emerald-700 font-medium">{{ dlv.completed_at.strftime('%H:%M:%S UTC') if dlv.completed_at else 'Done' }}</span>
+            <span class="text-emerald-700 font-medium">{{ (dlv.completed_at|ist('%H:%M:%S') + ' IST') if dlv.completed_at else 'Done' }}</span>
           {% elif dlv.status == 'RETRY_SCHEDULED' %}
-            <span class="text-amber-700 font-medium">retry @ {{ dlv.next_attempt_at.strftime('%H:%M:%S UTC') }}</span>
+            <span class="text-amber-700 font-medium">retry @ {{ dlv.next_attempt_at|ist('%H:%M:%S') }} IST</span>
           {% elif dlv.status == 'DEAD' %}
             <span class="text-rose-600">failed</span>
           {% else %}
-            {{ dlv.created_at.strftime('%H:%M:%S UTC') }}
+            {{ dlv.created_at|ist('%H:%M:%S') }} IST
           {% endif %}
         </td>
 

@@ -20,7 +20,7 @@
       <table class="min-w-full divide-y divide-slate-200">
         <thead class="bg-slate-50">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Timestamp (UTC)</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Timestamp (IST)</th>
             <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Action</th>
             <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Resource Type</th>
             <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Resource ID</th>
@@ -32,7 +32,7 @@
           {% for log in audit_logs %}
           <tr class="hover:bg-slate-50 transition">
             <td class="px-4 py-3 whitespace-nowrap text-xs font-mono text-slate-500">
-              {{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+              {{ log.created_at|ist }}
             </td>
             <td class="px-4 py-3 whitespace-nowrap text-xs font-semibold">
               {% if 'create' in log.action %}

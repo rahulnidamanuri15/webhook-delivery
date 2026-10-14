@@ -45,11 +45,11 @@
 
       <div class="text-xs text-slate-500 text-right space-y-0.5">
         <div>Event: <a href="/dashboard/events/{{ delivery.event_id }}" class="font-mono text-indigo-600 hover:underline">{{ delivery.event_id }}</a> ({{ delivery.event.event_type }})</div>
-        <div>Created: <strong>{{ delivery.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</strong></div>
+        <div>Created: <strong>{{ delivery.created_at|ist }} IST</strong></div>
         {% if delivery.status == 'RETRY_SCHEDULED' %}
-        <div class="text-amber-600 font-semibold">Next retry at: {{ delivery.next_attempt_at.strftime('%H:%M:%S UTC') }}</div>
+        <div class="text-amber-600 font-semibold">Next retry at: {{ delivery.next_attempt_at|ist('%H:%M:%S') }} IST</div>
         {% elif delivery.completed_at %}
-        <div>Completed: <strong>{{ delivery.completed_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</strong></div>
+        <div>Completed: <strong>{{ delivery.completed_at|ist }} IST</strong></div>
         {% endif %}
         {% if delivery.replay_of_delivery_id %}
         <div>Replay of: <a href="/dashboard/deliveries/{{ delivery.replay_of_delivery_id }}" class="font-mono text-slate-600 underline">{{ delivery.replay_of_delivery_id }}</a></div>
@@ -116,7 +116,7 @@
             </div>
 
             <div class="text-xs text-slate-500">
-              {{ att.started_at.strftime('%H:%M:%S UTC') }}
+               {{ att.started_at|ist('%H:%M:%S') }} IST
             </div>
           </div>
 

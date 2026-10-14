@@ -235,7 +235,7 @@
               {{ evt.deliveries|length }} endpoint{{ "s" if evt.deliveries|length != 1 else "" }}
             </td>
             <td class="px-4 py-3 text-[#6b7c70] font-mono">
-              {{ evt.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+               {{ evt.created_at|ist }} IST
             </td>
             <td class="px-4 py-3 text-right font-medium">
               <a href="/dashboard/events/{{ evt.id }}" class="text-[#0f7a4d] hover:text-[#0b5c3b]">Inspect Event →</a>

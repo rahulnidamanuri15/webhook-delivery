@@ -22,7 +22,7 @@
         <h2 class="text-lg font-mono font-bold text-slate-900">{{ event.id }}</h2>
       </div>
       <div class="text-xs text-slate-500 text-right">
-        <div>Received: <strong>{{ event.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</strong></div>
+        <div>Received: <strong>{{ event.created_at|ist }} IST</strong></div>
         <div>Idempotency Key: <span class="font-mono text-slate-700">{{ event.idempotency_key or "None" }}</span></div>
       </div>
     </div>
