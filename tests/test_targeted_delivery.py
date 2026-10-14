@@ -110,8 +110,11 @@ def _dead_delivery(db, project_id: str, endpoint_id: str | None, url: str):
     evt = db.query(EventModel).filter_by(project_id=project_id).first()
     if evt is None:
         evt = EventModel(
-            project_id=project_id, event_type="t.replay", payload_json="{}",
-            wire_payload="{}", request_hash="h-replay",
+            project_id=project_id,
+            event_type="t.replay",
+            payload_json="{}",
+            wire_payload="{}",
+            request_hash="h-replay",
         )
         db.add(evt)
         db.flush()
