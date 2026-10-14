@@ -8,12 +8,9 @@
   ← Back to Deliveries
 </a>
 {% if delivery.status == 'DEAD' %}
-<form action="/dashboard/deliveries/{{ delivery.id }}/replay" method="POST" class="inline">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-  <button type="submit" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-md shadow-sm">
-    Replay Delivery Now
-  </button>
-</form>
+<a href="/dashboard/deliveries/{{ delivery.id }}/replay" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-md shadow-sm">
+  Replay Delivery Now
+</a>
 {% endif %}
 {% endblock %}
 

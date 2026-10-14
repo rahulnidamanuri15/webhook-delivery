@@ -2399,9 +2399,61 @@ def delivery_detail_view(delivery_id: str, request: Request, db: Session = Depen
     )
 
 
+@router.get("/dashboard/deliveries/{delivery_id}/replay", response_class=HTMLResponse)
+def replay_delivery_page(delivery_id: str, request: Request, db: Session = Depends(get_db)):
+    user, org, project = get_user_and_project(request, db)
+    if not user or not project:
+        return RedirectResponse(url="/auth/login", status_code=302)
+    require_manager(db, org, user)
+
+    delivery = (
+        db.query(Delivery)
+        .join(Event, Delivery.event_id == Event.id)
+        .filter(Delivery.id == delivery_id, Event.project_id == project.id)
+        .first()
+    )
+    if not delivery:
+        raise HTTPException(status_code=404, detail="Delivery not found in project")
+    if delivery.status != "DEAD":
+        raise HTTPException(status_code=400, detail="Only DEAD deliveries can be replayed.")
+
+    endpoints = db.query(Endpoint).filter(Endpoint.project_id == project.id).order_by(Endpoint.url.asc()).all()
+    subs: dict[str, list[str]] = {}
+    try:
+        if endpoints:
+            from collections import defaultdict as _dd
+
+            rows = (
+                db.query(EndpointSubscription.endpoint_id, EndpointSubscription.event_type)
+                .filter(EndpointSubscription.endpoint_id.in_([e.id for e in endpoints]))
+                .all()
+            )
+            _map: dict[str, list[str]] = _dd(list)
+            for _eid, _etype in rows:
+                _map[_eid].append(_etype)
+            subs = dict(_map)
+    except Exception:
+        subs = {}
+    return templates.TemplateResponse(
+        "deliveries/replay.html",
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            "delivery": delivery,
+            "endpoints": endpoints,
+            "ep_subs": subs,
+        },
+    )
+
+
 @router.post("/dashboard/deliveries/{delivery_id}/replay")
 def replay_delivery_post(
-    delivery_id: str, request: Request, csrf_token: str | None = Form(None), db: Session = Depends(get_db)
+    delivery_id: str,
+    request: Request,
+    endpoint_id: str | None = Form(None),
+    csrf_token: str | None = Form(None),
+    db: Session = Depends(get_db),
 ):
     assert_csrf(request, csrf_token)
     user, org, project = get_user_and_project(request, db)
@@ -2419,7 +2471,10 @@ def replay_delivery_post(
     if not delivery:
         raise HTTPException(status_code=404, detail="Delivery not found in project")
 
-    new_delivery = replay_delivery(db, delivery.id)
+    try:
+        new_delivery = replay_delivery(db, delivery.id, new_endpoint_id=endpoint_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e) or "Invalid endpoint selected.")
     if not new_delivery:
         # Either missing or not a DEAD dead-letter (replay policy: DEAD only).
         raise HTTPException(status_code=400, detail="Only DEAD deliveries can be replayed.")

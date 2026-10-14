@@ -94,12 +94,9 @@
             Inspect →
           </button>
           {% if dlv.status == 'DEAD' %}
-          <form action="/dashboard/deliveries/{{ dlv.id }}/replay" method="POST" class="inline" onclick="event.stopPropagation()">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="px-2.5 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded border border-rose-200">
-              Replay
-            </button>
-          </form>
+          <a href="/dashboard/deliveries/{{ dlv.id }}/replay" onclick="event.stopPropagation()" class="inline-block px-2.5 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded border border-rose-200">
+            Replay
+          </a>
           {% endif %}
         </td>
 

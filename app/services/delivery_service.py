@@ -744,16 +744,18 @@ def recover_abandoned_leases(db: Session, batch_size: int | None = None) -> int:
     return recovered_count
 
 
-def replay_delivery(db: Session, delivery_id: str) -> Delivery | None:
+def replay_delivery(db: Session, delivery_id: str, new_endpoint_id: str | None = None) -> Delivery | None:
     """
-    Creates a new delivery for the same event and endpoint, linking it to the previous delivery.
+    Creates a new delivery for the same event, linking it to the previous delivery.
     Preserves original attempt history while allocating a fresh attempt budget.
 
     Policy: only DEAD (dead-letter) deliveries may be replayed. Returns None
     otherwise so callers surface 400/404 instead of cloning live work.
-    Target URL uses the endpoint's current URL when available (operator may have
-    fixed a typo), falling back to the original snapshot when the endpoint was
-    deleted. Security checks (SSRF, enabled) are still enforced at send time.
+    Target defaults to the endpoint's current URL when available (operator may
+    have fixed a typo), falling back to the original snapshot when the endpoint
+    was deleted. Pass ``new_endpoint_id`` to retarget the replay at a different
+    endpoint in the same project (must belong to the event's project, else
+    ValueError). Security checks (SSRF, enabled) are still enforced at send time.
     """
     try:
         old_delivery = db.query(Delivery).filter(Delivery.id == delivery_id).with_for_update().first()
@@ -782,11 +784,33 @@ def replay_delivery(db: Session, delivery_id: str) -> Delivery | None:
 
     endpoint = old_delivery.endpoint
     current_url = endpoint.url if endpoint else old_delivery.target_url_snapshot
+    target_endpoint_id: str | None = old_delivery.endpoint_id
+
+    # Retargeted replay: validate the chosen endpoint belongs to the event's
+    # project (fail closed — no cross-project delivery cloning).
+    _new_eid = (new_endpoint_id or "").strip() if isinstance(new_endpoint_id, str) else ""
+    if _new_eid and _new_eid.lower() != "same":
+        from app.models import Endpoint as _EndpointModel
+        from app.models import Event as _EventModel
+
+        _evt = db.query(_EventModel).filter(_EventModel.id == old_delivery.event_id).first()
+        _project_id = _evt.project_id if _evt else None
+        _new_ep = (
+            db.query(_EndpointModel)
+            .filter(_EndpointModel.id == _new_eid, _EndpointModel.project_id == _project_id)
+            .first()
+            if _project_id
+            else None
+        )
+        if not _new_ep:
+            raise ValueError("unknown endpoint selected")
+        current_url = _new_ep.url
+        target_endpoint_id = _new_ep.id
 
     now = utc_now()
     new_delivery = Delivery(
         event_id=old_delivery.event_id,
-        endpoint_id=old_delivery.endpoint_id,
+        endpoint_id=target_endpoint_id,
         target_url_snapshot=current_url,
         status="PENDING",
         attempt_count=0,

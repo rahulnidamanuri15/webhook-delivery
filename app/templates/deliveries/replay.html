@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Replay {{ delivery.id }}{% endblock %}
+{% block header_title %}Replay dead-letter{% endblock %}
+
+{% block header_actions %}
+<a href="/dashboard/deliveries/{{ delivery.id }}" class="text-xs font-semibold text-slate-600 hover:text-slate-900">
+  ← Back to Delivery
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+  <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+    <h3 class="text-base font-bold text-slate-900 mb-1">Replay {{ delivery.id }}</h3>
+    <p class="text-xs text-slate-500 mb-1">
+      Event <span class="font-mono">{{ delivery.event_id }}</span> · original target
+      <span class="font-mono break-all">{{ delivery.target_url_snapshot }}</span>
+    </p>
+    <p class="text-xs text-slate-500 mb-6">
+      A fresh delivery with a new attempt budget is created and linked to this dead letter. Pick the same endpoint or retarget a different one.
+    </p>
+
+    <form action="/dashboard/deliveries/{{ delivery.id }}/replay" method="POST" class="space-y-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="flex items-start gap-2 text-sm rounded-lg border border-slate-300 p-3 cursor-pointer hover:bg-slate-50">
+        <input type="radio" name="endpoint_id" value="same" checked class="mt-1 accent-indigo-600">
+        <span><span class="font-semibold text-slate-800">Same endpoint</span>
+        <span class="block text-[11px] text-slate-500 font-mono break-all">{{ delivery.target_url_snapshot }}</span></span>
+      </label>
+      {% for ep in endpoints %}
+      <label class="flex items-start gap-2 text-sm rounded-lg border border-slate-300 p-3 cursor-pointer hover:bg-slate-50">
+        <input type="radio" name="endpoint_id" value="{{ ep.id }}" class="mt-1 accent-indigo-600">
+        <span class="min-w-0">
+          <span class="block font-mono text-xs text-slate-800 truncate">{{ ep.url }}</span>
+          <span class="block text-[11px] text-slate-500 font-mono truncate">{{ (ep_subs.get(ep.id) or [])|join(', ') or 'no subscriptions' }}{% if not ep.enabled %} · disabled{% endif %}</span>
+        </span>
+      </label>
+      {% endfor %}
+
+      <div class="flex justify-end pt-3">
+        <button type="submit" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-sm transition">
+          Replay Delivery
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
