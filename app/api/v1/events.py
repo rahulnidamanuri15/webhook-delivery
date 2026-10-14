@@ -69,6 +69,7 @@ def publish_event(
                 idempotency_key=(
                     idempotency_key.strip() if isinstance(idempotency_key, str) and idempotency_key.strip() else None
                 ),
+                endpoint_ids=payload.endpoint_ids,
             )
     except IdempotencyConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))

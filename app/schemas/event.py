@@ -12,6 +12,12 @@ class EventIngestRequest(BaseModel):
         description="Event name, e.g. payment.succeeded",
     )
     data: dict[str, Any] = Field(description="Arbitrary event payload data")
+    endpoint_ids: list[str] | None = Field(
+        default=None,
+        max_length=20,
+        description="Optional targeted fan-out: only these endpoint IDs receive the event "
+        "(intersected with enabled + subscribed matches). Omit for all matches.",
+    )
 
 
 class EventIngestResponse(BaseModel):

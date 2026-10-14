@@ -91,10 +91,19 @@ def get_matching_endpoints(db: Session, project_id: str, event_type: str) -> lis
 
 
 def ingest_event(
-    db: Session, project_id: str, event_type: str, payload_data: dict, idempotency_key: str | None = None
+    db: Session,
+    project_id: str,
+    event_type: str,
+    payload_data: dict,
+    idempotency_key: str | None = None,
+    endpoint_ids: list[str] | None = None,
 ) -> tuple[Event, bool, int]:
     """
     Atomically ingests an event and creates pending delivery records for matching endpoints.
+
+    When ``endpoint_ids`` is given, fan-out is restricted to those endpoints
+    (still intersected with enabled + event-type-subscribed matches, and the
+    IDs must belong to this project). ``None`` keeps the default: all matches.
 
     Returns:
         (event: Event, is_duplicate: bool, delivery_count: int)
@@ -161,6 +170,32 @@ def ingest_event(
 
     # 2. Find matching endpoints
     matching_endpoints = get_matching_endpoints(db, project_id, event_type)
+
+    # 2b. Optional targeted delivery: restrict fan-out to selected endpoints.
+    # Still intersected with enabled + subscribed matches so subscriptions
+    # stay the routing contract; unknown IDs fail closed (no cross-org leak).
+    if endpoint_ids is not None:
+        selected: list[str] = []
+        for _eid in endpoint_ids:
+            _eid = (_eid or "").strip()[:64] if isinstance(_eid, str) else ""
+            if _eid and _eid not in selected:
+                selected.append(_eid)
+        if not selected:
+            raise ValueError("select at least one endpoint or send to all endpoints")
+        try:
+            from app.config import settings as _settings
+
+            _cap = int(getattr(_settings, "MAX_ENDPOINTS_PER_PROJECT", 20) or 20)
+        except Exception:
+            _cap = 20
+        if len(selected) > _cap:
+            raise ValueError(f"too many endpoints selected (max {_cap})")
+        _known_ids = {r[0] for r in db.query(Endpoint.id).filter(Endpoint.project_id == project_id).all()}
+        _unknown = [e for e in selected if e not in _known_ids]
+        if _unknown:
+            raise ValueError("unknown endpoint(s) selected")
+        _sel = set(selected)
+        matching_endpoints = [e for e in matching_endpoints if e.id in _sel]
 
     # 3. Create Event and Deliveries in a single atomic transaction
     event_id = generate_id("evt")

@@ -2083,8 +2083,44 @@ def send_test_event_page(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url="/auth/login", status_code=302)
 
     return templates.TemplateResponse(
-        "events/send_test.html", {"request": request, "current_user": user, "current_project": project}
+        "events/send_test.html",
+        {
+            "request": request,
+            "current_user": user,
+            "current_project": project,
+            **_send_test_endpoints_ctx(db, project.id),
+        },
     )
+
+
+def _send_test_endpoints_ctx(db: Session, project_id: str) -> dict:
+    """Enabled endpoints + subscription labels for the publish target picker."""
+    try:
+        endpoints = (
+            db.query(Endpoint)
+            .filter(Endpoint.project_id == project_id, Endpoint.enabled == True)
+            .order_by(Endpoint.url.asc())
+            .all()
+        )
+    except Exception:
+        endpoints = []
+    subs: dict[str, list[str]] = {}
+    try:
+        if endpoints:
+            from collections import defaultdict as _dd
+
+            rows = (
+                db.query(EndpointSubscription.endpoint_id, EndpointSubscription.event_type)
+                .filter(EndpointSubscription.endpoint_id.in_([e.id for e in endpoints]))
+                .all()
+            )
+            _map: dict[str, list[str]] = _dd(list)
+            for _eid, _etype in rows:
+                _map[_eid].append(_etype)
+            subs = dict(_map)
+    except Exception:
+        subs = {}
+    return {"endpoints": endpoints, "ep_subs": subs}
 
 
 @router.post("/dashboard/events/send-test")
@@ -2093,6 +2129,8 @@ def send_test_event_post(
     event_type: str = Form(...),
     idempotency_key: str | None = Form(None),
     payload_data: str = Form(...),
+    target_mode: str = Form("all"),
+    endpoint_ids: list[str] = Form(default=[]),
     csrf_token: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
@@ -2101,6 +2139,11 @@ def send_test_event_post(
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
     require_manager(db, org, user)
+
+    _ep_ctx = _send_test_endpoints_ctx(db, project.id)
+    # Targeted fan-out: "selected" restricts to checked endpoints (validated
+    # against this project in ingest_event); anything else means all matches.
+    _targets = endpoint_ids if (target_mode or "").strip().lower() == "selected" else None
 
     # Same throttle as public ingest + idempotency-key bound (DB column is 255).
     _idem = idempotency_key.strip() if idempotency_key and idempotency_key.strip() else None
@@ -2111,7 +2154,8 @@ def send_test_event_post(
                 "request": request,
                 "current_user": user,
                 "current_project": project,
-                "message": "Idempotency-Key must be \u2264255 characters.",
+                **_ep_ctx,
+                "message": "Idempotency-Key must be ≤255 characters.",
                 "message_type": "error",
             },
             status_code=400,
@@ -2126,6 +2170,7 @@ def send_test_event_post(
                 "request": request,
                 "current_user": user,
                 "current_project": project,
+                **_ep_ctx,
                 "message": "Ingestion rate limit exceeded. Try again shortly.",
                 "message_type": "error",
             },
@@ -2143,6 +2188,7 @@ def send_test_event_post(
                 "request": request,
                 "current_user": user,
                 "current_project": project,
+                **_ep_ctx,
                 "message": "Invalid JSON payload: please provide a valid JSON object.",
                 "message_type": "error",
             },
@@ -2157,6 +2203,7 @@ def send_test_event_post(
                 "request": request,
                 "current_user": user,
                 "current_project": project,
+                **_ep_ctx,
                 "message": f"Payload exceeds maximum allowed size of {settings.MAX_PAYLOAD_SIZE_BYTES} bytes.",
                 "message_type": "error",
             },
@@ -2165,7 +2212,12 @@ def send_test_event_post(
 
     try:
         event, is_dup, count = ingest_event(
-            db=db, project_id=project.id, event_type=event_type.strip(), payload_data=parsed_data, idempotency_key=_idem
+            db=db,
+            project_id=project.id,
+            event_type=event_type.strip(),
+            payload_data=parsed_data,
+            idempotency_key=_idem,
+            endpoint_ids=_targets,
         )
     except IdempotencyConflictError as e:
         return templates.TemplateResponse(
@@ -2174,6 +2226,7 @@ def send_test_event_post(
                 "request": request,
                 "current_user": user,
                 "current_project": project,
+                **_ep_ctx,
                 "message": f"Idempotency conflict: {e} Use a new key or resend the exact same event type and payload.",
                 "message_type": "error",
             },
@@ -2181,13 +2234,18 @@ def send_test_event_post(
         )
     except ValueError as e:
         _raw = str(e) or ""
-        safe_msg = _raw if _raw.lower().startswith(("event", "payload", "idempotency")) else "Invalid event data."
+        safe_msg = (
+            _raw
+            if _raw.lower().startswith(("event", "payload", "idempotency", "select", "unknown", "too many"))
+            else "Invalid event data."
+        )
         return templates.TemplateResponse(
             "events/send_test.html",
             {
                 "request": request,
                 "current_user": user,
                 "current_project": project,
+                **_ep_ctx,
                 "message": f"Event ingestion error: {safe_msg}",
                 "message_type": "error",
             },
@@ -2219,6 +2277,7 @@ def send_test_event_post(
                 "request": request,
                 "current_user": user,
                 "current_project": project,
+                **_ep_ctx,
                 "message": _msg,
                 "message_type": "error",
             },
