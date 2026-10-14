@@ -182,9 +182,10 @@
     // never resurrects an already-shown banner.
     try {
       var url = new URL(window.location.href);
-      if (url.searchParams.has('notice') || url.searchParams.has('notice_type')) {
+      if (url.searchParams.has('notice') || url.searchParams.has('notice_type') || url.searchParams.has('new_key')) {
         url.searchParams.delete('notice');
         url.searchParams.delete('notice_type');
+        url.searchParams.delete('new_key');
         window.history.replaceState(null, '', url.pathname + url.search + url.hash);
       }
     } catch (e) { /* non-fatal: banner still auto-dismisses below */ }

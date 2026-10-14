@@ -2590,10 +2590,45 @@ def replay_all_dead_letters(request: Request, csrf_token: str | None = Form(None
 # ================= API KEYS =================
 
 
-def _render_api_keys(request: Request, db: Session, new_key: str | None = None):
+# One-time raw-key display tokens (POST-Redirect-GET for key creation so a
+# browser reload can never re-POST and mint a duplicate). Random 24-byte
+# tokens, single-use, 5-minute TTL, bound to (user, project). The raw key
+# itself never appears in URLs or logs — only the token does.
+import secrets as _secrets
+import time as _time
+
+_api_key_display: dict[str, tuple[str, str, str, float]] = {}
+_API_KEY_DISPLAY_TTL_SECONDS = 300.0
+
+
+def _issue_key_display_token(raw_key: str, user_id: str, project_id: str) -> str:
+    now = _time.monotonic()
+    for _tok in [t for t, (_, _, _, exp) in _api_key_display.items() if exp <= now]:
+        _api_key_display.pop(_tok, None)
+    token = _secrets.token_urlsafe(24)
+    _api_key_display[token] = (raw_key, user_id, project_id, now + _API_KEY_DISPLAY_TTL_SECONDS)
+    return token
+
+
+def _consume_key_display_token(token: str | None, user_id: str, project_id: str) -> str | None:
+    if not token:
+        return None
+    entry = _api_key_display.pop(token.strip(), None)
+    if not entry:
+        return None
+    raw_key, uid, pid, exp = entry
+    if uid != user_id or pid != project_id or exp <= _time.monotonic():
+        return None
+    return raw_key
+
+
+def _render_api_keys(request: Request, db: Session, new_key: str | None = None, display_token: str | None = None):
     user, org, project = get_user_and_project(request, db)
     if not user or not project:
         return RedirectResponse(url="/auth/login", status_code=302)
+
+    if display_token:
+        new_key = _consume_key_display_token(display_token, user.id, project.id)
 
     keys = db.query(ApiKey).filter(ApiKey.project_id == project.id).order_by(ApiKey.created_at.desc()).all()
     return templates.TemplateResponse(
@@ -2603,8 +2638,8 @@ def _render_api_keys(request: Request, db: Session, new_key: str | None = None):
 
 
 @router.get("/dashboard/api-keys", response_class=HTMLResponse)
-def list_api_keys(request: Request, db: Session = Depends(get_db)):
-    return _render_api_keys(request, db, new_key=None)
+def list_api_keys(request: Request, new_key: str | None = None, db: Session = Depends(get_db)):
+    return _render_api_keys(request, db, display_token=new_key)
 
 
 @router.post("/dashboard/api-keys")
@@ -2652,7 +2687,10 @@ def create_api_key_post(
         details={"name": api_key_obj.name, "prefix": key_prefix},
     )
 
-    return _render_api_keys(request=request, db=db, new_key=full_key)
+    # POST-Redirect-GET via one-time display token: reloading the landing
+    # page can never re-POST and mint a same-name duplicate.
+    _display = _issue_key_display_token(full_key, user.id, project.id)
+    return RedirectResponse(url=f"/dashboard/api-keys?new_key={_display}", status_code=303)
 
 
 @router.post("/dashboard/api-keys/{key_id}/revoke")
