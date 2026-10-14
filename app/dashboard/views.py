@@ -124,6 +124,31 @@ def _ist_display(value, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
         return ""
 
 
+_IST_OFFSET = _td(hours=5, minutes=30)
+
+
+def _utc_naive_to_ist_naive(dt):
+    """Shift a UTC naive datetime to IST wall-clock (naive). Storage stays UTC."""
+    if dt is None:
+        return None
+    try:
+        naive = dt.replace(tzinfo=None) if getattr(dt, "tzinfo", None) else dt
+        return naive + _IST_OFFSET
+    except Exception:
+        return dt
+
+
+def _ist_label(dt_utc_naive, fmt: str) -> str:
+    """Format a UTC naive datetime as an IST axis label (display-only)."""
+    try:
+        return _utc_naive_to_ist_naive(dt_utc_naive).strftime(fmt)
+    except Exception:
+        try:
+            return dt_utc_naive.strftime(fmt)
+        except Exception:
+            return ""
+
+
 templates.env.filters["ist"] = _ist_display
 
 
@@ -1067,19 +1092,25 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
         "avg_e2e_duration_ms": avg_e2e_duration_ms,
     }
 
-    # 7-day activity series — bounded to last 7 days only (was full-table scan).
+    # 24h activity series (default landing view) — bounded to last 1 day only.
+    # Labels are IST wall-clock (display-only); storage/bucketing stays UTC.
     from datetime import timedelta as _td
 
-    _today = utc_now().date()
+    def _to_naive_overview(dt):
+        if dt is None:
+            return None
+        return dt.replace(tzinfo=None) if getattr(dt, "tzinfo", None) else dt
+
+    _now_utc = _to_naive_overview(utc_now())
     _labels: list[str] = []
     _events_per_day: list[int] = []
     _succeeded_per_day: list[int] = []
     _dead_per_day: list[int] = []
-    _week_ago = utc_now() - _td(days=7)
+    _day_ago = utc_now() - _td(days=1)
     try:
         _all_events = (
             db.query(Event.created_at)
-            .filter(Event.project_id == project.id, Event.created_at >= _week_ago)
+            .filter(Event.project_id == project.id, Event.created_at >= _day_ago)
             .limit(5000)
             .all()
         )
@@ -1089,21 +1120,34 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
         _all_dlv = (
             db.query(Delivery.created_at, Delivery.status)
             .join(Event, Delivery.event_id == Event.id)
-            .filter(Event.project_id == project.id, Delivery.created_at >= _week_ago)
+            .filter(Event.project_id == project.id, Delivery.created_at >= _day_ago)
             .limit(5000)
             .all()
         )
     except Exception:
         _all_dlv = []
+    try:
+        _ev_utc = [_to_naive_overview(c) for (c,) in _all_events if c is not None]
+    except Exception:
+        _ev_utc = []
+    try:
+        _dlv_utc = [(_to_naive_overview(c), s) for c, s in _all_dlv if c is not None]
+    except Exception:
+        _dlv_utc = []
     _retrying_per_day: list[int] = []
-    for _i in range(6, -1, -1):
-        _day = _today - _td(days=_i)
-        _labels.append(_day.strftime("%m-%d"))
-        _e = sum(1 for (c,) in _all_events if c and c.date() == _day)
+    for _i in range(5, -1, -1):
+        _t_start = _now_utc - _td(hours=(_i + 1) * 4)
+        _t_end = _now_utc - _td(hours=_i * 4)
+        _labels.append(_ist_label(_t_end, "%H:00"))
+        _e = sum(1 for c in _ev_utc if c is not None and _t_start <= c <= _t_end)
         _events_per_day.append(_e)
-        _s = sum(1 for c, s in _all_dlv if c and c.date() == _day and s == "SUCCEEDED")
-        _r = sum(1 for c, s in _all_dlv if c and c.date() == _day and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT"))
-        _d = sum(1 for c, s in _all_dlv if c and c.date() == _day and s == "DEAD")
+        _s = sum(1 for c, s in _dlv_utc if c is not None and _t_start <= c <= _t_end and s == "SUCCEEDED")
+        _r = sum(
+            1
+            for c, s in _dlv_utc
+            if c is not None and _t_start <= c <= _t_end and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT")
+        )
+        _d = sum(1 for c, s in _dlv_utc if c is not None and _t_start <= c <= _t_end and s == "DEAD")
         _succeeded_per_day.append(_s)
         _retrying_per_day.append(_r)
         _dead_per_day.append(_d)
@@ -1113,7 +1157,7 @@ def dashboard_overview(request: Request, db: Session = Depends(get_db)):
         "succeeded": _succeeded_per_day,
         "retrying": _retrying_per_day,
         "dead": _dead_per_day,
-        "range": "7d",
+        "range": "24h",
     }
 
     return templates.TemplateResponse(
@@ -1292,11 +1336,14 @@ def dashboard_metrics_chart_fragment(
 
     retrying_per_bucket = []
 
+    # IST wall-clock for display + daily grouping (storage stays UTC).
+    now_ist = _utc_naive_to_ist_naive(now)
+
     if time_range == "1h":
         for i in range(5, -1, -1):
             t_start = now - _td(minutes=(i + 1) * 10)
             t_end = now - _td(minutes=i * 10)
-            labels.append(t_end.strftime("%H:%M"))
+            labels.append(_ist_label(t_end, "%H:%M"))
             events_per_bucket.append(sum(1 for c in all_events if t_start <= c <= t_end))
             succeeded_per_bucket.append(sum(1 for c, s in all_dlv if t_start <= c <= t_end and s == "SUCCEEDED"))
             retrying_per_bucket.append(
@@ -1305,39 +1352,64 @@ def dashboard_metrics_chart_fragment(
             dead_per_bucket.append(sum(1 for c, s in all_dlv if t_start <= c <= t_end and s == "DEAD"))
     elif time_range == "7d":
         for i in range(6, -1, -1):
-            day = (now - _td(days=i)).date()
+            day = (now_ist - _td(days=i)).date()
             labels.append(day.strftime("%m-%d"))
-            events_per_bucket.append(sum(1 for c in all_events if c.date() == day))
-            succeeded_per_bucket.append(sum(1 for c, s in all_dlv if c.date() == day and s == "SUCCEEDED"))
-            retrying_per_bucket.append(
-                sum(1 for c, s in all_dlv if c.date() == day and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT"))
+            events_per_bucket.append(
+                sum(1 for c in all_events if _utc_naive_to_ist_naive(c).date() == day)
             )
-            dead_per_bucket.append(sum(1 for c, s in all_dlv if c.date() == day and s == "DEAD"))
-    elif time_range == "30d":
-        for i in range(29, -1, -5):
-            day = (now - _td(days=i)).date()
-            labels.append(day.strftime("%m-%d"))
-            events_per_bucket.append(sum(1 for c in all_events if c.date() >= day - _td(days=4) and c.date() <= day))
             succeeded_per_bucket.append(
-                sum(1 for c, s in all_dlv if c.date() >= day - _td(days=4) and c.date() <= day and s == "SUCCEEDED")
+                sum(1 for c, s in all_dlv if _utc_naive_to_ist_naive(c).date() == day and s == "SUCCEEDED")
             )
             retrying_per_bucket.append(
                 sum(
                     1
                     for c, s in all_dlv
-                    if c.date() >= day - _td(days=4)
-                    and c.date() <= day
+                    if _utc_naive_to_ist_naive(c).date() == day
                     and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT")
                 )
             )
             dead_per_bucket.append(
-                sum(1 for c, s in all_dlv if c.date() >= day - _td(days=4) and c.date() <= day and s == "DEAD")
+                sum(1 for c, s in all_dlv if _utc_naive_to_ist_naive(c).date() == day and s == "DEAD")
+            )
+    elif time_range == "30d":
+        for i in range(29, -1, -5):
+            day = (now_ist - _td(days=i)).date()
+            labels.append(day.strftime("%m-%d"))
+            _win_start = day - _td(days=4)
+            events_per_bucket.append(
+                sum(
+                    1
+                    for c in all_events
+                    if _win_start <= _utc_naive_to_ist_naive(c).date() <= day
+                )
+            )
+            succeeded_per_bucket.append(
+                sum(
+                    1
+                    for c, s in all_dlv
+                    if _win_start <= _utc_naive_to_ist_naive(c).date() <= day and s == "SUCCEEDED"
+                )
+            )
+            retrying_per_bucket.append(
+                sum(
+                    1
+                    for c, s in all_dlv
+                    if _win_start <= _utc_naive_to_ist_naive(c).date() <= day
+                    and s in ("RETRY_SCHEDULED", "PENDING", "IN_FLIGHT")
+                )
+            )
+            dead_per_bucket.append(
+                sum(
+                    1
+                    for c, s in all_dlv
+                    if _win_start <= _utc_naive_to_ist_naive(c).date() <= day and s == "DEAD"
+                )
             )
     else:  # 24h default
         for i in range(5, -1, -1):
             t_start = now - _td(hours=(i + 1) * 4)
             t_end = now - _td(hours=i * 4)
-            labels.append(t_end.strftime("%H:00"))
+            labels.append(_ist_label(t_end, "%H:00"))
             events_per_bucket.append(sum(1 for c in all_events if t_start <= c <= t_end))
             succeeded_per_bucket.append(sum(1 for c, s in all_dlv if t_start <= c <= t_end and s == "SUCCEEDED"))
             retrying_per_bucket.append(
