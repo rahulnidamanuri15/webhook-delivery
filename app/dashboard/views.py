@@ -2399,6 +2399,28 @@ def delivery_detail_view(delivery_id: str, request: Request, db: Session = Depen
     )
 
 
+@router.get("/dashboard/deliveries/{delivery_id}/live", response_class=HTMLResponse)
+def delivery_live_fragment(delivery_id: str, request: Request, db: Session = Depends(get_db)):
+    """HTMX partial for the delivery detail live region (status + timeline)."""
+    user, org, project = get_user_and_project(request, db)
+    if not user or not project:
+        return HTMLResponse("<p class='text-xs text-rose-500 p-4'>Not authorized</p>", status_code=401)
+
+    delivery = (
+        db.query(Delivery)
+        .join(Event, Delivery.event_id == Event.id)
+        .filter(Delivery.id == delivery_id, Event.project_id == project.id)
+        .first()
+    )
+    if not delivery:
+        return HTMLResponse("<p class='text-xs text-rose-500 p-4'>Delivery not found</p>", status_code=404)
+
+    return templates.TemplateResponse(
+        "deliveries/_live.html",
+        {"request": request, "current_user": user, "current_project": project, "delivery": delivery},
+    )
+
+
 @router.get("/dashboard/deliveries/{delivery_id}/replay", response_class=HTMLResponse)
 def replay_delivery_page(delivery_id: str, request: Request, db: Session = Depends(get_db)):
     user, org, project = get_user_and_project(request, db)
@@ -2418,6 +2440,12 @@ def replay_delivery_page(delivery_id: str, request: Request, db: Session = Depen
         raise HTTPException(status_code=400, detail="Only DEAD deliveries can be replayed.")
 
     endpoints = db.query(Endpoint).filter(Endpoint.project_id == project.id).order_by(Endpoint.url.asc()).all()
+    # The original endpoint is already offered as "Same endpoint" above —
+    # don't list it twice (nothing to dedupe when it was deleted).
+    try:
+        endpoints = [e for e in endpoints if e.id != delivery.endpoint_id]
+    except Exception:
+        pass
     subs: dict[str, list[str]] = {}
     try:
         if endpoints:
