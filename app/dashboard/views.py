@@ -1113,6 +1113,7 @@ def deliveries_table_fragment(
     q: str | None = None,
     page: int = 1,
     per_page: int = 15,
+    event_id: str | None = None,
     db: Session = Depends(get_db),
 ):
     """HTMX partial fragment endpoint with search and status filtering."""
@@ -1133,6 +1134,11 @@ def deliveries_table_fragment(
         per_page = 15
 
     query = db.query(Delivery).join(Event, Delivery.event_id == Event.id).filter(Event.project_id == project.id)
+    if event_id and event_id.strip():
+        # Scoped to one event (event-detail live view). Still project-scoped
+        # via the join above; length-bounded to avoid pathological scans.
+        _eid = event_id.strip()[:64]
+        query = query.filter(Delivery.event_id == _eid)
     if status and status.strip():
         # Allowlist statuses to avoid arbitrary filter scans.
         _st = status.strip().upper()

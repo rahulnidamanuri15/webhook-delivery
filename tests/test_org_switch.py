@@ -119,3 +119,46 @@ def test_audit_logs_require_manager():
         assert "/dashboard/audit-logs" not in dash.text
     finally:
         db.close()
+
+
+def test_event_table_fragment_scoped_by_event_id():
+    from app.models import Delivery, Event
+
+    db = SessionLocal()
+    client = TestClient(app)
+    uid = uuid.uuid4().hex[:8]
+    try:
+        owner, org = _user_with_org(db, f"ev_{uid}@example.com", f"Org Ev {uid}")
+        proj = db.query(Project).filter(Project.organization_id == org.id).first()
+        e1 = Event(
+            id=f"evt_{uid}a",
+            project_id=proj.id,
+            event_type="t.a",
+            payload_json="{}",
+            wire_payload="{}",
+            request_hash="h1",
+        )
+        e2 = Event(
+            id=f"evt_{uid}b",
+            project_id=proj.id,
+            event_type="t.b",
+            payload_json="{}",
+            wire_payload="{}",
+            request_hash="h2",
+        )
+        db.add_all([e1, e2])
+        db.flush()
+        db.add(Delivery(event_id=e1.id, target_url_snapshot="https://x.example/1", status="PENDING", attempt_count=0))
+        db.add(Delivery(event_id=e2.id, target_url_snapshot="https://x.example/2", status="PENDING", attempt_count=0))
+        db.commit()
+        tok = create_session_token(owner.id, org_id=org.id)
+        r = client.get(f"/dashboard/deliveries/table?event_id={e1.id}", cookies={"wh_session": tok})
+        assert r.status_code == 200
+        assert "x.example/1" in r.text
+        assert "x.example/2" not in r.text
+        detail = client.get(f"/dashboard/events/{e1.id}", cookies={"wh_session": tok})
+        assert detail.status_code == 200
+        assert "event-deliveries-live" in detail.text
+        assert "every 3s" in detail.text
+    finally:
+        db.close()

@@ -51,7 +51,12 @@
       {% endif %}
     </div>
     {% set deliveries = deliveries if deliveries is defined else event.deliveries %}
-    {% include "deliveries/_table.html" %}
+    <div id="event-deliveries-live"
+         hx-get="/dashboard/deliveries/table?event_id={{ event.id }}"
+         hx-trigger="every 3s"
+         hx-swap="innerHTML">
+      {% include "deliveries/_table.html" %}
+    </div>
     {% if total_pages is defined and total_pages > 1 %}
     <div class="px-6 py-3 border-t border-slate-200 flex items-center justify-between text-sm">
       <div class="text-xs text-slate-500">{{ total_count }} deliveries</div>
