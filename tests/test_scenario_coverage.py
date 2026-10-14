@@ -255,13 +255,14 @@ def test_csrf_protection_enforcement(test_setup):
     auth_client = TestClient(app)
     auth_client.cookies.set("wh_session", test_setup["session_a"])
 
-    # 1. State-changing POST without CSRF token -> 403 Forbidden
+    # 1. State-changing POST without CSRF token -> 403 Forbidden (branded HTML page)
     resp_no_csrf = auth_client.post(
         "/dashboard/projects",
         data={"name": "Forbidden Project"},
     )
     assert resp_no_csrf.status_code == 403
-    assert "CSRF" in resp_no_csrf.json().get("detail", "")
+    assert "text/html" in resp_no_csrf.headers.get("content-type", "")
+    assert "CSRF" in resp_no_csrf.text
 
     # 2. State-changing POST with invalid CSRF token -> 403 Forbidden
     resp_invalid_csrf = auth_client.post(
