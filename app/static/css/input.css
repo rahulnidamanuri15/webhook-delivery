@@ -37,6 +37,17 @@
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;
 }
+/* Wrapped variant for short snippets (e.g. verification sample): fits the
+   card at any zoom instead of scrolling. Long payloads keep .code-container. */
+.code-wrap {
+  overflow-x: hidden;
+  min-width: 0;
+}
+.code-wrap pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
 
 /* All interactive controls show a pointer cursor on hover (Tailwind v4
    preflight defaults buttons to `cursor: default`). */
