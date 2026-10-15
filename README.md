@@ -16,6 +16,7 @@ A production-grade, multi-tenant webhook delivery platform. Your application pos
 ## Table of Contents
 
 - [Features](#features)
+- [Demo Video](#demo-video)
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
 - [Repository Structure](#repository-structure)
@@ -59,6 +60,18 @@ A production-grade, multi-tenant webhook delivery platform. Your application pos
 - Multi-tenant: organizations → projects → endpoints / events / deliveries / API keys.
 - Dashboard: server-rendered HTML + Tailwind + HTMX (no SPA runtime), live tables, Chart.js traffic + health charts (IST axis), attempt timeline, slide-over inspector, audit log viewer.
 - Ops: Prometheus `/metrics`, OpenTelemetry tracing, structured JSON logs, `/live` `/ready` `/startup` probes, nightly DB backups, Alembic-only migrations.
+
+---
+
+## Demo Video
+
+<video src="docs/demo.mp4" controls preload="metadata" width="100%">
+  Your browser cannot play the embedded video — <a href="docs/demo.mp4">download/watch docs/demo.mp4</a>.
+</video>
+
+90-second end-to-end flow: register → admin approval → create endpoint → publish event → watch live delivery → retry → dead-letter → one-click replay → audit trail.
+
+> Maintainer note: keep `docs/demo.mp4` under 100 MB (GitHub file limit — aim for ≤50 MB at 1080p). If it ever exceeds that, upload the file to a GitHub Release instead and point the `<video src>` above at the release asset URL.
 
 ---
 
@@ -178,19 +191,17 @@ pip install -r requirements.txt
 .\.venv\Scripts\alembic.exe upgrade head
 ```
 
-Registration is closed by default (`ALLOW_OPEN_REGISTRATION=False`). For the first owner, temporarily set `ALLOW_OPEN_REGISTRATION=True` in `.env`, then:
+Registration is closed by default (`ALLOW_OPEN_REGISTRATION=False`). Recommended paths for the first owner: set `ALLOW_PENDING_REGISTRATION=True` and approve yourself via an existing superadmin at `/dashboard/admin/pending`, or bootstrap directly (no open registration needed):
 
 ```powershell
+# Start the server
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8080 --reload
+
+# Create the first owner (separate terminal, no open registration needed)
+.\.venv\Scripts\python.exe scripts/bootstrap_admin.py --email you@example.com --password 'StrongPass123!'
 ```
 
-Open `http://127.0.0.1:8080/auth/register`, create the owner account (an org + default project are created automatically), then set `ALLOW_OPEN_REGISTRATION=False` again and restart. Everyone else joins via team invitations.
-
-In a second terminal, start the main server:
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8080 --reload
-```
+Open `http://127.0.0.1:8080/auth/login` and sign in. Everyone else joins via the approval queue or team invitations.
 
 To test deliveries locally, point an endpoint at a public request-bin, or set `ALLOW_LOCAL_RECEIVERS=True` and run the bundled receiver, then use **Publish Test Event** in the dashboard.
 
