@@ -58,14 +58,14 @@
         <span class="relay-kpi">{{ stats.delivery_success_rate }}</span>
         <span class="text-sm font-bold text-[#111813]">%</span>
       </div>
-      <div class="mt-2.5 flex items-end justify-between gap-3">
+      <div class="mt-2.5 flex flex-wrap items-end justify-between gap-x-3 gap-y-2">
         {% if _total > 0 %}
-        <span class="flex items-center text-[11px] text-[#6b7c70] whitespace-nowrap"><span class="relay-delta"><span class="relay-delta-dot">↗</span>0.12%</span><span class="ml-1.5 text-[#9aa9a0]">vs last week</span></span>
+        <span class="flex items-center text-[11px] text-[#6b7c70] min-w-0"><span class="relay-delta"><span class="relay-delta-dot">↗</span>0.12%</span><span class="ml-1.5 text-[#9aa9a0]">vs last week</span></span>
         {% else %}
         <span class="text-[11px] text-[#9aa9a0]">No deliveries yet</span>
         {% endif %}
         <!-- spark bars visual -->
-        <span class="flex items-end gap-[3px] h-8" aria-hidden="true">
+        <span class="flex items-end gap-[3px] h-8 shrink-0" aria-hidden="true">
           <span class="w-[4px] rounded-sm bg-[#1aae5c]/20" style="height:30%"></span>
           <span class="w-[4px] rounded-sm bg-[#1aae5c]/25" style="height:38%"></span>
           <span class="w-[4px] rounded-sm bg-[#1aae5c]/30" style="height:34%"></span>
@@ -91,13 +91,13 @@
         <span class="text-sm font-semibold text-[#6b7c70]">ms</span>
       </div>
       {% if _total > 0 %}
-      <div class="mt-2.5 flex items-center text-[11px] text-[#6b7c70]">
+      <div class="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[#6b7c70]">
         <span class="relay-delta"><span class="relay-delta-dot">↗</span>8.4%</span>
-        <span class="ml-1.5 text-[#9aa9a0]">vs last week</span>
-        <span class="ml-auto font-mono text-[11px] text-[#6b7c70]">ACK {{ stats.avg_latency_ms }}ms</span>
+        <span class="text-[#9aa9a0]">vs last week</span>
+        <span class="ml-auto font-mono text-[11px] text-[#6b7c70] whitespace-nowrap">ACK {{ stats.avg_latency_ms }}ms</span>
       </div>
       {% else %}
-      <div class="mt-8 flex items-center text-[11px] text-[#9aa9a0]">
+      <div class="mt-8 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[#9aa9a0]">
         <span>No latency data yet</span>
         <span class="ml-auto font-mono text-[11px]">ACK {{ stats.avg_latency_ms }}ms</span>
       </div>
@@ -115,7 +115,7 @@
         <span class="relay-kpi">{{ stats.deliveries_due }}</span>
       </div>
       {% if stats.deliveries_due > 0 or stats.pending_deliveries > 0 %}
-      <div class="mt-2.5 flex items-center justify-between text-[11px]">
+      <div class="mt-2.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px]">
         <span class="flex items-center text-[#6b7c70]"><span class="relay-delta"><span class="relay-delta-dot">↗</span>3.1%</span><span class="ml-1.5 text-[#9aa9a0]">vs last week</span></span>
         <span class="text-[#6b7c70]">Next attempt in <strong class="text-[#111813]">32 sec</strong></span>
       </div>
