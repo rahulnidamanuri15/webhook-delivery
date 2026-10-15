@@ -15,7 +15,7 @@ python -m uvicorn app.main:app --port 8080 --reload
 ```
 
 Demo login: `demo@example.com` / `Password123!`
-Demo API key: `wh_live_demo1234567890abcdef123456`
+Demo API key: printed by `scripts/seed.py` (generated per run, e.g. `wh_live_demo_...`)
 Receiver: `http://127.0.0.1:8001/webhook` (secret in seed output)
 
 Set receiver admin token for remote use (optional locally):

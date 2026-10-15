@@ -1,6 +1,7 @@
 """Database seeding script for local development and demonstration."""
 
 import os
+import secrets
 import sys
 
 # Add root directory to sys.path
@@ -64,14 +65,16 @@ def seed():
 
         # 4. API Key — overridable via SEED_API_KEY (dev default only).
         # Production: create keys via dashboard; never reuse demo key.
-        raw_key = os.getenv("SEED_API_KEY", "wh_live_demo1234567890abcdef123456")
+        # Generated per-run so no static secret lives in the repo (secret scanners).
+        raw_key = os.getenv("SEED_API_KEY") or f"wh_live_demo_{secrets.token_urlsafe(24)}"
         key_prefix = raw_key[:16]
         key_hash = hash_api_key(raw_key)
         api_key = ApiKey(project_id=project.id, name="Main Server Key", key_prefix=key_prefix, key_hash=key_hash)
         db.add(api_key)
 
         # 5. Endpoint (pointing to controllable demo receiver)
-        signing_secret = os.getenv("SEED_ENDPOINT_SECRET", "whsec_demosecret1234567890abcdef")
+        # Generated per-run so no static secret lives in the repo (secret scanners).
+        signing_secret = os.getenv("SEED_ENDPOINT_SECRET") or f"whsec_demo_{secrets.token_urlsafe(24)}"
         encrypted_secret = encrypt_secret(signing_secret)
         receiver_url = (
             "http://demo_receiver:8001/webhook"

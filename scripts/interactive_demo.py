@@ -10,7 +10,11 @@ import httpx
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8080")
 RECEIVER_URL = os.getenv("RECEIVER_URL", "http://127.0.0.1:8001")
-API_KEY = os.getenv("API_KEY", "wh_live_demo1234567890abcdef123456")
+# No static fallback: pass API_KEY env (seed prints the per-run demo key).
+# A hardcoded default would trip secret scanners and imply a shared credential.
+API_KEY = os.getenv("API_KEY", "")
+if not API_KEY:
+    raise SystemExit("Set API_KEY env to the demo key printed by scripts/seed.py (or SEED_API_KEY).")
 
 
 def print_step(title: str):
