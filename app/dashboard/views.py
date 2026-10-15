@@ -2269,6 +2269,41 @@ def send_test_event_post(
             status_code=413,
         )
 
+    # Don't publish into the void: when no enabled endpoint would receive this
+    # event, stop at the form instead of storing an undeliverable event.
+    # (The public API intentionally still accepts such events with
+    # delivery_count 0 so automated producers never break.)
+    import re as _re_type
+
+    _etype_clean = (event_type or "").strip()
+    if _re_type.match(r"^[A-Za-z0-9._*-]+$", _etype_clean) and len(_etype_clean) <= 255:
+        from app.services.event_service import get_matching_endpoints as _get_matches
+
+        _would_match = _get_matches(db, project.id, _etype_clean)
+        if _targets is not None:
+            _sel_ids = {(e or "").strip()[:64] for e in _targets if isinstance(e, str) and (e or "").strip()}
+            _would_match = [e for e in _would_match if e.id in _sel_ids]
+        if not _would_match:
+            if not _ep_ctx.get("endpoints"):
+                _void_msg = "No enabled endpoints yet — create an endpoint first, then publish."
+            else:
+                _void_msg = (
+                    f"No enabled endpoint subscribes to '{_etype_clean}'. "
+                    "Adjust the event type, subscriptions, or pick 'All matching endpoints'."
+                )
+            return templates.TemplateResponse(
+                "events/send_test.html",
+                {
+                    "request": request,
+                    "current_user": user,
+                    "current_project": project,
+                    **_ep_ctx,
+                    "message": _void_msg,
+                    "message_type": "error",
+                },
+                status_code=400,
+            )
+
     try:
         event, is_dup, count = ingest_event(
             db=db,

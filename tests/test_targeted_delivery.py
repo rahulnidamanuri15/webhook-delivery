@@ -106,6 +106,39 @@ def test_dashboard_publish_selected(monkeypatch):
         db.close()
 
 
+def test_dashboard_publish_blocked_with_no_match(monkeypatch):
+    from app.models import Event as _EventModel
+
+    monkeypatch.setattr(_s, "ALLOW_PENDING_REGISTRATION", False)
+    db = SessionLocal()
+    client = TestClient(app)
+    uid = uuid.uuid4().hex[:8]
+    try:
+        u, o, p, eps = _project_with_endpoints(db, uid, ["other.event"])
+        tok = create_session_token(u.id, org_id=o.id)
+        mock_req = MagicMock()
+        mock_req.cookies = {"wh_session": tok}
+        csrf, _ = get_csrf_token_for_request(mock_req)
+        before = db.query(_EventModel).filter(_EventModel.project_id == p.id).count()
+        res = client.post(
+            "/dashboard/events/send-test",
+            data={
+                "event_type": "payment.succeeded",
+                "idempotency_key": f"void-{uid}",
+                "payload_data": json.dumps({"a": 1}),
+                "target_mode": "all",
+                "csrf_token": csrf,
+            },
+            cookies={"wh_session": tok},
+        )
+        assert res.status_code == 400
+        assert "No enabled endpoint subscribes" in res.text
+        db.expire_all()
+        assert db.query(_EventModel).filter(_EventModel.project_id == p.id).count() == before
+    finally:
+        db.close()
+
+
 def _dead_delivery(db, project_id: str, endpoint_id: str | None, url: str):
     evt = db.query(EventModel).filter_by(project_id=project_id).first()
     if evt is None:
