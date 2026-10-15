@@ -27,7 +27,7 @@
         <svg class="w-4 h-4 text-slate-400 absolute left-2.5 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
       </div>
 
-      <div class="flex items-center space-x-1 text-xs">
+      <div class="flex flex-wrap items-center gap-1 text-xs">
         <a href="/dashboard/deliveries" class="px-3 py-1 text-xs rounded-lg font-medium {% if not status_filter %}bg-indigo-600 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">
           All ({{ total_count if total_count is not none else deliveries|length }})
         </a>

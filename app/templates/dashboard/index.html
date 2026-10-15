@@ -10,7 +10,7 @@
   <div class="flex flex-col md:flex-row md:items-end justify-between gap-4">
     <div>
       <p id="relay-date-line" class="text-[11px] font-bold uppercase tracking-[0.14em] text-[#1aae5c]">Tuesday, May 20</p>
-      <h2 class="mt-1 text-[32px] leading-tight font-medium tracking-tight text-[#111813]">
+      <h2 class="mt-1 text-2xl sm:text-[32px] leading-tight font-medium tracking-tight text-[#111813] break-words">
         Good morning, {{ current_user.email.split('@')[0].capitalize() if current_user and current_user.email else 'Sarah' }}.
       </h2>
       <p class="mt-0.5 text-[14px] text-[#6b7c70]">Here's what's happening with your webhooks today.</p>
@@ -147,7 +147,7 @@
       </div>
 
       <!-- Filter Buttons -->
-      <div class="flex items-center gap-1.5 text-xs font-medium">
+      <div class="flex flex-wrap items-center gap-1.5 text-xs font-medium">
         <a href="/dashboard/deliveries" class="px-3 py-1.5 rounded-lg bg-[#15251d] text-white">All Deliveries</a>
         <a href="/dashboard/deliveries?status=SUCCEEDED" class="px-3 py-1.5 rounded-lg text-[#3d4d43] hover:bg-[#f4f6f3]">2xx Succeeded</a>
         <a href="/dashboard/deliveries?status=RETRY_SCHEDULED" class="px-3 py-1.5 rounded-lg text-amber-700 bg-amber-50 hover:bg-amber-100">Retrying</a>

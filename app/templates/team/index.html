@@ -64,9 +64,9 @@
           <div class="h-9 w-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm uppercase">
             {{ m.user.email[0] }}
           </div>
-          <div>
-            <div class="flex items-center space-x-2">
-              <span class="text-sm font-bold text-slate-900">{{ m.user.email }}</span>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-sm font-bold text-slate-900 break-all">{{ m.user.email }}</span>
               {% if m.role == 'owner' %}
                 <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800">Owner</span>
               {% elif m.role == 'admin' %}
@@ -79,12 +79,12 @@
           </div>
         </div>
         {% if is_manager %}
-        <div class="flex items-center space-x-2">
+        <div class="flex flex-wrap items-center gap-2">
           {% if m.user_id == current_user.id %}
           <span class="text-[11px] font-medium text-slate-400">This is you</span>
           {% else %}
             {% if m.role != 'owner' %}
-            <form action="/dashboard/team/members/{{ m.id }}/role" method="POST" class="flex items-center space-x-2">
+            <form action="/dashboard/team/members/{{ m.id }}/role" method="POST" class="flex flex-wrap items-center gap-2">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <select name="role" class="px-2 py-1 border border-slate-300 rounded text-xs bg-white">
                 <option value="member" {% if m.role == 'member' %}selected{% endif %}>Member</option>

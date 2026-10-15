@@ -22,7 +22,7 @@
         </p>
       </div>
 
-      <div class="text-xs text-slate-500 text-right space-y-0.5">
+      <div class="text-xs text-slate-500 text-left md:text-right space-y-0.5">
         <div>Event: <a href="/dashboard/events/{{ delivery.event_id }}" class="font-mono text-indigo-600 hover:underline">{{ delivery.event_id }}</a> ({{ delivery.event.event_type }})</div>
         <div>Created: <strong>{{ delivery.created_at|ist }} IST</strong></div>
         {% if delivery.status == 'RETRY_SCHEDULED' %}

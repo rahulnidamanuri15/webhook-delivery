@@ -15,11 +15,11 @@
   <!-- Endpoint Configuration & Secrets Card -->
   <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
     <div class="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-slate-200 gap-4">
-      <div>
-        <h2 class="text-lg font-bold text-slate-900">{{ endpoint.url }}</h2>
-        <p class="text-xs text-slate-500 font-mono mt-0.5">Endpoint ID: {{ endpoint.id }}</p>
+      <div class="min-w-0">
+        <h2 class="text-lg font-bold text-slate-900 break-all">{{ endpoint.url }}</h2>
+        <p class="text-xs text-slate-500 font-mono mt-0.5 break-all">Endpoint ID: {{ endpoint.id }}</p>
       </div>
-      <div class="flex items-center space-x-2">
+      <div class="flex flex-wrap items-center gap-2">
         <form action="/dashboard/endpoints/{{ endpoint.id }}/ping" method="POST" class="inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold rounded-md shadow-sm">
@@ -51,7 +51,7 @@
             <label class="block text-xs font-semibold text-slate-600 mb-1">Description</label>
             <input type="text" name="description" value="{{ endpoint.description or '' }}" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
           </div>
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1">Subscriptions (comma-separated)</label>
               <input type="text" name="event_types" value="{{ endpoint.subscriptions|map(attribute='event_type')|join(', ') }}" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono">

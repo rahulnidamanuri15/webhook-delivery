@@ -61,7 +61,7 @@
       {% for ep in endpoints %}
       <div class="p-6 hover:bg-slate-50 transition flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div class="space-y-1">
-          <div class="flex items-center space-x-2">
+        <div class="flex flex-wrap items-center gap-2">
             <span class="font-mono text-sm font-semibold text-slate-900">{{ ep.url }}</span>
             {% if ep.enabled %}
               <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800">Enabled</span>

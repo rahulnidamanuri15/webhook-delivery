@@ -29,17 +29,17 @@
 
     <div class="divide-y divide-slate-200">
       {% for prj in projects %}
-      <div class="p-6 hover:bg-slate-50 transition flex items-center justify-between">
-        <div>
-          <div class="flex items-center space-x-2">
-            <h4 class="text-sm font-bold text-slate-900">{{ prj.name }}</h4>
+      <div class="p-6 hover:bg-slate-50 transition flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <h4 class="text-sm font-bold text-slate-900 break-words">{{ prj.name }}</h4>
             {% if current_project and current_project.id == prj.id %}
               <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-indigo-100 text-indigo-800">
                 Active Project
               </span>
             {% endif %}
           </div>
-          <p class="text-xs text-slate-500 font-mono mt-0.5">ID: {{ prj.id }} | Created: {{ prj.created_at|ist('%Y-%m-%d') }}</p>
+          <p class="text-xs text-slate-500 font-mono mt-0.5 break-all">ID: {{ prj.id }} | Created: {{ prj.created_at|ist('%Y-%m-%d') }}</p>
         </div>
 
         <div>
@@ -65,17 +65,17 @@
 
     <div class="divide-y divide-slate-200">
       {% for o in orgs %}
-      <div class="p-6 hover:bg-slate-50 transition flex items-center justify-between">
-        <div>
-          <div class="flex items-center space-x-2">
-            <h4 class="text-sm font-bold text-slate-900">{{ o.name }}</h4>
+      <div class="p-6 hover:bg-slate-50 transition flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <h4 class="text-sm font-bold text-slate-900 break-words">{{ o.name }}</h4>
             {% if current_org and current_org.id == o.id %}
               <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800">
                 Active workspace
               </span>
             {% endif %}
           </div>
-          <p class="text-xs text-slate-500 font-mono mt-0.5">ID: {{ o.id }}</p>
+          <p class="text-xs text-slate-500 font-mono mt-0.5 break-all">ID: {{ o.id }}</p>
         </div>
 
         <div>

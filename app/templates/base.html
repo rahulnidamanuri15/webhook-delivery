@@ -37,9 +37,12 @@
     
     <!-- Top Bar Component (blocks must live in base.html so child pages can override them) -->
     <header class="bg-white/90 backdrop-blur border-b border-[#e5ebe6] sticky top-0 z-20">
-      <div class="px-6 lg:px-8 py-3 flex items-center gap-4">
+      <div class="px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-3 sm:gap-4">
+        <button type="button" onclick="toggleHookflowSidebar()" aria-label="Open menu" class="md:hidden flex items-center justify-center w-9 h-9 rounded-xl border border-[#e5ebe6] bg-white text-[#3d4d43] hover:bg-[#f4f6f3] transition shrink-0">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16" /></svg>
+        </button>
         <div class="flex items-center gap-3 min-w-0">
-          <h1 class="text-[20px] font-semibold text-[#111813] leading-tight tracking-tight whitespace-nowrap">{% block header_title %}Overview{% endblock %}</h1>
+          <h1 class="text-lg sm:text-[20px] font-semibold text-[#111813] leading-tight tracking-tight truncate min-w-0">{% block header_title %}Overview{% endblock %}</h1>
           <span class="hidden sm:block w-px h-5 bg-[#e5ebe6]"></span>
           <span class="hidden sm:inline-flex items-center gap-1.5 text-[13px] font-medium text-[#6b7c70]">
             <span class="w-2 h-2 rounded-full bg-[#1aae5c] ring-4 ring-[#e6f5ec]"></span>
@@ -48,7 +51,7 @@
         <div class="flex-1"></div>
         {% include "components/navbar.html" %}
       </div>
-      <div class="px-6 lg:px-8 pb-3 empty:hidden empty:p-0 flex flex-wrap items-center gap-2 [&:empty]:hidden">
+      <div class="px-4 sm:px-6 lg:px-8 pb-3 empty:hidden empty:p-0 flex flex-wrap items-center gap-2 [&:empty]:hidden">
         {% block header_actions %}{% endblock %}
       </div>
     </header>
@@ -56,7 +59,7 @@
 
     <!-- Flash messages (auto-dismiss) -->
     {% if message %}
-    <div class="px-6 lg:px-8 pt-4" data-flash-wrap>
+    <div class="px-4 sm:px-6 lg:px-8 pt-4" data-flash-wrap>
       <div data-flash role="status" class="p-4 rounded-2xl text-sm font-medium transition-opacity duration-500 {% if message_type == 'error' %}bg-red-50 text-red-800 border border-red-200{% else %}bg-[#e6f5ec] text-[#0f7a4d] border border-[#bfe6d2]{% endif %}">
         <span class="flex items-start gap-3">
           <span class="flex-1">{{ message }}</span>
@@ -67,7 +70,7 @@
     {% endif %}
 
     <!-- Page Content -->
-    <main class="flex-1 px-6 lg:px-8 py-6 max-w-[1400px] w-full mx-auto">
+    <main class="flex-1 px-4 sm:px-6 lg:px-8 py-6 max-w-[1400px] w-full mx-auto min-w-0">
       {% block content %}{% endblock %}
     </main>
 
@@ -84,8 +87,8 @@
   <!-- Backdrop -->
   <div id="inspector-drawer-backdrop" class="fixed inset-0 bg-[#15251d]/40 backdrop-blur-xs transition-opacity duration-300 opacity-0" onclick="closeInspectorDrawer()"></div>
 
-  <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
-    <div id="inspector-drawer-panel" class="w-screen max-w-2xl bg-white shadow-2xl border-l border-[#e5ebe6] rounded-l-2xl flex flex-col transform translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="fixed inset-y-0 right-0 max-w-full flex pl-0 sm:pl-10">
+    <div id="inspector-drawer-panel" class="w-full sm:w-screen sm:max-w-2xl max-w-full bg-white shadow-2xl border-l border-[#e5ebe6] rounded-l-2xl flex flex-col transform translate-x-full transition-transform duration-300 ease-in-out">
       <!-- Drawer Content Loaded Dynamically via HTMX -->
       <div id="inspector-drawer-content" class="flex-1 flex flex-col overflow-hidden">
         <div class="p-8 text-center text-sm text-slate-400">Loading delivery details...</div>
@@ -172,7 +175,24 @@
   }
 
   document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') closeInspectorDrawer();
+    if (e.key === 'Escape') { closeInspectorDrawer(); toggleHookflowSidebar(false); }
+  });
+
+  // Mobile sidebar (slide-in nav under 768px).
+  function toggleHookflowSidebar(force) {
+    var bar = document.getElementById('hookflow-sidebar');
+    var bg = document.getElementById('sidebar-backdrop');
+    if (!bar) return;
+    var open = (typeof force === 'boolean') ? force : bar.classList.contains('-translate-x-full');
+    bar.classList.toggle('-translate-x-full', !open);
+    if (bg) bg.classList.toggle('hidden', !open);
+    document.body.classList.toggle('overflow-hidden', open && window.innerWidth < 768);
+  }
+  document.addEventListener('click', function(e) {
+    var bar = document.getElementById('hookflow-sidebar');
+    if (bar && window.innerWidth < 768 && e.target.closest && e.target.closest('#hookflow-sidebar a')) {
+      toggleHookflowSidebar(false);
+    }
   });
 
   // Auto-dismiss flash banners so approve/reject/register notices don't stick.
