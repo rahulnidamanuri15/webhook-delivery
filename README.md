@@ -65,8 +65,8 @@ A production-grade, multi-tenant webhook delivery platform. Your application pos
 
 ## Demo Video
 
-<video src="docs/demo.mp4" controls preload="metadata" width="100%">
-  Your browser cannot play the embedded video — <a href="docs/demo.mp4">download/watch docs/demo.mp4</a>.
+<video src="https://github.com/user-attachments/assets/8cdb42dc-b213-4f70-a6be-2a077b4cd3c0" controls preload="metadata" width="100%">
+  Your browser cannot play the embedded video — <a href="https://github.com/user-attachments/assets/8cdb42dc-b213-4f70-a6be-2a077b4cd3c0">watch the demo video</a> (also stored as <code>docs/demo.mp4</code>).
 </video>
 
 90-second end-to-end flow: register → admin approval → create endpoint → publish event → watch live delivery → retry → dead-letter → one-click replay → audit trail.
