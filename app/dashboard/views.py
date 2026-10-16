@@ -2948,6 +2948,21 @@ def approve_pending_user(
             details={"email": target.email},
             commit=False,
         )
+        # Mirror into the actor's org: approvals happen there (Approvals page)
+        # but the entry above lives in the new org — without this the
+        # superadmin never sees their own approvals in their audit trail.
+        if actor_org is not None and actor_org.id != org.id:
+            log_audit_event(
+                db,
+                organization_id=actor_org.id,
+                user_id=actor.id,
+                action="user.approved",
+                resource_type="user",
+                resource_id=target.id,
+                ip_address=get_client_ip(request),
+                details={"email": target.email, "new_organization_id": org.id},
+                commit=False,
+            )
         db.commit()
     except Exception:
         db.rollback()

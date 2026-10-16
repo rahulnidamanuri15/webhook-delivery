@@ -75,7 +75,7 @@ def test_pending_register_then_approve(monkeypatch):
         assert "awaiting admin approval" in login.text
 
         # Superadmin approves
-        _, admin_tok = _make_superadmin(db, uid)
+        admin, admin_tok = _make_superadmin(db, uid)
         csrf = _authed_csrf(admin_tok)
         page = client.get("/dashboard/admin/pending", cookies={"wh_session": admin_tok})
         assert page.status_code == 200
@@ -91,6 +91,20 @@ def test_pending_register_then_approve(monkeypatch):
         approved = db.query(User).filter(User.email == email).first()
         assert approved.status == "approved"
         assert db.query(OrganizationMember).filter(OrganizationMember.user_id == approved.id).first() is not None
+        # Approval is visible in the actor's own org audit trail too.
+        from app.models.audit_log import AuditLog as _AuditLog
+
+        admin_membership = db.query(OrganizationMember).filter(OrganizationMember.user_id == admin.id).first()
+        assert (
+            db.query(_AuditLog)
+            .filter(
+                _AuditLog.organization_id == admin_membership.organization_id,
+                _AuditLog.action == "user.approved",
+                _AuditLog.resource_id == approved.id,
+            )
+            .count()
+            == 1
+        )
 
         # Login works after approval
         tok3, anon3 = _anon_csrf()
